@@ -15,7 +15,8 @@ import (
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 const testToken = "test-bearer-token-at-least-24-chars"
@@ -95,12 +96,12 @@ func integrationStore(t *testing.T) *durable.Store {
 		t.Skip("TEST_DATABASE_URL required")
 	}
 	ctx := context.Background()
-	admin, err := pgx.Connect(ctx, dsn)
+	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	name := "test_" + durable.NewID()
-	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+name); err != nil {
+	if err = admin.WithContext(ctx).Exec("CREATE SCHEMA " + name).Error; err != nil {
 		t.Fatal(err)
 	}
 	u, err := url.Parse(dsn)
@@ -116,10 +117,11 @@ func integrationStore(t *testing.T) *durable.Store {
 	}
 	t.Cleanup(func() {
 		store.Close()
-		if _, err := admin.Exec(ctx, "DROP SCHEMA "+name+" CASCADE"); err != nil {
+		if err := admin.WithContext(ctx).Exec("DROP SCHEMA " + name + " CASCADE").Error; err != nil {
 			t.Error(err)
 		}
-		_ = admin.Close(ctx)
+		pool, _ := admin.DB()
+		_ = pool.Close()
 	})
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)

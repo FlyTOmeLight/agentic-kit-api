@@ -101,8 +101,14 @@ make integration
 
 集成测试为每个测试创建随机 PostgreSQL schema 并在结束时清理，不复用业务表；Redis 测试只操作本次生成的 run key。测试账户需要创建 schema 的权限。未设置 TEST_DATABASE_URL 时，数据库用例会明确跳过，不能把这个结果当作集成验证通过。
 
+## 数据库访问
+
+连接、事务、查询和写入集中在 `pkg/durable` 的 GORM Store；API 与 worker 使用同一实现。普通读写使用 GORM 查询构造器，领取和执行权校验使用行锁子句；原子计数、数据库时钟和 UPDATE RETURNING 使用 GORM 的参数化 SQL。
+
+`cmd/migrate` 在 GORM 事务中执行 schema.sql，保持现有 CHECK、外键、部分唯一索引和数据库默认值。迁移幂等，不改变已有表结构或历史任务。连接池每进程最多 20 个连接、5 个空闲连接；退出时关闭。SQL 日志关闭，避免输出模型上下文与工具结果。
+
 ## 依赖选择
 
-Gin v1.11.0 与 gin-contrib/sse v1.1.0 沿用原仓库版本，分别用于 HTTP 框架与 SSE 编码，均为 MIT 许可；固定传递依赖在 go.sum 中。沿用原仓库的 pgx v5.8.0、go-redis v9.16.0；直接使用 PostgreSQL 事务和行锁，不增加消息队列。pgx 为 MIT、go-redis 为 BSD 2-Clause，均不要求 CGO。固定版本及传递依赖记录在 go.mod/go.sum；本次没有执行漏洞数据库扫描。
+Gin v1.11.0 与 gin-contrib/sse v1.1.0 沿用原仓库版本，分别用于 HTTP 框架与 SSE 编码，均为 MIT 许可；固定传递依赖在 go.sum 中。数据库统一通过 GORM v1.31.2 和官方 PostgreSQL 驱动 v1.6.3 管理；驱动底层使用 pgx v5.10.0，配置层仅使用 pgx 解析连接串。GORM 与驱动均为 MIT 许可，无需 CGO 或代码生成，新增依赖主要为 jinzhu/inflection、jinzhu/now。Redis 沿用 go-redis v9.16.0（BSD 2-Clause）。固定版本及传递依赖记录在 go.mod/go.sum；本次没有执行漏洞数据库扫描。
 
 [设计与故障处理](docs/design.md) · [迁移范围](docs/migration.md) · [验证记录](docs/verification.md)

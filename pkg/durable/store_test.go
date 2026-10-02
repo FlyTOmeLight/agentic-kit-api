@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func testStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	schema := "test_" + NewID()
-	if _, err = admin.pool.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
+	if err = admin.db.WithContext(ctx).Exec(`CREATE SCHEMA ` + schema).Error; err != nil {
 		t.Fatal(err)
 	}
 	u, err := url.Parse(dsn)
@@ -41,7 +42,7 @@ func testStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() {
 		s.Close()
-		_, err := admin.pool.Exec(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+		err := admin.db.WithContext(ctx).Exec(`DROP SCHEMA ` + schema + ` CASCADE`).Error
 		if err != nil {
 			t.Error(err)
 		}
@@ -94,7 +95,7 @@ func TestConcurrentClaimAndFence(t *testing.T) {
 		t.Fatalf("got %d owners", len(winners))
 	}
 	old := winners[0]
-	if _, err := s.pool.Exec(ctx, `UPDATE durable_run SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, r.ID); err != nil {
+	if err := s.db.WithContext(ctx).Exec(`UPDATE durable_run SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?`, r.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	next := claim(t, s, "replacement")
@@ -179,7 +180,7 @@ func TestResultAndEventCommitTogether(t *testing.T) {
 	createRun(t, s)
 	r := claim(t, s, "a")
 	// Force an event insert failure: the state update MUST roll back too.
-	_, err := s.pool.Exec(ctx, `CREATE FUNCTION reject_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$; CREATE TRIGGER reject_event BEFORE INSERT ON durable_event FOR EACH ROW EXECUTE FUNCTION reject_event()`)
+	err := s.db.WithContext(ctx).Exec(`CREATE FUNCTION reject_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$; CREATE TRIGGER reject_event BEFORE INSERT ON durable_event FOR EACH ROW EXECUTE FUNCTION reject_event()`).Error
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +239,7 @@ func TestDeadlineAndAttemptLimit(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	r := createRun(t, s)
-	if _, err := s.pool.Exec(ctx, `UPDATE durable_run SET deadline=clock_timestamp()-interval '1 second' WHERE id=$1`, r.ID); err != nil {
+	if err := s.db.WithContext(ctx).Exec(`UPDATE durable_run SET deadline=clock_timestamp()-interval '1 second' WHERE id=?`, r.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Claim(ctx, "a", time.Minute); !errors.Is(err, ErrNoWork) {
@@ -273,5 +274,71 @@ func TestSessionHistoryAndSingleActiveRun(t *testing.T) {
 	}
 	if len(second.Spec.History) != 2 || second.Spec.History[0].Content != "first question" || second.Spec.History[1].Content != "first answer" {
 		t.Fatalf("history %+v", second.Spec.History)
+	}
+}
+
+func TestJSONRoundTripAndRepeatedMigration(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	temperature := float32(0.3)
+	spec := Spec{AgentID: "agent", ConfigVersion: "v1", Query: "中文问题", MaxTurns: 5,
+		Model: ModelSpec{Name: "model", Temperature: &temperature},
+		Tools: []ToolSpec{{Name: "lookup", Parameters: json.RawMessage(`{"type":"object","properties":{"term":{"type":"string"}}}`), Policy: ReadOnly}},
+	}
+	run, _, err := s.Create(ctx, "owner", "session", "request", spec, time.Hour, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, "owner", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJSON, _ := json.Marshal(spec)
+	gotJSON, _ := json.Marshal(got.Spec)
+	var wantValue, gotValue any
+	if err = json.Unmarshal(wantJSON, &wantValue); err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(gotJSON, &gotValue); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(wantValue, gotValue) {
+		t.Fatalf("configuration changed: %s", gotJSON)
+	}
+	active := claim(t, s, "worker")
+	if err = s.Save(ctx, active.Lease(), json.RawMessage(`{"waitingStep":"example"}`), Running, "draft", "draft error", "Progress"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Save(ctx, active.Lease(), json.RawMessage(`{}`), Completed, "", "", "RunCompleted"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.Get(ctx, "owner", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Output != "" || got.Error != "" || got.WaitingStep != "" || got.LeaseUntil != nil {
+		t.Fatalf("zero or NULL values not persisted: %+v", got)
+	}
+	events, err := s.Events(ctx, "owner", run.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Status Status
+		Output string
+	}
+	if err = json.Unmarshal(events[len(events)-1].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != Completed || payload.Output != "" {
+		t.Fatalf("event JSON changed: %+v", payload)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err = s.Get(canceled, "owner", run.ID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("query ignored cancellation: %v", err)
 	}
 }
