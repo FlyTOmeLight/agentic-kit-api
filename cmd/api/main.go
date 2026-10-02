@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,20 +26,29 @@ func main() {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	agents, err := config.LoadAgents(os.Getenv("AGENTS_FILE"))
+	path := flag.String("config", os.Getenv("CONFIG_FILE"), "TOML configuration file")
+	flag.Parse()
+	cfg, err := config.Load(*path)
 	if err != nil {
 		return err
 	}
-	tokens, err := config.LoadTokens(os.Getenv("API_TOKENS_JSON"))
+	if err = cfg.ValidateAPI(); err != nil {
+		return err
+	}
+	agents, err := config.LoadAgents(cfg.Agents.File)
 	if err != nil {
 		return err
 	}
-	store, err := durable.Open(ctx, os.Getenv("DATABASE_URL"))
+	tokens, err := config.LoadTokens(cfg.Auth.TokensJSON)
+	if err != nil {
+		return err
+	}
+	store, err := durable.Open(ctx, cfg.Database.URL)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	opts, err := redis.ParseURL(os.Getenv("REDIS_URL"))
+	opts, err := redis.ParseURL(cfg.Redis.URL)
 	if err != nil {
 		return err
 	}
@@ -49,10 +59,7 @@ func run() error {
 		defer close(relayDone)
 		store.Relay(ctx, rdb, func(err error) { slog.Error("outbox publish failed", "error", err) })
 	}()
-	addr := os.Getenv("LISTEN_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:8080"
-	}
+	addr := cfg.HTTP.ListenAddr
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           httpapi.NewRouter(store, rdb, agents, tokens),

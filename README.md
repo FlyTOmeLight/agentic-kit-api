@@ -45,23 +45,22 @@ worker 默认使用 API 的 `v0.1.0` 版本，不依赖相邻源码。需要同�
 ```bash
 cd agentic-kit-api
 docker compose -f deploy/compose.yaml up -d
-export DATABASE_URL='postgres://agentic:agentic_local@127.0.0.1:55432/agentic?sslmode=disable'
-export REDIS_URL='redis://127.0.0.1:56379/0'
+cp configs/config.example.toml configs/config.local.toml
+# 修改 config.local.toml 中的服务配置。
 export API_TOKENS_JSON='{"replace-with-your-local-token-32chars":"local-user"}'
 cp configs/agents.example.json configs/agents.local.json
 # 修改 agents.local.json 中的模型地址、模型名和可用工具。
-export AGENTS_FILE="$PWD/configs/agents.local.json"
-go run ./cmd/migrate
-go run ./cmd/api
+go run ./cmd/migrate -config configs/config.local.toml
+go run ./cmd/api -config configs/config.local.toml
 ```
 
-另开终端启动 worker，设置相同的 DATABASE_URL，以及模型和工具所需的凭据环境变量：
+另开终端启动 worker，在 TOML 中配置同一个数据库，并设置模型和工具所需的凭据环境变量：
 
 ```bash
 cd agentic-kit-worker
-export DATABASE_URL='postgres://agentic:agentic_local@127.0.0.1:55432/agentic?sslmode=disable'
+cp configs/config.example.toml configs/config.local.toml
 export MODEL_API_KEY='你的模型凭据'
-go run ./cmd/worker
+go run ./cmd/worker -config configs/config.local.toml
 ```
 
 API 默认监听 `127.0.0.1:8080`。`LISTEN_ADDR` 可修改监听地址。本地示例 token 仅用于演示，部署时自行配置。
@@ -76,11 +75,27 @@ curl -X POST http://127.0.0.1:8080/v1/runs \
 
 返回任务 `id` 后，用 `GET /v1/runs/{id}` 查询；用 `GET /v1/runs/{id}/events` 接收 SSE。详细请求见 [接口契约](docs/api.md)。
 
+## 服务配置
+
+API 和 migrate 使用独立 Viper 实例读取 TOML；通过 `-config` 指定路径，也可设置 `CONFIG_FILE`。未指定文件时使用环境变量和默认值；指定文件不存在、格式错误或包含未知字段时启动失败。配置只在启动时加载，修改后重启服务。
+
+| TOML 字段 | 环境变量 | 默认值 |
+| --- | --- | --- |
+| http.listen_addr | LISTEN_ADDR | 127.0.0.1:8080 |
+| database.url | DATABASE_URL | 必填 |
+| redis.url | REDIS_URL | API 必填 |
+| agents.file | AGENTS_FILE | API 必填 |
+| auth.tokens_json | API_TOKENS_JSON | API 必填 |
+
+优先级为环境变量 > TOML > 默认值；已设置的空环境变量也会覆盖文件。指定 TOML 时，相对 agents.file（含环境变量覆盖值）以 TOML 所在目录为基准。Agent 定义仍使用 JSON，工具参数保持 JSON Schema 格式；模型和工具凭据由 worker 环境变量提供。
+
+Viper v1.21.0 用于复用文件解析、配置覆盖和结构体解码，采用 MIT 许可，无需 CGO 或代码生成。依赖包含 mapstructure、fsnotify、afero、cast、pflag 等，固定版本见 go.mod/go.sum；本次未运行漏洞数据库扫描。
+
 ## 测试
 
 ```bash
-export TEST_DATABASE_URL="$DATABASE_URL"
-export TEST_REDIS_URL="$REDIS_URL"
+export TEST_DATABASE_URL='postgres://agentic:agentic_local@127.0.0.1:55432/agentic?sslmode=disable'
+export TEST_REDIS_URL='redis://127.0.0.1:56379/0'
 make integration
 ```
 
