@@ -1,0 +1,277 @@
+package durable
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/url"
+	"os"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+func testStore(t *testing.T) *Store {
+	t.Helper()
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL required for PostgreSQL integration tests")
+	}
+	ctx := context.Background()
+	admin, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := "test_" + NewID()
+	if _, err = admin.pool.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	s, err := Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		s.Close()
+		_, err := admin.pool.Exec(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+		if err != nil {
+			t.Error(err)
+		}
+		admin.Close()
+	})
+	if err = s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+func createRun(t *testing.T, s *Store) *Run {
+	t.Helper()
+	r, _, err := s.Create(context.Background(), "owner", NewID(), NewID(), Spec{AgentID: "agent", Query: "question", MaxTurns: 5}, time.Hour, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+func claim(t *testing.T, s *Store, worker string) *Run {
+	t.Helper()
+	r, err := s.Claim(context.Background(), worker, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+func TestConcurrentClaimAndFence(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	r := createRun(t, s)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var winners []*Run
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := s.Claim(ctx, NewID(), time.Minute)
+			if err == nil {
+				mu.Lock()
+				winners = append(winners, r)
+				mu.Unlock()
+			} else if !errors.Is(err, ErrNoWork) {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if len(winners) != 1 {
+		t.Fatalf("got %d owners", len(winners))
+	}
+	old := winners[0]
+	if _, err := s.pool.Exec(ctx, `UPDATE durable_run SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	next := claim(t, s, "replacement")
+	if next.Epoch <= old.Epoch {
+		t.Fatal("epoch did not increase")
+	}
+	if err := s.Save(ctx, old.Lease(), json.RawMessage(`{}`), Completed, "stale", "", "RunCompleted"); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("stale save accepted: %v", err)
+	}
+	if err := s.Renew(ctx, old.Lease(), time.Minute); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("stale renewal accepted: %v", err)
+	}
+	if err := s.Save(ctx, next.Lease(), json.RawMessage(`{}`), Completed, "correct", "", "RunCompleted"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, "owner", r.ID)
+	if err != nil || got.Output != "correct" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+func TestIdempotencyOwnershipAndCancellation(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	spec := Spec{Query: "hello", MaxTurns: 2}
+	key := NewID()
+	r, created, err := s.Create(ctx, "owner", "session", key, spec, time.Hour, 3)
+	if err != nil || !created {
+		t.Fatal(err)
+	}
+	repeat, created, err := s.Create(ctx, "owner", "session", key, spec, time.Hour, 3)
+	if err != nil || created || repeat.ID != r.ID {
+		t.Fatal("submission not idempotent", err)
+	}
+	spec.Query = "changed"
+	if _, _, err = s.Create(ctx, "owner", "session", key, spec, time.Hour, 3); !errors.Is(err, ErrConflict) {
+		t.Fatal(err)
+	}
+	if _, err = s.Get(ctx, "other", r.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("cross owner read", err)
+	}
+	active := claim(t, s, "a")
+	if err = s.Cancel(ctx, "owner", r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Save(ctx, active.Lease(), json.RawMessage(`{}`), Completed, "wrong", "", "RunCompleted"); !errors.Is(err, ErrLeaseLost) {
+		t.Fatal(err)
+	}
+	if _, err = s.Claim(ctx, "b", time.Minute); !errors.Is(err, ErrNoWork) {
+		t.Fatal("canceled task reclaimed", err)
+	}
+}
+func TestUnsafeStepAndHumanResolution(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	createRun(t, s)
+	r := claim(t, s, "a")
+	if _, _, err := s.BeginStep(ctx, r.Lease(), "submit", "arguments", Unsafe); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.BeginStep(ctx, r.Lease(), "submit", "arguments", Unsafe); !errors.Is(err, ErrUncertain) {
+		t.Fatal("unsafe repeated", err)
+	}
+	state := json.RawMessage(`{"waitingStep":"submit"}`)
+	if err := s.Save(ctx, r.Lease(), state, NeedsReview, "", "uncertain", "RunNeedsReview"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SupplyResult(ctx, "owner", r.ID, "wrong", "ok", NeedsReview); !errors.Is(err, ErrConflict) {
+		t.Fatal(err)
+	}
+	if err := s.SupplyResult(ctx, "owner", r.ID, "submit", "external receipt", NeedsReview); err != nil {
+		t.Fatal(err)
+	}
+	next := claim(t, s, "b")
+	result, cached, err := s.BeginStep(ctx, next.Lease(), "submit", "arguments", Unsafe)
+	if err != nil || !cached || result != "external receipt" {
+		t.Fatalf("result=%q cached=%v err=%v", result, cached, err)
+	}
+}
+func TestResultAndEventCommitTogether(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	createRun(t, s)
+	r := claim(t, s, "a")
+	// Force an event insert failure: the state update MUST roll back too.
+	_, err := s.pool.Exec(ctx, `CREATE FUNCTION reject_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$; CREATE TRIGGER reject_event BEFORE INSERT ON durable_event FOR EACH ROW EXECUTE FUNCTION reject_event()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Save(ctx, r.Lease(), json.RawMessage(`{}`), Completed, "should roll back", "", "RunCompleted")
+	if err == nil {
+		t.Fatal("expected transaction failure")
+	}
+	got, err := s.Get(ctx, "owner", r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != Running || got.Output != "" {
+		t.Fatalf("partial commit: %+v", got)
+	}
+}
+func TestOutboxRetryAfterPublishAndRedisLoss(t *testing.T) {
+	raw := os.Getenv("TEST_REDIS_URL")
+	if raw == "" {
+		t.Skip("TEST_REDIS_URL required")
+	}
+	s := testStore(t)
+	ctx := context.Background()
+	r := createRun(t, s)
+	opts, err := redis.ParseURL(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rdb := redis.NewClient(opts)
+	defer rdb.Close()
+	defer rdb.Del(ctx, StreamKey(r.ID))
+	// Simulate Redis success followed by database commit failure.
+	events, err := s.Events(ctx, "owner", r.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(events[0])
+	if err = rdb.Eval(ctx, publishLua, []string{StreamKey(r.ID)}, "1-0", string(data)).Err(); err != nil {
+		t.Fatal(err)
+	}
+	sent, err := s.PublishOne(ctx, rdb)
+	if err != nil || !sent {
+		t.Fatal(err)
+	}
+	if n, err := rdb.XLen(ctx, StreamKey(r.ID)).Result(); err != nil || n != 1 {
+		t.Fatalf("duplicate publication: %d %v", n, err)
+	}
+	if err = rdb.Del(ctx, StreamKey(r.ID)).Err(); err != nil {
+		t.Fatal(err)
+	}
+	events, err = s.Events(ctx, "owner", r.ID, 0)
+	if err != nil || len(events) != 1 {
+		t.Fatal("Redis deletion lost durable event", err)
+	}
+}
+func TestDeadlineAndAttemptLimit(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	r := createRun(t, s)
+	if _, err := s.pool.Exec(ctx, `UPDATE durable_run SET deadline=clock_timestamp()-interval '1 second' WHERE id=$1`, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Claim(ctx, "a", time.Minute); !errors.Is(err, ErrNoWork) {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, "owner", r.ID)
+	if err != nil || got.Status != Failed {
+		t.Fatalf("deadline not enforced: %+v %v", got, err)
+	}
+}
+
+func TestSessionHistoryAndSingleActiveRun(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	first, _, err := s.Create(ctx, "owner", "session", "first", Spec{AgentID: "agent", Query: "first question"}, time.Hour, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.Create(ctx, "owner", "session", "second", Spec{AgentID: "agent", Query: "second question"}, time.Hour, 3); !errors.Is(err, ErrConflict) {
+		t.Fatal("active predecessor accepted", err)
+	}
+	running := claim(t, s, "a")
+	if running.ID != first.ID {
+		t.Fatal("wrong task")
+	}
+	if err = s.Save(ctx, running.Lease(), json.RawMessage(`{}`), Completed, "first answer", "", "RunCompleted"); err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := s.Create(ctx, "owner", "session", "second", Spec{AgentID: "agent", Query: "second question"}, time.Hour, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Spec.History) != 2 || second.Spec.History[0].Content != "first question" || second.Spec.History[1].Content != "first answer" {
+		t.Fatalf("history %+v", second.Spec.History)
+	}
+}
