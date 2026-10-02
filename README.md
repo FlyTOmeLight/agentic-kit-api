@@ -36,7 +36,7 @@ gh repo clone FlyTOmeLight/agentic-kit-api
 gh repo clone FlyTOmeLight/agentic-kit-worker
 ```
 
-worker 默认使用 API 的 `v0.1.0` 版本，不依赖相邻源码。需要同时修改两个仓库时，在共同父目录执行 `go work init ./agentic-kit-api ./agentic-kit-worker`；该工作区文件只用于本地联合开发，不提交到仓库。
+worker 默认使用 go.mod 固定的 API 版本，不依赖相邻源码。需要同时修改两个仓库时，在共同父目录执行 `go work init ./agentic-kit-api ./agentic-kit-worker`；该工作区文件只用于本地联合开发，不提交到仓库。
 
 ## 本地启动
 

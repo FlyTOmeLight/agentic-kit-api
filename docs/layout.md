@@ -41,8 +41,10 @@ agentic-kit-api/
 agentic-kit-worker/
 ├── cmd/worker/main.go        # 启动、配置与信号处理
 ├── internal/
+│   ├── config/              # Viper TOML 配置加载与校验
 │   ├── engine/              # 可恢复执行循环、领取、续期、故障测试
 │   └── adapters/            # Eino 模型与 HTTP/AppForge 工具接入
+├── configs/                 # TOML 配置样例
 ├── go.mod
 └── Makefile
 ```
