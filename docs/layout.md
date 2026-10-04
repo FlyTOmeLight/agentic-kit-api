@@ -25,7 +25,7 @@ agentic-kit-api/
 │   └── durable/              # API 与 worker 共用的任务状态与事务契约
 │       ├── types.go
 │       ├── store.go
-│       ├── schema.sql        # 与存储包一起 embed
+│       ├── models.go         # GORM 表结构、约束与索引
 │       ├── events.go         # Outbox 发布
 │       └── store_test.go
 ├── configs/                  # 配置样例，与 Go 配置代码分开
@@ -57,4 +57,4 @@ pkg 是本项目对共享包的显式标记，不是 Go 编译器的特殊目录
 
 HTTP 参数、状态码和 Gin Context 留在 internal/httpapi；任务状态变化、数据库并发控制和事务边界集中在 pkg/durable；模型和工具执行在 worker/internal/engine。context.Context 沿调用链传递。
 
-当前不添加仅转发一次调用的 service/repository 层，也不创建空的 models、utils、common 目录。未来新增业务职责时，在职责实际出现的位置拆包；schema.sql 与 embed 所属包保持在一起，避免目录调整破坏构建。
+当前不添加仅转发一次调用的 service/repository 层，也不创建空的 models、utils、common 目录。未来新增业务职责时，在职责实际出现的位置拆包；持久化模型与 Store 同属 durable 包。

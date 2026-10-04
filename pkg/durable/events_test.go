@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm/clause"
 )
 
 func eventRedis(t *testing.T) *redis.Client {
@@ -74,18 +75,18 @@ func TestOutboxLockedHeadDoesNotBlockOtherRun(t *testing.T) {
 				t.Fatal(tx.Error)
 			}
 			defer tx.Rollback()
-			var head Event
-			if err := tx.Raw("SELECT run_id,seq,kind,payload FROM durable_event WHERE run_id=? AND seq=1 FOR UPDATE", a.ID).Take(&head).Error; err != nil {
+			var head eventRecord
+			if err := tx.Model(&eventRecord{}).Where("run_id = ? AND seq = ?", a.ID, 1).Clauses(clause.Locking{Strength: "UPDATE"}).Take(&head).Error; err != nil {
 				t.Fatal(err)
 			}
-			data, err := json.Marshal(head)
+			data, err := json.Marshal(head.event())
 			if err != nil {
 				t.Fatal(err)
 			}
 			if err = rdb.Eval(ctx, publishLua, []string{StreamKey(a.ID)}, "1-0", string(data)).Err(); err != nil {
 				t.Fatal(err)
 			}
-			if err = tx.Table("durable_event").Where("run_id=? AND seq=1", a.ID).Update("published", true).Error; err != nil {
+			if err = tx.Model(&eventRecord{}).Where("run_id=? AND seq=1", a.ID).Update("published", true).Error; err != nil {
 				t.Fatal(err)
 			}
 
@@ -172,7 +173,7 @@ func TestConcurrentOutboxPublishersPreservePerRunOrder(t *testing.T) {
 		checkStream(t, ctx, rdb, r.ID, 2)
 	}
 	var pending int64
-	if err := s.db.WithContext(ctx).Table("durable_event").Where("NOT published").Count(&pending).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&eventRecord{}).Where("NOT published").Count(&pending).Error; err != nil {
 		t.Fatal(err)
 	}
 	if pending != 0 {

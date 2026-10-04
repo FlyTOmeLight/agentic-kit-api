@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Explicit stream IDs make a retry after Redis success / database commit failure idempotent.
@@ -31,8 +32,14 @@ func (s *Store) PublishOne(ctx context.Context, rdb *redis.Client) (bool, error)
 	// Only the earliest unpublished event of each run is eligible. Hold its row
 	// lock through Redis publication and the database commit. SKIP LOCKED lets
 	// other publishers advance unrelated runs without bypassing this run's head.
-	var e Event
-	err = tx.Raw(`SELECT run_id,seq,kind,payload FROM durable_event e WHERE NOT published AND NOT EXISTS (SELECT 1 FROM durable_event prior WHERE prior.run_id=e.run_id AND prior.seq<e.seq AND NOT prior.published) ORDER BY created_at,run_id,seq LIMIT 1 FOR UPDATE OF e SKIP LOCKED`).Take(&e).Error
+	var record eventRecord
+	earlier := tx.Model(&eventRecord{}).Table("durable_event AS prior").Select("1").
+		Where("prior.run_id = e.run_id AND prior.seq < e.seq AND NOT prior.published")
+	err = tx.Model(&eventRecord{}).Table("durable_event AS e").Select("e.*").
+		Where("NOT e.published").Where("NOT EXISTS (?)", earlier).
+		Order("e.created_at, e.run_id, e.seq").
+		Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "e"}, Options: "SKIP LOCKED"}).Take(&record).Error
+	e := record.event()
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
 	}
@@ -46,7 +53,7 @@ func (s *Store) PublishOne(ctx context.Context, rdb *redis.Client) (bool, error)
 	if err = rdb.Eval(ctx, publishLua, []string{StreamKey(e.RunID)}, strconv.FormatInt(e.Seq, 10)+"-0", string(b)).Err(); err != nil {
 		return false, fmt.Errorf("publish outbox: %w", err)
 	}
-	if err = tx.Table("durable_event").Where("run_id = ? AND seq = ?", e.RunID, e.Seq).Update("published", true).Error; err != nil {
+	if err = tx.Model(&eventRecord{}).Where("run_id = ? AND seq = ?", e.RunID, e.Seq).Update("published", true).Error; err != nil {
 		return false, err
 	}
 	return true, tx.Commit().Error

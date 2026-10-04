@@ -103,9 +103,9 @@ make integration
 
 ## 数据库访问
 
-连接、事务、查询和写入集中在 `pkg/durable` 的 GORM Store；API 与 worker 使用同一实现。普通读写使用 GORM 查询构造器，领取和执行权校验使用行锁子句；原子计数、数据库时钟和 UPDATE RETURNING 使用 GORM 的参数化 SQL。
+连接、事务、查询和写入集中在 `pkg/durable` 的 GORM Store；API 与 worker 使用同一实现。读写使用 GORM Model、查询构造器和 Updates；领取与执行权校验使用 Locking 子句，更新结果使用 Returning 子句，Outbox 领取使用子查询。数据库时钟与原子递增使用 gorm.Expr；事务级 advisory lock 通过 GORM Exec 调用 PostgreSQL 函数。
 
-`cmd/migrate` 在 GORM 事务中执行 schema.sql，保持现有 CHECK、外键、部分唯一索引和数据库默认值。迁移幂等，不改变已有表结构或历史任务。连接池每进程最多 20 个连接、5 个空闲连接；退出时关闭。SQL 日志关闭，避免输出模型上下文与工具结果。
+`pkg/durable/models.go` 是三张表结构的唯一来源，包含复合主键、CHECK、外键、部分唯一索引和数据库默认值。`cmd/migrate` 在持有迁移锁的 GORM 事务中调用 AutoMigrate；API 和 worker 启动时不自动建表。AutoMigrate 会补齐缺失的表、列、约束和索引，也可能调整列类型或可空性；不会自动删除废弃列。变更模型后应先验证已有数据库上的迁移，再执行部署迁移命令。连接池每进程最多 20 个连接、5 个空闲连接；退出时关闭。SQL 日志关闭，避免输出模型上下文与工具结果。
 
 ## 依赖选择
 

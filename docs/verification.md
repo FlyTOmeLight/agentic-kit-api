@@ -43,3 +43,9 @@ TestProcessKillResumesWithoutRepeatingTool 使用真实 HTTP API 提交任务、
 2026-10-03：Go 私有实现迁入 internal，配置样例迁入 configs，跨仓库共享任务包迁入 pkg/durable。worker 的进程恢复测试改为构建并启动真实 API 可执行程序，通过 HTTP 调用，不再直接导入 API handler。
 
 目录调整后，两个仓库均通过 `go test -race -count=1 -timeout=120s ./...` 与 `go vet ./...`，API/migrate 构建通过；跨进程恢复测试包含独立 API 程序和被强杀的 worker 子进程。
+
+## GORM 模型与迁移
+
+2026-10-04：移除独立 SQL 建表文件，三张表改为 GORM Model 与 AutoMigrate。API 在隔离的 PostgreSQL 17.6、Redis 7.2.10 上通过 `make integration`（含 race 和 vet）与 `make build`。新增测试直接写数据库，验证状态 CHECK、外键、复合主键、请求去重、四种活动状态的会话互斥、终态会话复用和数据库默认值；原有事件回滚与多发布者顺序测试继续通过。
+
+升级验证使用 v0.1.3 的旧建表定义，在隔离 schema 中写入任务、步骤和事件，再连续执行两次新版迁移命令。迁移前后逐项对比字段、约束、索引和数据，结果一致；随后通过新版 Store 领取并完成旧任务，事件编号从 1 继续增长至 3。该验证覆盖当前旧版结构升级，不代表任意未来模型变更都能无损迁移。

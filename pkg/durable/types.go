@@ -76,8 +76,8 @@ type Run struct {
 	ID          string          `json:"id"`
 	OwnerID     string          `json:"ownerID"`
 	SessionID   string          `json:"sessionID"`
-	Spec        Spec            `json:"-" gorm:"serializer:json;type:jsonb"`
-	State       json.RawMessage `json:"-" gorm:"serializer:json;type:jsonb"`
+	Spec        Spec            `json:"-"`
+	State       json.RawMessage `json:"-"`
 	Status      Status          `json:"status"`
 	WorkerID    string          `json:"-"`
 	Epoch       int64           `json:"epoch"`
@@ -87,7 +87,7 @@ type Run struct {
 	MaxAttempts int             `json:"-"`
 	EventSeq    int64           `json:"eventSeq"`
 	Output      string          `json:"output,omitempty"`
-	WaitingStep string          `json:"waitingStep,omitempty" gorm:"-"`
+	WaitingStep string          `json:"waitingStep,omitempty"`
 	Error       string          `json:"error,omitempty"`
 }
 type Lease struct {
@@ -101,7 +101,7 @@ type Event struct {
 	RunID   string          `json:"runID"`
 	Seq     int64           `json:"seq"`
 	Kind    string          `json:"kind"`
-	Payload json.RawMessage `json:"payload" gorm:"serializer:json;type:jsonb"`
+	Payload json.RawMessage `json:"payload"`
 }
 
 func NewID() string {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
 func testStore(t *testing.T) *Store {
@@ -95,7 +96,7 @@ func TestConcurrentClaimAndFence(t *testing.T) {
 		t.Fatalf("got %d owners", len(winners))
 	}
 	old := winners[0]
-	if err := s.db.WithContext(ctx).Exec(`UPDATE durable_run SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?`, r.ID).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&runRecord{}).Where("id = ?", r.ID).Update("lease_until", gorm.Expr("clock_timestamp()-interval '1 second'")).Error; err != nil {
 		t.Fatal(err)
 	}
 	next := claim(t, s, "replacement")
@@ -239,7 +240,7 @@ func TestDeadlineAndAttemptLimit(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	r := createRun(t, s)
-	if err := s.db.WithContext(ctx).Exec(`UPDATE durable_run SET deadline=clock_timestamp()-interval '1 second' WHERE id=?`, r.ID).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&runRecord{}).Where("id = ?", r.ID).Update("deadline", gorm.Expr("clock_timestamp()-interval '1 second'")).Error; err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Claim(ctx, "a", time.Minute); !errors.Is(err, ErrNoWork) {
