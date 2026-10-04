@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -15,7 +14,7 @@ const (
 	maxRunAttempts = 5
 )
 
-func (h *runHandler) create(c *gin.Context) {
+func (h *handler) create(c *gin.Context) {
 	var req createRunRequest
 	if !bindJSON(c, &req) {
 		return
@@ -26,14 +25,7 @@ func (h *runHandler) create(c *gin.Context) {
 		return
 	}
 	owner := c.GetString(ownerKey)
-	agent, ok := h.agents[req.AgentID]
-	if !ok || !slices.Contains(agent.Owners, owner) {
-		abort(c, http.StatusNotFound, "NotFound", "agent not found")
-		return
-	}
-	spec := agent.Spec
-	spec.Query = req.Query
-	run, created, err := h.store.Create(c.Request.Context(), owner, req.SessionID, headers.IdempotencyKey, spec, runLifetime, maxRunAttempts)
+	run, created, err := h.store.Submit(c.Request.Context(), owner, c.Param("id"), headers.IdempotencyKey, req.Query, runLifetime, maxRunAttempts)
 	if err != nil {
 		respondError(c, err)
 		return
@@ -45,7 +37,7 @@ func (h *runHandler) create(c *gin.Context) {
 	c.JSON(status, run)
 }
 
-func (h *runHandler) get(c *gin.Context) {
+func (h *handler) get(c *gin.Context) {
 	run, err := h.store.Get(c.Request.Context(), c.GetString(ownerKey), c.Param("id"))
 	if err != nil {
 		respondError(c, err)
@@ -54,7 +46,7 @@ func (h *runHandler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, run)
 }
 
-func (h *runHandler) cancel(c *gin.Context) {
+func (h *handler) cancel(c *gin.Context) {
 	if err := h.store.Cancel(c.Request.Context(), c.GetString(ownerKey), c.Param("id")); err != nil {
 		respondError(c, err)
 		return
@@ -62,9 +54,9 @@ func (h *runHandler) cancel(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (h *runHandler) answer(c *gin.Context)  { h.supply(c, durable.WaitingClarification) }
-func (h *runHandler) resolve(c *gin.Context) { h.supply(c, durable.NeedsReview) }
-func (h *runHandler) supply(c *gin.Context, status durable.Status) {
+func (h *handler) answer(c *gin.Context)  { h.supply(c, durable.WaitingClarification) }
+func (h *handler) resolve(c *gin.Context) { h.supply(c, durable.NeedsReview) }
+func (h *handler) supply(c *gin.Context, status durable.Status) {
 	var req supplyResultRequest
 	if !bindJSON(c, &req) {
 		return

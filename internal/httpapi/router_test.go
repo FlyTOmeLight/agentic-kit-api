@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
@@ -54,15 +53,14 @@ func TestGinAuthenticationAndValidation(t *testing.T) {
 		status                               int
 		code                                 string
 	}{
-		{"no auth", "POST", "/v1/runs", `{}`, "", "", 401, "Unauthorized"},
+		{"no auth", "POST", "/v1/sessions/s/messages", `{}`, "", "", 401, "Unauthorized"},
 		{"wrong token", "GET", "/v1/runs/run", ``, "wrong", "", 401, "Unauthorized"},
-		{"required fields", "POST", "/v1/runs", `{}`, testToken, "key", 400, "InvalidRequest"},
-		{"unknown field", "POST", "/v1/runs", `{"agentID":"a","sessionID":"s","query":"q","ownerID":"other"}`, testToken, "key", 400, "InvalidRequest"},
-		{"trailing JSON", "POST", "/v1/runs", `{"agentID":"a","sessionID":"s","query":"q"} {}`, testToken, "key", 400, "InvalidRequest"},
-		{"missing key", "POST", "/v1/runs", `{"agentID":"a","sessionID":"s","query":"q"}`, testToken, "", 400, "InvalidRequest"},
-		{"empty query", "POST", "/v1/runs", `{"agentID":"a","sessionID":"s","query":"  "}`, testToken, "key", 400, "InvalidRequest"},
-		{"oversized body", "POST", "/v1/runs", `{"query":"` + strings.Repeat("a", maxRequestBytes) + `"}`, testToken, "key", 413, "PayloadTooLarge"},
-		{"unknown agent", "POST", "/v1/runs", `{"agentID":"a","sessionID":"s","query":"q"}`, testToken, "key", 404, "NotFound"},
+		{"required fields", "POST", "/v1/sessions/s/messages", `{}`, testToken, "key", 400, "InvalidRequest"},
+		{"unknown field", "POST", "/v1/sessions/s/messages", `{"query":"q","ownerID":"other"}`, testToken, "key", 400, "InvalidRequest"},
+		{"trailing JSON", "POST", "/v1/sessions/s/messages", `{"query":"q"} {}`, testToken, "key", 400, "InvalidRequest"},
+		{"missing key", "POST", "/v1/sessions/s/messages", `{"query":"q"}`, testToken, "", 400, "InvalidRequest"},
+		{"empty query", "POST", "/v1/sessions/s/messages", `{"query":"  "}`, testToken, "key", 400, "InvalidRequest"},
+		{"oversized body", "POST", "/v1/sessions/s/messages", `{"query":"` + strings.Repeat("a", maxRequestBytes) + `"}`, testToken, "key", 413, "PayloadTooLarge"},
 		{"unknown route", "GET", "/missing", ``, testToken, "", 404, "NotFound"},
 		{"wrong method", "PUT", "/v1/runs/run", ``, testToken, "", 405, "MethodNotAllowed"},
 		{"invalid cursor", "GET", "/v1/runs/run/events?after=other:1", ``, testToken, "", 400, "InvalidCursor"},
@@ -130,9 +128,11 @@ func integrationStore(t *testing.T) *durable.Store {
 }
 func TestGinRunLifecycleAndSSE(t *testing.T) {
 	store := integrationStore(t)
-	router := NewRouter(store, nil, map[string]config.Agent{"a": {ID: "a", Owners: []string{"owner"}, Spec: durable.Spec{AgentID: "a", MaxTurns: 3}}}, map[string]string{testToken: "owner", "other-token-with-24-characters": "other"})
-	body := `{"agentID":"a","sessionID":"s","query":"question"}`
-	w := request(router, "POST", "/v1/runs", body, testToken, "key")
+	router := NewRouter(store, nil, []string{"owner"}, map[string]string{testToken: "owner", "other-token-with-24-characters": "other"})
+	session := createHTTPConversation(t, router)
+	path := "/v1/sessions/" + session.ID + "/messages"
+	body := `{"query":"question"}`
+	w := request(router, "POST", path, body, testToken, "key")
 	if w.Code != 202 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -140,7 +140,7 @@ func TestGinRunLifecycleAndSSE(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &run); err != nil {
 		t.Fatal(err)
 	}
-	if w = request(router, "POST", "/v1/runs", body, testToken, "key"); w.Code != 200 {
+	if w = request(router, "POST", path, body, testToken, "key"); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
 	assertError(t, request(router, "GET", "/v1/runs/"+run.ID, "", "other-token-with-24-characters", ""), 404, "NotFound")
@@ -182,7 +182,7 @@ func TestGinRunLifecycleAndSSE(t *testing.T) {
 	if strings.Contains(w.Body.String(), "RunCompleted") {
 		t.Fatal("replayed event before cursor")
 	}
-	w = request(router, "POST", "/v1/runs", `{"agentID":"a","sessionID":"s","query":"next"}`, testToken, "next")
+	w = request(router, "POST", path, `{"query":"next"}`, testToken, "next")
 	if w.Code != 202 {
 		t.Fatal(w.Body.String())
 	}
@@ -197,4 +197,29 @@ func TestGinRunLifecycleAndSSE(t *testing.T) {
 	if err != nil || canceled.Status != durable.Canceled {
 		t.Fatalf("%+v %v", canceled, err)
 	}
+}
+
+func createHTTPConversation(t *testing.T, router http.Handler) durable.Session {
+	t.Helper()
+	w := request(router, "POST", "/v1/agents", `{"name":"Assistant","config":{"model":{"name":"test","baseURL":"http://localhost:11434/v1"},"maxTurns":5}}`, testToken, "")
+	if w.Code != 201 {
+		t.Fatalf("create agent: %d %s", w.Code, w.Body.String())
+	}
+	var agent durable.Agent
+	if err := json.Unmarshal(w.Body.Bytes(), &agent); err != nil {
+		t.Fatal(err)
+	}
+	w = request(router, "POST", "/v1/agents/"+agent.ID+"/publish", `{"revision":1}`, testToken, "")
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	w = request(router, "POST", "/v1/sessions", `{"agentID":"`+agent.ID+`","title":"test"}`, testToken, "")
+	if w.Code != 201 {
+		t.Fatal(w.Body.String())
+	}
+	var session durable.Session
+	if err := json.Unmarshal(w.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	return session
 }

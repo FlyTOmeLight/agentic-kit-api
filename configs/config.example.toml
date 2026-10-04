@@ -7,10 +7,9 @@ url = "postgres://agentic:agentic_local@127.0.0.1:55432/agentic?sslmode=disable"
 [redis]
 url = "redis://127.0.0.1:56379/0"
 
-[agents]
-# Relative to this TOML file, including when AGENTS_FILE overrides it.
-file = "agents.local.json"
-
 [auth]
 # Supply API_TOKENS_JSON in the environment, or fill this in your local file.
 tokens_json = ""
+
+# Only these trusted owners can create/edit/publish model and tool configurations.
+config_owners = ["local-user"]

@@ -31,7 +31,8 @@ const (
 )
 
 var (
-	ErrNotFound  = errors.New("run not found")
+	ErrInvalid   = errors.New("invalid input")
+	ErrNotFound  = errors.New("resource not found")
 	ErrConflict  = errors.New("state or idempotency conflict")
 	ErrLeaseLost = errors.New("execution lease lost")
 	ErrUncertain = errors.New("tool outcome needs confirmation")
@@ -50,8 +51,15 @@ type Spec struct {
 	History       []Message  `json:"history,omitempty"`
 }
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
+	ToolCallID string     `json:"toolCallID,omitempty"`
+}
+type ToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 type ModelSpec struct {
 	Temperature *float32 `json:"temperature,omitempty"`
@@ -73,22 +81,24 @@ type ToolSpec struct {
 	Policy      Policy          `json:"policy"`
 }
 type Run struct {
-	ID          string          `json:"id"`
-	OwnerID     string          `json:"ownerID"`
-	SessionID   string          `json:"sessionID"`
-	Spec        Spec            `json:"-"`
-	State       json.RawMessage `json:"-"`
-	Status      Status          `json:"status"`
-	WorkerID    string          `json:"-"`
-	Epoch       int64           `json:"epoch"`
-	LeaseUntil  *time.Time      `json:"-"`
-	Deadline    time.Time       `json:"deadline"`
-	Attempt     int             `json:"attempt"`
-	MaxAttempts int             `json:"-"`
-	EventSeq    int64           `json:"eventSeq"`
-	Output      string          `json:"output,omitempty"`
-	WaitingStep string          `json:"waitingStep,omitempty"`
-	Error       string          `json:"error,omitempty"`
+	AgentID       string          `json:"agentID"`
+	ConfigVersion string          `json:"configVersion"`
+	ID            string          `json:"id"`
+	OwnerID       string          `json:"ownerID"`
+	SessionID     string          `json:"sessionID"`
+	Spec          Spec            `json:"-"`
+	State         json.RawMessage `json:"-"`
+	Status        Status          `json:"status"`
+	WorkerID      string          `json:"-"`
+	Epoch         int64           `json:"epoch"`
+	LeaseUntil    *time.Time      `json:"-"`
+	Deadline      time.Time       `json:"deadline"`
+	Attempt       int             `json:"attempt"`
+	MaxAttempts   int             `json:"-"`
+	EventSeq      int64           `json:"eventSeq"`
+	Output        string          `json:"output,omitempty"`
+	WaitingStep   string          `json:"waitingStep,omitempty"`
+	Error         string          `json:"error,omitempty"`
 }
 type Lease struct {
 	RunID, WorkerID string

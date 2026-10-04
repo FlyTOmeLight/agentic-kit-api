@@ -32,23 +32,22 @@ func writeConfig(t *testing.T, text string) string {
 }
 
 func TestServiceFileAndEnv(t *testing.T) {
-	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "AGENTS_FILE", "API_TOKENS_JSON")
+	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "CONFIG_OWNERS", "API_TOKENS_JSON")
 	path := writeConfig(t, `[database]
 url = "postgres://file:password@localhost/db"
 [http]
 listen_addr = "127.0.0.1:9000"
 [redis]
 url = "redis://localhost:6379/0"
-[agents]
-file = "agents.json"
 [auth]
 tokens_json = '{"123456789012345678901234":"owner"}'
+config_owners = ['owner']
 `)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.HTTP.ListenAddr != "127.0.0.1:9000" || cfg.Agents.File != filepath.Join(filepath.Dir(path), "agents.json") {
+	if cfg.HTTP.ListenAddr != "127.0.0.1:9000" || len(cfg.Auth.ConfigOwners) != 1 || cfg.Auth.ConfigOwners[0] != "owner" {
 		t.Fatalf("file settings not loaded")
 	}
 	if err := cfg.ValidateAPI(); err != nil {
@@ -56,9 +55,13 @@ tokens_json = '{"123456789012345678901234":"owner"}'
 	}
 	t.Setenv("DATABASE_URL", "postgres://env:password@localhost/db")
 	t.Setenv("LISTEN_ADDR", "127.0.0.1:9100")
+	t.Setenv("CONFIG_OWNERS", "owner,another")
 	cfg, err = Load(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(cfg.Auth.ConfigOwners) != 2 || cfg.Auth.ConfigOwners[1] != "another" {
+		t.Fatal("CONFIG_OWNERS not decoded")
 	}
 	if cfg.Database.URL != os.Getenv("DATABASE_URL") || cfg.HTTP.ListenAddr != "127.0.0.1:9100" {
 		t.Fatal("environment did not override file")
@@ -70,7 +73,7 @@ func TestServiceConfigFailures(t *testing.T) {
 		{"malformed", "[database"}, {"missing database", "[http]\nlisten_addr='localhost:8000'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "AGENTS_FILE", "API_TOKENS_JSON")
+			clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "CONFIG_OWNERS", "API_TOKENS_JSON")
 			if _, err := Load(writeConfig(t, tc.content)); err == nil {
 				t.Fatal("expected configuration error")
 			}
@@ -78,7 +81,7 @@ func TestServiceConfigFailures(t *testing.T) {
 	}
 }
 func TestMigrationEnvironmentOnly(t *testing.T) {
-	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "AGENTS_FILE", "API_TOKENS_JSON")
+	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "CONFIG_OWNERS", "API_TOKENS_JSON")
 	t.Setenv("DATABASE_URL", "postgres://localhost/db")
 	cfg, err := Load("")
 	if err != nil {

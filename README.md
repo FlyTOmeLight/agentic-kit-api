@@ -1,8 +1,8 @@
 # Agentic Kit API
 
-Agent 对话执行重构的 API 与持久化部分。与相邻的 `agentic-kit-worker` 仓库一起运行，解决原 `agentic-kit` 中后台 goroutine 随服务重启消失、执行进度不能接管、数据库与完成事件双写不一致的问题。
+Agent 的配置、发布、会话、消息与持久化执行 API。与相邻的 `agentic-kit-worker` 仓库一起运行，解决原 `agentic-kit` 中后台 goroutine 随服务重启消失、执行进度不能接管、数据库与完成事件双写不一致的问题。
 
-这是一套可运行的新执行主链路，使用独立 PostgreSQL 表，不会自动修改或迁移旧 `agent_run` 数据。原产品的完整功能迁移状态见 [迁移范围](docs/migration.md)，不能直接替换旧服务流量。
+当前版本为 v0.2，支持通过接口创建和发布 Agent、连续对话、查询历史及故障接管。使用独立 PostgreSQL 表，不会自动迁移原 agentic-kit 的 `agent_run` 数据。原产品的完整功能迁移状态见 [迁移范围](docs/migration.md)，不能直接替换旧服务流量。
 
 ## 项目结构
 
@@ -16,7 +16,9 @@ API 使用 Gin v1.11.0，与原 agentic-kit 保持框架版本一致。路由装
 
 ## 职责
 
-- 接收任务，按用户和请求编号幂等创建，冻结执行配置；同一会话只允许一个活动任务。
+- 管理 Agent 草稿和不可变发布版本；通过 revision 拒绝覆盖其他编辑者的修改。
+- 管理独立会话和消息记录；提交消息时固定配置版本和历史，同一会话只允许一个活动任务。
+- 重试相同请求时返回原任务，即使期间发布了新版本。
 - 查询、取消、回答澄清、确认不确定的工具结果。
 - 从数据库回放 SSE 事件；Redis Streams 加速通知，Redis 不可用时仍能回放已提交事件。
 - 保存任务、工具执行记录和事件 Outbox。worker 引用本仓库的 `pkg/durable` 包，避免两份状态机。
@@ -48,8 +50,6 @@ docker compose -f deploy/compose.yaml up -d
 cp configs/config.example.toml configs/config.local.toml
 # 修改 config.local.toml 中的服务配置。
 export API_TOKENS_JSON='{"replace-with-your-local-token-32chars":"local-user"}'
-cp configs/agents.example.json configs/agents.local.json
-# 修改 agents.local.json 中的模型地址、模型名和可用工具。
 go run ./cmd/migrate -config configs/config.local.toml
 go run ./cmd/api -config configs/config.local.toml
 ```
@@ -59,21 +59,36 @@ go run ./cmd/api -config configs/config.local.toml
 ```bash
 cd agentic-kit-worker
 cp configs/config.example.toml configs/config.local.toml
-export MODEL_API_KEY='你的模型凭据'
+# 本地 Ollama 不需要密钥。其他模型按 Agent 配置中的 apiKeyEnv 设置。
+# export MODEL_API_KEY='你的模型凭据'
 go run ./cmd/worker -config configs/config.local.toml
 ```
 
 API 默认监听 `127.0.0.1:8080`。`LISTEN_ADDR` 可修改监听地址。本地示例 token 仅用于演示，部署时自行配置。
 
+创建 Agent、发布、创建会话和发送消息（示例使用 curl 和 jq）：
+
 ```bash
-curl -X POST http://127.0.0.1:8080/v1/runs \
-  -H 'Authorization: Bearer replace-with-your-local-token-32chars' \
-  -H 'Idempotency-Key: request-001' \
-  -H 'Content-Type: application/json' \
-  -d '{"agentID":"assistant","sessionID":"session-001","query":"请帮我分析这个问题"}'
+export API_TOKEN='replace-with-your-local-token-32chars'
+export API_URL='http://127.0.0.1:8080'
+# 示例指向本机 Ollama qwen3.8:27b-mlx；可复制到 *.local.json 修改。
+agent_id=$(curl --fail-with-body -sS "$API_URL/v1/agents" \
+  -H "Authorization: Bearer $API_TOKEN" -H 'Content-Type: application/json' \
+  --data-binary @configs/agents.example.json | jq -r .id)
+curl --fail-with-body -sS "$API_URL/v1/agents/$agent_id/publish" \
+  -H "Authorization: Bearer $API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"revision":1}'
+session_id=$(curl --fail-with-body -sS "$API_URL/v1/sessions" \
+  -H "Authorization: Bearer $API_TOKEN" -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg agentID "$agent_id" '{agentID:$agentID,title:"第一次对话"}')" | jq -r .id)
+run_id=$(curl --fail-with-body -sS "$API_URL/v1/sessions/$session_id/messages" \
+  -H "Authorization: Bearer $API_TOKEN" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: question-001' -d '{"query":"请介绍一下你自己。"}' | jq -r .id)
+curl -N "$API_URL/v1/runs/$run_id/events" -H "Authorization: Bearer $API_TOKEN"
+curl --fail-with-body -sS "$API_URL/v1/sessions/$session_id/messages" -H "Authorization: Bearer $API_TOKEN"
 ```
 
-返回任务 `id` 后，用 `GET /v1/runs/{id}` 查询；用 `GET /v1/runs/{id}/events` 接收 SSE。详细请求见 [接口契约](docs/api.md)。
+继续对话时使用相同 session_id、新的 Idempotency-Key 和 query。编辑 Agent 使用 `PUT /v1/agents/{id}`，传完整 name/config 和当前 revision；发布后新任务使用新版本，已有任务仍使用原版本。详情见 [接口契约](docs/api.md)。
 
 ## 服务配置
 
@@ -84,10 +99,12 @@ API 和 migrate 使用独立 Viper 实例读取 TOML；通过 `-config` 指定�
 | http.listen_addr | LISTEN_ADDR | 127.0.0.1:8080 |
 | database.url | DATABASE_URL | 必填 |
 | redis.url | REDIS_URL | API 必填 |
-| agents.file | AGENTS_FILE | API 必填 |
+| auth.config_owners | CONFIG_OWNERS（逗号分隔） | 空列表 |
 | auth.tokens_json | API_TOKENS_JSON | API 必填 |
 
-优先级为环境变量 > TOML > 默认值；已设置的空环境变量也会覆盖文件。指定 TOML 时，相对 agents.file（含环境变量覆盖值）以 TOML 所在目录为基准。Agent 定义仍使用 JSON，工具参数保持 JSON Schema 格式；模型和工具凭据由 worker 环境变量提供。
+优先级为环境变量 > TOML > 默认值；已设置的空环境变量也会覆盖文件。Agent 定义由数据库管理，API 启动不读取 agents 文件。`configs/agents.example.json` 是创建接口的请求样例，可以直接导入。工具参数使用 JSON Schema；模型和工具凭据由 worker 环境变量提供。
+
+`auth.config_owners` 指定可编辑模型地址、工具地址和凭据引用的受信任用户。这些配置会影响 worker 的外部访问，普通 token 不具备配置写权限。Agent、会话、消息和任务均按 owner 隔离，本轮未实现共享 Agent 或 project 级授权。
 
 Viper v1.21.0 用于复用文件解析、配置覆盖和结构体解码，采用 MIT 许可，无需 CGO 或代码生成。依赖包含 mapstructure、fsnotify、afero、cast、pflag 等，固定版本见 go.mod/go.sum；本次未运行漏洞数据库扫描。
 
@@ -105,10 +122,16 @@ make integration
 
 连接、事务、查询和写入集中在 `pkg/durable` 的 GORM Store；API 与 worker 使用同一实现。读写使用 GORM Model、查询构造器和 Updates；领取与执行权校验使用 Locking 子句，更新结果使用 Returning 子句，Outbox 领取使用子查询。数据库时钟与原子递增使用 gorm.Expr；事务级 advisory lock 通过 GORM Exec 调用 PostgreSQL 函数。
 
-`pkg/durable/models.go` 是三张表结构的唯一来源，包含复合主键、CHECK、外键、部分唯一索引和数据库默认值。`cmd/migrate` 在持有迁移锁的 GORM 事务中调用 AutoMigrate；API 和 worker 启动时不自动建表。AutoMigrate 会补齐缺失的表、列、约束和索引，也可能调整列类型或可空性；不会自动删除废弃列。变更模型后应先验证已有数据库上的迁移，再执行部署迁移命令。连接池每进程最多 20 个连接、5 个空闲连接；退出时关闭。SQL 日志关闭，避免输出模型上下文与工具结果。
+`pkg/durable/models.go` 是表结构的唯一来源，包含复合主键、CHECK、外键、部分唯一索引和数据库默认值。`cmd/migrate` 在持有迁移锁的 GORM 事务中调用 AutoMigrate；API 和 worker 启动时不自动建表。AutoMigrate 会补齐缺失的表、列、约束和索引，也可能调整列类型或可空性；不会自动删除废弃列。变更模型后应先验证已有数据库上的迁移，再执行部署迁移命令。连接池每进程最多 20 个连接、5 个空闲连接；退出时关闭。SQL 日志关闭，避免输出模型上下文与工具结果。
 
 ## 依赖选择
 
 Gin v1.11.0 与 gin-contrib/sse v1.1.0 沿用原仓库版本，分别用于 HTTP 框架与 SSE 编码，均为 MIT 许可；固定传递依赖在 go.sum 中。数据库统一通过 GORM v1.31.2 和官方 PostgreSQL 驱动 v1.6.3 管理；驱动底层使用 pgx v5.10.0，配置层仅使用 pgx 解析连接串。GORM 与驱动均为 MIT 许可，无需 CGO 或代码生成，新增依赖主要为 jinzhu/inflection、jinzhu/now。Redis 沿用 go-redis v9.16.0（BSD 2-Clause）。固定版本及传递依赖记录在 go.mod/go.sum；本次没有执行漏洞数据库扫描。
 
 [设计与故障处理](docs/design.md) · [迁移范围](docs/migration.md) · [验证记录](docs/verification.md)
+
+## 从 v0.1 升级
+
+v0.2 改变任务提交入口，移除 `POST /v1/runs` 与静态 agents 文件加载。服务 TOML 中删除 `[agents]`，在 `[auth]` 中配置 `config_owners`；Agent 示例 JSON 也改为创建接口的请求格式。
+
+v0.1 的任务只有 session 标签，无法完整还原 Agent 发布版本和消息记录。本轮不自动转换这些数据。空数据库可以直接执行 migrate；含 v0.1 任务的数据库会被迁移命令拒绝，原数据保持不变。已有任务应由原版本处理完成，v0.2 使用新数据库或独立 PostgreSQL schema。原项目数据迁移和旧客户端适配仍需单独实施。

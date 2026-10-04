@@ -14,7 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func (h *runHandler) events(c *gin.Context) {
+func (h *handler) events(c *gin.Context) {
 	r, w := c.Request, c.Writer
 	id := c.Param("id")
 	after := int64(0)

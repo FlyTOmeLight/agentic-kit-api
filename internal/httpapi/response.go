@@ -22,8 +22,10 @@ func abort(c *gin.Context, status int, code, message string) {
 }
 func respondError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, durable.ErrInvalid):
+		abort(c, 400, "InvalidRequest", "invalid input")
 	case errors.Is(err, durable.ErrNotFound):
-		abort(c, http.StatusNotFound, "NotFound", "run not found")
+		abort(c, http.StatusNotFound, "NotFound", "resource not found")
 	case errors.Is(err, durable.ErrConflict):
 		abort(c, http.StatusConflict, "Conflict", "state or idempotency conflict")
 	default:

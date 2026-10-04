@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// These records are the schema source of truth. Timestamps use the database
-// clock; GORM's application-clock timestamp callbacks are deliberately disabled.
+// Records are the schema source of truth. Run timestamps use the database
+// clock because leases must not depend on individual worker clocks.
 type runRecord struct {
 	ID          string          `gorm:"type:text;primaryKey;not null"`
 	OwnerID     string          `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:1;uniqueIndex:durable_session_active,priority:1,where:status = 'Queued' OR status = 'Running' OR status = 'WaitingClarification' OR status = 'NeedsReview'"`
@@ -32,7 +32,7 @@ type runRecord struct {
 
 func (runRecord) TableName() string { return "durable_run" }
 func (r runRecord) run() *Run {
-	return &Run{ID: r.ID, OwnerID: r.OwnerID, SessionID: r.SessionID, Spec: r.Spec, State: r.State,
+	return &Run{AgentID: r.Spec.AgentID, ConfigVersion: r.Spec.ConfigVersion, ID: r.ID, OwnerID: r.OwnerID, SessionID: r.SessionID, Spec: r.Spec, State: r.State,
 		Status: r.Status, WorkerID: r.WorkerID, Epoch: r.Epoch, LeaseUntil: r.LeaseUntil,
 		Deadline: r.Deadline, Attempt: r.Attempt, MaxAttempts: r.MaxAttempts, EventSeq: r.EventSeq,
 		Output: r.Output, Error: r.Error, WaitingStep: waitingStep(r.State)}
@@ -64,3 +64,54 @@ func (eventRecord) TableName() string { return "durable_event" }
 func (e eventRecord) event() Event {
 	return Event{RunID: e.RunID, Seq: e.Seq, Kind: e.Kind, Payload: e.Payload}
 }
+
+// Agent drafts are editable. Published versions are append-only through Store.
+type agentRecord struct {
+	ID                string      `gorm:"type:text;primaryKey;not null"`
+	OwnerID           string      `gorm:"type:text;not null;index:agent_owner,priority:1"`
+	Name              string      `gorm:"type:text;not null"`
+	Draft             AgentConfig `gorm:"serializer:json;type:jsonb;not null"`
+	Revision          int64       `gorm:"not null"`
+	PublishedRevision int64       `gorm:"not null;default:0"`
+	PublishedVersion  int64       `gorm:"not null;default:0"`
+	CreatedAt         time.Time   `gorm:"not null"`
+	UpdatedAt         time.Time   `gorm:"not null"`
+}
+
+func (agentRecord) TableName() string { return "agent" }
+
+type versionRecord struct {
+	AgentID   string       `gorm:"type:text;primaryKey;not null"`
+	Number    int64        `gorm:"primaryKey;autoIncrement:false;not null"`
+	Config    AgentConfig  `gorm:"serializer:json;type:jsonb;not null"`
+	CreatedAt time.Time    `gorm:"not null"`
+	Agent     *agentRecord `gorm:"foreignKey:AgentID;references:ID"`
+}
+
+func (versionRecord) TableName() string { return "agent_version" }
+
+type sessionRecord struct {
+	ID         string       `gorm:"type:text;primaryKey;not null"`
+	OwnerID    string       `gorm:"type:text;not null;index:session_owner,priority:1"`
+	AgentID    string       `gorm:"type:text;not null;index"`
+	Title      string       `gorm:"type:text;not null"`
+	MessageSeq int64        `gorm:"not null;default:0"`
+	CreatedAt  time.Time    `gorm:"not null"`
+	UpdatedAt  time.Time    `gorm:"not null"`
+	Agent      *agentRecord `gorm:"foreignKey:AgentID;references:ID"`
+}
+
+func (sessionRecord) TableName() string { return "agent_session" }
+
+type messageRecord struct {
+	SessionID string         `gorm:"type:text;primaryKey;not null"`
+	Seq       int64          `gorm:"primaryKey;autoIncrement:false;not null"`
+	RunID     string         `gorm:"type:text;not null;index"`
+	Kind      string         `gorm:"type:text;not null;check:agent_message_kind,kind IN ('User','Assistant','Final','Tool','ClarificationAnswer','ReviewResult')"`
+	Message   Message        `gorm:"serializer:json;type:jsonb;not null"`
+	CreatedAt time.Time      `gorm:"not null"`
+	Session   *sessionRecord `gorm:"foreignKey:SessionID;references:ID"`
+	Run       *runRecord     `gorm:"foreignKey:RunID;references:ID"`
+}
+
+func (messageRecord) TableName() string { return "agent_message" }

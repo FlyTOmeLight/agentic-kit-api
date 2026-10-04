@@ -13,9 +13,7 @@ import (
 const maxRequestBytes = 1 << 20
 
 type createRunRequest struct {
-	AgentID   string `json:"agentID" binding:"required,max=128"`
-	SessionID string `json:"sessionID" binding:"required,max=128"`
-	Query     string `json:"query" binding:"required"`
+	Query string `json:"query" binding:"required"`
 }
 type createRunHeaders struct {
 	IdempotencyKey string `header:"Idempotency-Key" binding:"required,max=128"`

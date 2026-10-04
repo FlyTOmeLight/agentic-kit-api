@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"net"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -22,25 +21,24 @@ type Service struct {
 	Redis struct {
 		URL string `mapstructure:"url"`
 	} `mapstructure:"redis"`
-	Agents struct {
-		File string `mapstructure:"file"`
-	} `mapstructure:"agents"`
 	Auth struct {
-		TokensJSON string `mapstructure:"tokens_json"`
+		ConfigOwners []string `mapstructure:"config_owners"`
+		TokensJSON   string   `mapstructure:"tokens_json"`
 	} `mapstructure:"auth"`
 }
 
 // Load reads a TOML file when specified. Bound environment variables override it.
-// A relative agents.file is resolved against the configuration file directory.
+// Configuration authors are explicitly listed by the deployment operator.
 func Load(path string) (Service, error) {
 	var cfg Service
 	v := viper.New()
 	v.SetConfigType("toml")
 	v.AllowEmptyEnv(true)
+	v.SetDefault("auth.config_owners", []string{})
 	v.SetDefault("http.listen_addr", "127.0.0.1:8080")
 	for key, env := range map[string]string{
 		"http.listen_addr": "LISTEN_ADDR", "database.url": "DATABASE_URL",
-		"redis.url": "REDIS_URL", "agents.file": "AGENTS_FILE", "auth.tokens_json": "API_TOKENS_JSON",
+		"redis.url": "REDIS_URL", "auth.config_owners": "CONFIG_OWNERS", "auth.tokens_json": "API_TOKENS_JSON",
 	} {
 		if err := v.BindEnv(key, env); err != nil {
 			return cfg, fmt.Errorf("bind %s: %w", key, err)
@@ -61,9 +59,6 @@ func Load(path string) (Service, error) {
 	if _, err := pgx.ParseConfig(cfg.Database.URL); err != nil {
 		return cfg, fmt.Errorf("invalid database.url")
 	}
-	if path != "" && cfg.Agents.File != "" && !filepath.IsAbs(cfg.Agents.File) {
-		cfg.Agents.File = filepath.Join(filepath.Dir(path), cfg.Agents.File)
-	}
 	return cfg, nil
 }
 
@@ -79,9 +74,6 @@ func (cfg Service) ValidateAPI() error {
 	}
 	if _, err := redis.ParseURL(cfg.Redis.URL); err != nil {
 		return fmt.Errorf("invalid redis.url")
-	}
-	if cfg.Agents.File == "" {
-		return fmt.Errorf("agents.file is required")
 	}
 	if _, err := LoadTokens(cfg.Auth.TokensJSON); err != nil {
 		return fmt.Errorf("invalid auth.tokens_json: %w", err)

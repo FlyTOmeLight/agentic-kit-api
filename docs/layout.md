@@ -18,12 +18,16 @@ agentic-kit-api/
 │       ├── middleware.go     # 鉴权、日志、Recovery
 │       ├── request.go        # 请求 DTO 与 binding
 │       ├── response.go       # 错误响应
+│       ├── agents.go         # 草稿编辑、发布和版本查询
+│       ├── sessions.go       # 会话、消息和运行记录
 │       ├── runs.go           # 任务 handler
 │       ├── events.go         # SSE
 │       └── router_test.go
 ├── pkg/
 │   └── durable/              # API 与 worker 共用的任务状态与事务契约
 │       ├── types.go
+│       ├── agents.go         # Agent 配置与发布事务
+│       ├── conversations.go  # 会话、消息与分页查询
 │       ├── store.go
 │       ├── models.go         # GORM 表结构、约束与索引
 │       ├── events.go         # Outbox 发布
@@ -58,3 +62,5 @@ pkg 是本项目对共享包的显式标记，不是 Go 编译器的特殊目录
 HTTP 参数、状态码和 Gin Context 留在 internal/httpapi；任务状态变化、数据库并发控制和事务边界集中在 pkg/durable；模型和工具执行在 worker/internal/engine。context.Context 沿调用链传递。
 
 当前不添加仅转发一次调用的 service/repository 层，也不创建空的 models、utils、common 目录。未来新增业务职责时，在职责实际出现的位置拆包；持久化模型与 Store 同属 durable 包。
+
+Agent、会话与执行存储暂时同属 durable 包，以便用户消息、Run、执行消息和 Outbox 共享事务。按职责分文件；worker 只使用执行相关方法。只有出现独立发布或独立存储需求时再拆共享模块。

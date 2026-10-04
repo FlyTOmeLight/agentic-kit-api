@@ -13,7 +13,9 @@
 | llm.Build 与 chatmodel | 同一 Eino 接口和 OpenAI 兼容模型接入 | 已实现基础模型参数；Prism endpoint 动态解析待接 |
 | runtime/adapters.go MCP 调用 | AppForgeMCP 使用 /v1/RunMcpTool | 已实现协议适配，未连接真实业务环境 |
 | runtime/adapters.go OpenAPI 调用 | AppForgeOpenAPI 使用 /v1/RunTool | 已实现协议适配，未连接真实业务环境 |
-| Resource/Tool 元信息与权限解析 | 服务端 agents 配置快照和 owner 授权 | 本地配置替代，原资源目录尚未迁移 |
+| Agent 配置与发布 | 数据库草稿、revision 与不可变发布版本 | 已实现基础模型/工具配置；原核心文件与资源目录尚未迁移 |
+| Session / Message | 独立会话、按序消息、运行记录和分页接口 | 已实现基础多轮对话；原会话搜索、置顶等未迁移 |
+| Resource/Tool 元信息与权限解析 | 数据库配置快照、owner 隔离和 config_owners 写权限 | 原资源目录与 project 授权尚未迁移 |
 | ask_for_clarification | 持久化等待与回答接口 | 已实现 |
 | Sandbox、Skill、artifact、知识资源工具、Memory | 依赖原业务服务的工具装配 | 尚未迁移 |
 | 上下文压缩、模型 failover、逐 token 输出 | 原 middleware 和 streaming 路径 | 尚未迁移 |

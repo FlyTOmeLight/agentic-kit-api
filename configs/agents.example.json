@@ -1,36 +1,30 @@
-[
-  {
-    "id": "assistant",
-    "owners": [
-      "local-user"
-    ],
-    "spec": {
-      "configVersion": "v1",
-      "systemPrompt": "你是一个可靠的助手。信息不足时先向用户澄清。",
-      "model": {
-        "name": "replace-with-your-model",
-        "baseURL": "http://127.0.0.1:8000/v1",
-        "apiKeyEnv": "MODEL_API_KEY"
-      },
-      "maxTurns": 20,
-      "tools": [
-        {
-          "name": "ask_for_clarification",
-          "description": "向用户询问缺少的信息，等待回答后继续。",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "question": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "question"
-            ]
+{
+  "name": "本地 Qwen 助手",
+  "config": {
+    "systemPrompt": "你是一个可靠的助手。信息不足时先向用户澄清。",
+    "model": {
+      "name": "qwen3.8:27b-mlx",
+      "baseURL": "http://127.0.0.1:11434/v1",
+      "apiKeyEnv": ""
+    },
+    "maxTurns": 20,
+    "tools": [
+      {
+        "name": "ask_for_clarification",
+        "description": "向用户询问缺少的信息，等待回答后继续。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string"
+            }
           },
-          "policy": "ReadOnly"
-        }
-      ]
-    }
+          "required": [
+            "question"
+          ]
+        },
+        "policy": "ReadOnly"
+      }
+    ]
   }
-]
+}

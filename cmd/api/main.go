@@ -35,10 +35,6 @@ func run() error {
 	if err = cfg.ValidateAPI(); err != nil {
 		return err
 	}
-	agents, err := config.LoadAgents(cfg.Agents.File)
-	if err != nil {
-		return err
-	}
 	tokens, err := config.LoadTokens(cfg.Auth.TokensJSON)
 	if err != nil {
 		return err
@@ -62,7 +58,7 @@ func run() error {
 	addr := cfg.HTTP.ListenAddr
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewRouter(store, rdb, agents, tokens),
+		Handler:           httpapi.NewRouter(store, rdb, cfg.Auth.ConfigOwners, tokens),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}

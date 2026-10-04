@@ -54,9 +54,35 @@ func testStore(t *testing.T) *Store {
 	}
 	return s
 }
+func testConversation(t *testing.T, s *Store, spec Spec) *Session {
+	t.Helper()
+	cfg := AgentConfig{SystemPrompt: spec.SystemPrompt, Model: spec.Model, Tools: spec.Tools, MaxTurns: spec.MaxTurns}
+	if cfg.MaxTurns == 0 {
+		cfg.MaxTurns = 5
+	}
+	if cfg.Model.Name == "" {
+		cfg.Model.Name = "test"
+	}
+	if cfg.Model.BaseURL == "" {
+		cfg.Model.BaseURL = "http://localhost:11434/v1"
+	}
+	a, err := s.CreateAgent(context.Background(), "owner", "test", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.PublishAgent(context.Background(), "owner", a.ID, a.Revision); err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.CreateSession(context.Background(), "owner", a.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
 func createRun(t *testing.T, s *Store) *Run {
 	t.Helper()
-	r, _, err := s.Create(context.Background(), "owner", NewID(), NewID(), Spec{AgentID: "agent", Query: "question", MaxTurns: 5}, time.Hour, 3)
+	session := testConversation(t, s, Spec{MaxTurns: 5})
+	r, _, err := s.Submit(context.Background(), "owner", session.ID, NewID(), "question", time.Hour, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,16 +148,17 @@ func TestIdempotencyOwnershipAndCancellation(t *testing.T) {
 	ctx := context.Background()
 	spec := Spec{Query: "hello", MaxTurns: 2}
 	key := NewID()
-	r, created, err := s.Create(ctx, "owner", "session", key, spec, time.Hour, 3)
+	session := testConversation(t, s, spec)
+	r, created, err := s.Submit(ctx, "owner", session.ID, key, spec.Query, time.Hour, 3)
 	if err != nil || !created {
 		t.Fatal(err)
 	}
-	repeat, created, err := s.Create(ctx, "owner", "session", key, spec, time.Hour, 3)
+	repeat, created, err := s.Submit(ctx, "owner", session.ID, key, spec.Query, time.Hour, 3)
 	if err != nil || created || repeat.ID != r.ID {
 		t.Fatal("submission not idempotent", err)
 	}
 	spec.Query = "changed"
-	if _, _, err = s.Create(ctx, "owner", "session", key, spec, time.Hour, 3); !errors.Is(err, ErrConflict) {
+	if _, _, err = s.Submit(ctx, "owner", session.ID, key, spec.Query, time.Hour, 3); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
 	if _, err = s.Get(ctx, "other", r.ID); !errors.Is(err, ErrNotFound) {
@@ -255,11 +282,12 @@ func TestDeadlineAndAttemptLimit(t *testing.T) {
 func TestSessionHistoryAndSingleActiveRun(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	first, _, err := s.Create(ctx, "owner", "session", "first", Spec{AgentID: "agent", Query: "first question"}, time.Hour, 3)
+	session := testConversation(t, s, Spec{})
+	first, _, err := s.Submit(ctx, "owner", session.ID, "first", "first question", time.Hour, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = s.Create(ctx, "owner", "session", "second", Spec{AgentID: "agent", Query: "second question"}, time.Hour, 3); !errors.Is(err, ErrConflict) {
+	if _, _, err = s.Submit(ctx, "owner", session.ID, "second", "second question", time.Hour, 3); !errors.Is(err, ErrConflict) {
 		t.Fatal("active predecessor accepted", err)
 	}
 	running := claim(t, s, "a")
@@ -269,7 +297,7 @@ func TestSessionHistoryAndSingleActiveRun(t *testing.T) {
 	if err = s.Save(ctx, running.Lease(), json.RawMessage(`{}`), Completed, "first answer", "", "RunCompleted"); err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := s.Create(ctx, "owner", "session", "second", Spec{AgentID: "agent", Query: "second question"}, time.Hour, 3)
+	second, _, err := s.Submit(ctx, "owner", session.ID, "second", "second question", time.Hour, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,11 +310,13 @@ func TestJSONRoundTripAndRepeatedMigration(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	temperature := float32(0.3)
-	spec := Spec{AgentID: "agent", ConfigVersion: "v1", Query: "中文问题", MaxTurns: 5,
-		Model: ModelSpec{Name: "model", Temperature: &temperature},
-		Tools: []ToolSpec{{Name: "lookup", Parameters: json.RawMessage(`{"type":"object","properties":{"term":{"type":"string"}}}`), Policy: ReadOnly}},
+	spec := Spec{AgentID: "agent", ConfigVersion: "1", Query: "中文问题", MaxTurns: 5,
+		Model: ModelSpec{Name: "model", BaseURL: "http://localhost:11434/v1", Temperature: &temperature},
+		Tools: []ToolSpec{{Name: "lookup", URL: "http://localhost:9000/tool", Parameters: json.RawMessage(`{"type":"object","properties":{"term":{"type":"string"}}}`), Policy: ReadOnly}},
 	}
-	run, _, err := s.Create(ctx, "owner", "session", "request", spec, time.Hour, 3)
+	session := testConversation(t, s, spec)
+	spec.AgentID = session.AgentID
+	run, _, err := s.Submit(ctx, "owner", session.ID, "request", spec.Query, time.Hour, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
