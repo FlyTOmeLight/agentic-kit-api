@@ -12,9 +12,10 @@ import (
 // Client groups operations by business responsibility. Its services can be
 // shared by goroutines; do not replace the fields while requests are in flight.
 type Client struct {
-	Agents   AgentAPI
-	Sessions SessionAPI
-	Runs     RunAPI
+	Executions ExecutionAPI
+	Agents     AgentAPI
+	Sessions   SessionAPI
+	Runs       RunAPI
 }
 
 // NewClient constructs the Resty-backed services. The optional HTTP client
@@ -41,8 +42,9 @@ func NewClient(baseURL, token string, httpClient *http.Client) (*Client, error) 
 		SetRetryCount(0)
 	httpTransport := &transport{client: rc}
 	return &Client{
-		Agents:   &agentClient{transport: httpTransport},
-		Sessions: &sessionClient{transport: httpTransport},
-		Runs:     &runClient{transport: httpTransport},
+		Executions: &executionClient{transport: httpTransport},
+		Agents:     &agentClient{transport: httpTransport},
+		Sessions:   &sessionClient{transport: httpTransport},
+		Runs:       &runClient{transport: httpTransport},
 	}, nil
 }

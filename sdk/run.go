@@ -58,6 +58,7 @@ type ToolSpec struct {
 	Policy      Policy          `json:"policy"`
 }
 type Run struct {
+	Scope         *Scope    `json:"scope,omitempty"`
 	AgentID       string    `json:"agentID"`
 	ConfigVersion string    `json:"configVersion"`
 	ID            string    `json:"id"`

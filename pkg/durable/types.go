@@ -35,15 +35,9 @@ var (
 	ErrNoWork    = errors.New("no runnable task")
 )
 
+type Scope = sdk.Scope
+
 // Spec is an immutable snapshot. Credentials are environment references, never secret values.
-// Scope is asserted by a trusted application, never by end-user input.
-type Scope struct {
-	TenantID  string `json:"tenantID"`
-	ProjectID string `json:"projectID"`
-	ActorID   string `json:"actorID"`
-	TaskID    string `json:"taskID"`
-	RoundID   string `json:"roundID"`
-}
 type Spec struct {
 	Scope *Scope `json:"scope,omitempty"`
 
@@ -100,5 +94,5 @@ func NewID() string {
 }
 
 func (r Run) Response() sdk.Run {
-	return sdk.Run{ID: r.ID, AgentID: r.AgentID, ConfigVersion: r.ConfigVersion, OwnerID: r.OwnerID, SessionID: r.SessionID, Status: r.Status, Epoch: r.Epoch, Deadline: r.Deadline, Attempt: r.Attempt, EventSeq: r.EventSeq, Output: r.Output, WaitingStep: r.WaitingStep, Error: r.Error}
+	return sdk.Run{Scope: r.Scope, ID: r.ID, AgentID: r.AgentID, ConfigVersion: r.ConfigVersion, OwnerID: r.OwnerID, SessionID: r.SessionID, Status: r.Status, Epoch: r.Epoch, Deadline: r.Deadline, Attempt: r.Attempt, EventSeq: r.EventSeq, Output: r.Output, WaitingStep: r.WaitingStep, Error: r.Error}
 }

@@ -92,3 +92,7 @@ HTTP 路径、JSON 类型和数据库格式不变。Go 方法改为按业务访�
 | GetRun / CancelRun / AnswerRun / ResolveRun / OpenRunEvents | Runs.Get / Cancel / Answer / Resolve / OpenEvents |
 
 NewClient 的参数不变。请求、响应、错误和分页类型仍在 sdk 包；构造函数不要求调用方了解 Resty。
+
+## 受信任应用执行
+
+`Client.Executions` 提供 Submit 与 CheckLease，使用 SubmitExecutionRequest / ExecutionSpec / Scope。Submit 的幂等键与不可变快照重试语义和服务端一致。仅配置为 config_owners 的服务身份可调用；浏览器用户不得持有此令牌。Run.Scope 记录提交时的业务上下文，不替代每次敏感操作的动态授权。
