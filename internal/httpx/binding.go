@@ -1,4 +1,4 @@
-package httpapi
+package httpx
 
 import (
 	"encoding/json"
@@ -11,17 +11,6 @@ import (
 )
 
 const maxRequestBytes = 1 << 20
-
-type createRunRequest struct {
-	Query string `json:"query" binding:"required"`
-}
-type createRunHeaders struct {
-	IdempotencyKey string `header:"Idempotency-Key" binding:"required,max=128"`
-}
-type supplyResultRequest struct {
-	StepID string `json:"stepID" binding:"required,max=128"`
-	Result string `json:"result" binding:"required"`
-}
 
 // A per-router binding keeps strict JSON semantics without changing Gin's package-level decoder flags.
 type strictJSONBinding struct{}
@@ -41,14 +30,14 @@ func (strictJSONBinding) Bind(r *http.Request, dst any) error {
 	}
 	return binding.Validator.ValidateStruct(dst)
 }
-func bindJSON(c *gin.Context, dst any) bool {
+func BindJSON(c *gin.Context, dst any) bool {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBytes)
 	if err := c.ShouldBindWith(dst, strictJSONBinding{}); err != nil {
 		var oversized *http.MaxBytesError
 		if errors.As(err, &oversized) {
-			abort(c, http.StatusRequestEntityTooLarge, "PayloadTooLarge", "request body exceeds 1 MiB")
+			Abort(c, http.StatusRequestEntityTooLarge, "PayloadTooLarge", "request body exceeds 1 MiB")
 		} else {
-			abort(c, http.StatusBadRequest, "InvalidRequest", "invalid request body")
+			Abort(c, http.StatusBadRequest, "InvalidRequest", "invalid request body")
 		}
 		return false
 	}

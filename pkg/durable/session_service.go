@@ -2,6 +2,8 @@ package durable
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -113,4 +115,92 @@ func appendMessage(tx *gorm.DB, run *Run, kind string, message Message) error {
 		return ErrNotFound
 	}
 	return tx.Create(&messageRecord{SessionID: run.SessionID, Seq: session.MessageSeq, RunID: run.ID, Kind: kind, Message: message}).Error
+}
+
+// Submit freezes the published configuration and conversation history in the same
+// transaction as the user message, run and queued event. A retry hashes only the
+// caller's input, so publishing a new version cannot invalidate an accepted request.
+func (s *Store) Submit(ctx context.Context, owner, session, key, query string, ttl time.Duration, maxAttempts int) (*Run, bool, error) {
+	if owner == "" || session == "" || strings.TrimSpace(key) == "" || len(key) > 128 || strings.TrimSpace(query) == "" || ttl <= 0 || maxAttempts < 1 {
+		return nil, false, ErrInvalid
+	}
+	input, _ := json.Marshal(struct{ Session, Query string }{session, query})
+	hash := Hash(input)
+	var run *Run
+	created := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, owner+":"+key).Error; err != nil {
+			return err
+		}
+		var existing runRecord
+		err := tx.Where("owner_id = ? AND request_key = ?", owner, key).Take(&existing).Error
+		if err == nil {
+			if existing.RequestHash != hash {
+				return ErrConflict
+			}
+			run = existing.run()
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var conversation sessionRecord
+		if err = tx.Where("owner_id = ? AND id = ?", owner, session).Clauses(clause.Locking{Strength: "UPDATE"}).Take(&conversation).Error; err != nil {
+			return recordError(err)
+		}
+		var active int64
+		if err = tx.Model(&runRecord{}).Where("owner_id = ? AND session_id = ? AND status IN ?", owner, session, []Status{Queued, Running, WaitingClarification, NeedsReview}).Count(&active).Error; err != nil {
+			return err
+		}
+		if active > 0 {
+			return ErrConflict
+		}
+		var agent agentRecord
+		if err = tx.Where("owner_id = ? AND id = ?", owner, conversation.AgentID).Take(&agent).Error; err != nil {
+			return recordError(err)
+		}
+		if agent.PublishedVersion == 0 {
+			return ErrConflict
+		}
+		var version versionRecord
+		if err = tx.Where("agent_id = ? AND number = ?", agent.ID, agent.PublishedVersion).Take(&version).Error; err != nil {
+			return err
+		}
+		spec := version.Config.spec(agent.ID, version.Number, query)
+		// Keep the existing bounded prompt policy: the last 20 completed user/final pairs.
+		// Tool calls remain available in the message log for inspection and later compression.
+		prior := tx.Model(&runRecord{}).Select("id").Where("owner_id = ? AND session_id = ? AND status = ?", owner, session, Completed).Order("created_at DESC, id DESC").Limit(20)
+		var history []messageRecord
+		if err = tx.Where("session_id = ? AND run_id IN (?) AND kind IN ?", session, prior, []string{"User", "Final"}).Order("seq").Find(&history).Error; err != nil {
+			return err
+		}
+		for _, m := range history {
+			spec.History = append(spec.History, m.Message)
+		}
+		data, err := json.Marshal(spec)
+		if err != nil {
+			return err
+		}
+		id := NewID()
+		if err = tx.Model(&runRecord{}).Create(map[string]any{
+			"id": id, "owner_id": owner, "session_id": session, "request_key": key, "request_hash": hash, "spec": string(data), "status": Queued,
+			"deadline": gorm.Expr("clock_timestamp()+?*interval '1 millisecond'", ttl.Milliseconds()), "max_attempts": maxAttempts,
+		}).Error; err != nil {
+			return recordError(err)
+		}
+		run, err = readRun(tx.Where("id = ?", id))
+		if err != nil {
+			return err
+		}
+		if err = appendMessage(tx, run, "User", Message{Role: "user", Content: query}); err != nil {
+			return err
+		}
+		if err = emit(ctx, tx, id, "RunQueued", map[string]any{"status": Queued}); err != nil {
+			return err
+		}
+		run.EventSeq = 1
+		created = true
+		return nil
+	})
+	return run, created, err
 }

@@ -9,27 +9,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/httpx"
 	"github.com/gin-gonic/gin"
 )
-
-const ownerKey = "authenticatedOwner"
 
 func authenticate(tokens map[string]string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw := c.GetHeader("Authorization")
 		if !strings.HasPrefix(raw, "Bearer ") {
-			abort(c, http.StatusUnauthorized, "Unauthorized", "bearer token required")
+			httpx.Abort(c, http.StatusUnauthorized, "Unauthorized", "bearer token required")
 			return
 		}
 		token := strings.TrimPrefix(raw, "Bearer ")
 		for candidate, owner := range tokens {
 			if subtle.ConstantTimeCompare([]byte(candidate), []byte(token)) == 1 {
-				c.Set(ownerKey, owner)
+				httpx.SetOwner(c, owner)
 				c.Next()
 				return
 			}
 		}
-		abort(c, http.StatusUnauthorized, "Unauthorized", "invalid bearer token")
+		httpx.Abort(c, http.StatusUnauthorized, "Unauthorized", "invalid bearer token")
 	}
 }
 
@@ -49,6 +48,6 @@ func recoverJSON() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		abort(c, http.StatusInternalServerError, "InternalError", "internal server error")
+		httpx.Abort(c, http.StatusInternalServerError, "InternalError", "internal server error")
 	})
 }

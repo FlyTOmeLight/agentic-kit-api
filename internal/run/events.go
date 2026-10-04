@@ -1,4 +1,4 @@
-package httpapi
+package run
 
 import (
 	"errors"
@@ -8,13 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/httpx"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/gin-contrib/sse"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
 
-func (h *handler) events(c *gin.Context) {
+func (h *controller) events(c *gin.Context) {
 	r, w := c.Request, c.Writer
 	id := c.Param("id")
 	after := int64(0)
@@ -25,23 +26,23 @@ func (h *handler) events(c *gin.Context) {
 	if cursor != "" {
 		parts := strings.Split(cursor, ":")
 		if len(parts) != 2 || parts[0] != id {
-			abort(c, http.StatusBadRequest, "InvalidCursor", "invalid event cursor")
+			httpx.Abort(c, http.StatusBadRequest, "InvalidCursor", "invalid event cursor")
 			return
 		}
 		var err error
 		after, err = strconv.ParseInt(parts[1], 10, 64)
 		if err != nil || after < 0 {
-			abort(c, http.StatusBadRequest, "InvalidCursor", "invalid event cursor")
+			httpx.Abort(c, http.StatusBadRequest, "InvalidCursor", "invalid event cursor")
 			return
 		}
 	}
-	run, err := h.store.Get(r.Context(), c.GetString(ownerKey), id)
+	run, err := h.store.Get(r.Context(), httpx.Owner(c), id)
 	if err != nil {
-		respondError(c, err)
+		httpx.RespondError(c, err)
 		return
 	}
 	if after > run.EventSeq {
-		abort(c, http.StatusBadRequest, "InvalidCursor", "cursor is ahead of run")
+		httpx.Abort(c, http.StatusBadRequest, "InvalidCursor", "cursor is ahead of run")
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -49,7 +50,7 @@ func (h *handler) events(c *gin.Context) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	rc := http.NewResponseController(w)
 	for {
-		events, err := h.store.Events(r.Context(), c.GetString(ownerKey), id, after)
+		events, err := h.store.Events(r.Context(), httpx.Owner(c), id, after)
 		if err != nil {
 			return
 		}
@@ -73,7 +74,7 @@ func (h *handler) events(c *gin.Context) {
 		if len(events) == 200 {
 			continue
 		}
-		run, err = h.store.Get(r.Context(), c.GetString(ownerKey), id)
+		run, err = h.store.Get(r.Context(), httpx.Owner(c), id)
 		if err != nil {
 			return
 		}

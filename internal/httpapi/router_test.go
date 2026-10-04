@@ -38,7 +38,12 @@ func assertError(t *testing.T, w *httptest.ResponseRecorder, status int, code st
 	if w.Code != status {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
-	var response errorResponse
+	var response struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +65,7 @@ func TestGinAuthenticationAndValidation(t *testing.T) {
 		{"trailing JSON", "POST", "/v1/sessions/s/messages", `{"query":"q"} {}`, testToken, "key", 400, "InvalidRequest"},
 		{"missing key", "POST", "/v1/sessions/s/messages", `{"query":"q"}`, testToken, "", 400, "InvalidRequest"},
 		{"empty query", "POST", "/v1/sessions/s/messages", `{"query":"  "}`, testToken, "key", 400, "InvalidRequest"},
-		{"oversized body", "POST", "/v1/sessions/s/messages", `{"query":"` + strings.Repeat("a", maxRequestBytes) + `"}`, testToken, "key", 413, "PayloadTooLarge"},
+		{"oversized body", "POST", "/v1/sessions/s/messages", `{"query":"` + strings.Repeat("a", 1<<20) + `"}`, testToken, "key", 413, "PayloadTooLarge"},
 		{"unknown route", "GET", "/missing", ``, testToken, "", 404, "NotFound"},
 		{"wrong method", "PUT", "/v1/runs/run", ``, testToken, "", 405, "MethodNotAllowed"},
 		{"invalid cursor", "GET", "/v1/runs/run/events?after=other:1", ``, testToken, "", 400, "InvalidCursor"},

@@ -10,7 +10,9 @@ Agent 的配置、发布、会话、消息与持久化执行 API。与相邻的 
 
 ## HTTP 结构
 
-API 使用 Gin v1.11.0，与原 agentic-kit 保持框架版本一致。路由装配在 `internal/httpapi/router.go`；鉴权、请求日志与 Recovery 在 `internal/httpapi/middleware.go`；DTO 和 binding 校验在 `internal/httpapi/request.go`；任务 handler 在 `internal/httpapi/runs.go`；SSE 在 `internal/httpapi/events.go`；JSON 错误契约在 `internal/httpapi/response.go`。handler 只处理 HTTP 语义，数据库事务仍由 durable 包负责。
+API 使用 Gin v1.11.0。`internal/httpapi` 装配总路由和鉴权、日志、Recovery 中间件；`internal/agent`、`internal/session`、`internal/run` 分别维护业务路由、controller 和请求 DTO。发送消息属于 Session，SSE 属于 Run。`internal/httpx` 提供共享的 JSON 绑定、错误响应、身份读取和分页处理。
+
+业务事务在 `pkg/durable` 中按 agent_service.go、session_service.go、run_service.go 分开组织，API 与 worker 共用。controller 只处理 HTTP 语义。
 
 使用 Gin binding 的校验器和局部严格 JSON binding，拒绝未知字段和多段 JSON，不修改 Gin 全局 decoder 标志。SSE 使用 gin-contrib/sse；Gin Context 不传入后台 worker，数据库操作继续传递 Request.Context。生产运行可设置 `GIN_MODE=release`。
 

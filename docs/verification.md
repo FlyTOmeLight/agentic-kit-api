@@ -55,3 +55,7 @@ TestProcessKillResumesWithoutRepeatingTool 使用真实 HTTP API 提交任务、
 2026-10-04：新增 Agent 草稿、发布版本、Session 和 Message。自动化测试覆盖并发发布、revision 冲突、发布后重试提交、配置快照、多轮历史、消息分页、owner 隔离、配置写权限，以及消息写入失败时任务和事件全部回滚。worker 的真实子进程强杀测试增加消息断言：恢复后 User、Assistant 工具决策、Tool、Final 四条消息各一条，编号连续。
 
 本地真实模型联调使用 Ollama `qwen3.8:27b-mlx`，通过 Eino OpenAI 适配器访问 `http://127.0.0.1:11434/v1`。第一轮提交后、worker 领取前发布版本二；旧任务仍使用版本一，调用本地只读求和工具得到 42。重启 worker 后第二轮正确回忆 17 和 25，并使用版本二的提示词。确认一次工具调用、六条有序消息、幂等重试返回原任务和 SSE 完成事件回放。此次真实模型验证在两轮之间重启；执行中强杀由上述自动化测试验证。
+
+## 按业务模块拆分
+
+2026-10-04：HTTP 路由、controller 和请求 DTO 按 Agent、Session、Run 拆包；共享事务实现按对应 service 文件组织。保持 v0.2 的路径、权限、参数、响应和持久化格式。继续通过完整路由的集成测试验证契约，未增加只断言目录或转发调用的测试。
