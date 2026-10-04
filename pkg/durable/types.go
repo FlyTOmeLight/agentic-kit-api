@@ -36,7 +36,17 @@ var (
 )
 
 // Spec is an immutable snapshot. Credentials are environment references, never secret values.
+// Scope is asserted by a trusted application, never by end-user input.
+type Scope struct {
+	TenantID  string `json:"tenantID"`
+	ProjectID string `json:"projectID"`
+	ActorID   string `json:"actorID"`
+	TaskID    string `json:"taskID"`
+	RoundID   string `json:"roundID"`
+}
 type Spec struct {
+	Scope *Scope `json:"scope,omitempty"`
+
 	AgentID       string     `json:"agentID"`
 	ConfigVersion string     `json:"configVersion"`
 	Query         string     `json:"query"`
@@ -51,6 +61,8 @@ type ToolCall = sdk.ToolCall
 type ModelSpec = sdk.ModelSpec
 type ToolSpec = sdk.ToolSpec
 type Run struct {
+	Scope *Scope `json:"scope,omitempty"`
+
 	AgentID       string          `json:"agentID"`
 	ConfigVersion string          `json:"configVersion"`
 	ID            string          `json:"id"`

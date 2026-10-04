@@ -55,3 +55,9 @@ SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payloa
 错误码包括 Unauthorized、Forbidden、InvalidRequest、PayloadTooLarge、InvalidCursor、NotFound、MethodNotAllowed、Conflict、InternalError。请求体超过 1 MiB 返回 413，未知字段或连续多个 JSON 文档返回 400；不向客户端输出校验器内部错误和数据库错误。
 
 请求日志只记录方法、路由模板、状态与耗时，不记录 token 或请求体。Recovery 在响应未提交时返回 JSON 500；SSE 已开始后只结束处理，不向事件流追加 JSON 错误。SSE 线格式由 gin-contrib/sse 编码，字段冒号后是否有空格不影响标准 SSE 消费端。
+
+## 受信任应用执行
+
+`POST /internal/v1/executions` 仅允许 config_owners 身份。请求包含不可变 spec、scope（tenantID/projectID/actorID/taskID/roundID）和 timeoutSeconds，幂等键必填。接口原子创建 Agent 版本、Session、Run、输入消息和事件；同键不同快照返回冲突。此服务身份不能下发给浏览器。业务应用负责从真实用户会话和任务责任链构造 scope，并在敏感操作前重新查询业务授权。
+
+`GET /internal/v1/executions/{id}/lease?epoch=N` 返回当前数据库时钟下的执行权；取消、旧 epoch 或其他 owner 均无法通过。模型工具参数不能提供该执行身份，Worker 在 HTTP headers 中注入真实 run ID 和 epoch。运行时执行权不替代业务授权或外部进程停止确认。

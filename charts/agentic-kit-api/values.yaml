@@ -1,0 +1,12 @@
+image:
+  repository: agentic-kit-api
+  tag: dev
+  pullPolicy: IfNotPresent
+existingSecret: ""
+replicas: 1
+database:
+  image: postgres:17.6-alpine
+  existingSecret: ""
+  storage: 2Gi
+redis:
+  image: redis:7.2-alpine

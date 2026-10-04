@@ -156,3 +156,7 @@ Gin v1.11.0 与 gin-contrib/sse v1.1.0 沿用原仓库版本，分别用于 HTTP
 v0.2 改变任务提交入口，移除 `POST /v1/runs` 与静态 agents 文件加载。服务 TOML 中删除 `[agents]`，在 `[auth]` 中配置 `config_owners`；Agent 示例 JSON 也改为创建接口的请求格式。
 
 v0.1 的任务只有 session 标签，无法完整还原 Agent 发布版本和消息记录。本轮不自动转换这些数据。空数据库可以直接执行 migrate；含 v0.1 任务的数据库会被迁移命令拒绝，原数据保持不变。已有任务应由原版本处理完成，v0.2 使用新数据库或独立 PostgreSQL schema。原项目数据迁移和旧客户端适配仍需单独实施。
+
+## Kubernetes
+
+`charts/agentic-kit-api` 部署 API、独立 PostgreSQL 与 Redis。凭据引用 existingSecret / database.existingSecret；镜像由 Dockerfile 构建。部署时使用 `--set existingSecret=agentic-runtime-env,database.existingSecret=agentic-runtime-db`。Coding 使用受信任应用执行接口，业务任务仍由 forge-coding-api 保存。

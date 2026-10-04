@@ -22,6 +22,7 @@ func NewRouter(store *durable.Store, redisClient *redis.Client, configOwners []s
 	router.NoMethod(func(c *gin.Context) {
 		httpx.Abort(c, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	})
+	run.RegisterExecutionRoutes(router, store, configOwners)
 	v1 := router.Group("/v1")
 	agent.RegisterRoutes(v1, store, configOwners)
 	session.RegisterRoutes(v1, store)
