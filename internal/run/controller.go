@@ -11,7 +11,7 @@ import (
 )
 
 func (h *controller) get(c *gin.Context) {
-	run, err := h.store.Get(c.Request.Context(), httpx.Owner(c), c.Param("id"))
+	run, err := h.service.Get(c.Request.Context(), httpx.Owner(c), c.Param("id"))
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -20,7 +20,7 @@ func (h *controller) get(c *gin.Context) {
 }
 
 func (h *controller) cancel(c *gin.Context) {
-	if err := h.store.Cancel(c.Request.Context(), httpx.Owner(c), c.Param("id")); err != nil {
+	if err := h.service.Cancel(c.Request.Context(), httpx.Owner(c), c.Param("id")); err != nil {
 		httpx.RespondError(c, err)
 		return
 	}
@@ -38,7 +38,7 @@ func (h *controller) supply(c *gin.Context, status durable.Status) {
 		httpx.Abort(c, 400, "InvalidRequest", "stepID and result are required")
 		return
 	}
-	if err := h.store.SupplyResult(c.Request.Context(), httpx.Owner(c), c.Param("id"), req.StepID, req.Result, status); err != nil {
+	if err := h.service.SupplyResult(c.Request.Context(), httpx.Owner(c), c.Param("id"), req.StepID, req.Result, status); err != nil {
 		httpx.RespondError(c, err)
 		return
 	}

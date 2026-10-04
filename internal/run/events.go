@@ -36,7 +36,7 @@ func (h *controller) events(c *gin.Context) {
 			return
 		}
 	}
-	run, err := h.store.Get(r.Context(), httpx.Owner(c), id)
+	run, err := h.service.Get(r.Context(), httpx.Owner(c), id)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -50,7 +50,7 @@ func (h *controller) events(c *gin.Context) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	rc := http.NewResponseController(w)
 	for {
-		events, err := h.store.Events(r.Context(), httpx.Owner(c), id, after)
+		events, err := h.service.Events(r.Context(), httpx.Owner(c), id, after)
 		if err != nil {
 			return
 		}
@@ -74,7 +74,7 @@ func (h *controller) events(c *gin.Context) {
 		if len(events) == 200 {
 			continue
 		}
-		run, err = h.store.Get(r.Context(), httpx.Owner(c), id)
+		run, err = h.service.Get(r.Context(), httpx.Owner(c), id)
 		if err != nil {
 			return
 		}

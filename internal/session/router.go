@@ -1,14 +1,13 @@
 package session
 
 import (
-	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/gin-gonic/gin"
 )
 
-type controller struct{ store *durable.Store }
+type controller struct{ service Service }
 
-func RegisterRoutes(v1 *gin.RouterGroup, store *durable.Store) {
-	h := &controller{store: store}
+func RegisterRoutes(v1 *gin.RouterGroup, service Service) {
+	h := &controller{service: service}
 	sessions := v1.Group("/sessions")
 	sessions.POST("", h.createSession)
 	sessions.GET("", h.listSessions)

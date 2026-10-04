@@ -14,7 +14,7 @@ func (h *controller) createAgent(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	a, err := h.store.CreateAgent(c.Request.Context(), httpx.Owner(c), req.Name, req.Config)
+	a, err := h.service.CreateAgent(c.Request.Context(), httpx.Owner(c), req.Name, req.Config)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -22,7 +22,7 @@ func (h *controller) createAgent(c *gin.Context) {
 	c.JSON(http.StatusCreated, a)
 }
 func (h *controller) getAgent(c *gin.Context) {
-	a, err := h.store.Agent(c.Request.Context(), httpx.Owner(c), c.Param("id"))
+	a, err := h.service.Agent(c.Request.Context(), httpx.Owner(c), c.Param("id"))
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -34,7 +34,7 @@ func (h *controller) updateAgent(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	a, err := h.store.UpdateAgent(c.Request.Context(), httpx.Owner(c), c.Param("id"), req.Name, req.Revision, req.Config)
+	a, err := h.service.UpdateAgent(c.Request.Context(), httpx.Owner(c), c.Param("id"), req.Name, req.Revision, req.Config)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -50,7 +50,7 @@ func (h *controller) publishAgent(c *gin.Context) {
 		httpx.Abort(c, 400, "InvalidRequest", "invalid revision")
 		return
 	}
-	v, err := h.store.PublishAgent(c.Request.Context(), httpx.Owner(c), c.Param("id"), req.Revision)
+	v, err := h.service.PublishAgent(c.Request.Context(), httpx.Owner(c), c.Param("id"), req.Revision)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -63,7 +63,7 @@ func (h *controller) getVersion(c *gin.Context) {
 		httpx.Abort(c, 400, "InvalidRequest", "invalid version")
 		return
 	}
-	v, err := h.store.AgentVersion(c.Request.Context(), httpx.Owner(c), c.Param("id"), number)
+	v, err := h.service.AgentVersion(c.Request.Context(), httpx.Owner(c), c.Param("id"), number)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -75,7 +75,7 @@ func (h *controller) listAgents(c *gin.Context) {
 	if !ok {
 		return
 	}
-	items, err := h.store.Agents(c.Request.Context(), httpx.Owner(c), c.Query("after"), limit)
+	items, err := h.service.Agents(c.Request.Context(), httpx.Owner(c), c.Query("after"), limit)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return

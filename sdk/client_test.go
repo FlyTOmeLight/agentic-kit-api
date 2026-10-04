@@ -41,7 +41,7 @@ func TestSendMessageProtocol(t *testing.T) {
 				w.WriteHeader(status)
 				io.WriteString(w, `{"id":"run","status":"Queued"}`)
 			})
-			run, created, err := client.SendMessage(t.Context(), "session", "question-1", sdk.SendMessageRequest{Query: "你好"})
+			run, created, err := client.Sessions.SendMessage(t.Context(), "session", "question-1", sdk.SendMessageRequest{Query: "你好"})
 			if err != nil || run.ID != "run" || created != (status == 202) || calls != 1 {
 				t.Fatalf("run=%+v created=%v calls=%d err=%v", run, created, calls, err)
 			}
@@ -59,7 +59,7 @@ func TestErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := newClient(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status); io.WriteString(w, tc.body) })
-			_, err := client.GetRun(t.Context(), "run")
+			_, err := client.Runs.Get(t.Context(), "run")
 			var apiErr *sdk.APIError
 			if !errors.As(err, &apiErr) || apiErr.StatusCode != tc.status || apiErr.Code != tc.code || strings.Contains(apiErr.Message, "<html>") {
 				t.Fatalf("err=%v", err)
@@ -67,7 +67,7 @@ func TestErrors(t *testing.T) {
 		})
 	}
 	client := newClient(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"id":`) })
-	if _, err := client.GetRun(t.Context(), "run"); err == nil {
+	if _, err := client.Runs.Get(t.Context(), "run"); err == nil {
 		t.Fatal("accepted malformed JSON")
 	}
 }
@@ -80,7 +80,7 @@ func TestPaginationAndCancellation(t *testing.T) {
 		}
 		io.WriteString(w, `{"items":[]}`)
 	})
-	if _, err := client.ListSessions(t.Context(), sdk.ListSessionsOptions{PageOptions: sdk.PageOptions{After: "a+b", Limit: 3}, AgentID: "agent & one"}); err != nil {
+	if _, err := client.Sessions.List(t.Context(), sdk.ListSessionsOptions{PageOptions: sdk.PageOptions{After: "a+b", Limit: 3}, AgentID: "agent & one"}); err != nil {
 		t.Fatal(err)
 	}
 	entered := make(chan struct{})
@@ -88,7 +88,7 @@ func TestPaginationAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	result := make(chan error, 1)
-	go func() { _, err := client.GetRun(ctx, "run"); result <- err }()
+	go func() { _, err := client.Runs.Get(ctx, "run"); result <- err }()
 	select {
 	case <-entered:
 		cancel()
@@ -113,7 +113,7 @@ func TestEventStream(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 		io.WriteString(w, "id: run:3\nevent: Completed\ndata: {}\n\n")
 	})
-	body, err := client.OpenRunEvents(t.Context(), "run", "run:2")
+	body, err := client.Runs.OpenEvents(t.Context(), "run", "run:2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestEventStream(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{}`)
 	})
-	if body, err := client.OpenRunEvents(t.Context(), "run", ""); err == nil {
+	if body, err := client.Runs.OpenEvents(t.Context(), "run", ""); err == nil {
 		body.Close()
 		t.Fatal("accepted non-SSE response")
 	}
@@ -141,7 +141,7 @@ func TestRedirectNotFollowed(t *testing.T) {
 		}
 		http.Redirect(w, r, "/unexpected", http.StatusTemporaryRedirect)
 	})
-	_, err := client.GetRun(t.Context(), "run")
+	_, err := client.Runs.Get(t.Context(), "run")
 	var apiErr *sdk.APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != 307 {
 		t.Fatalf("err=%v", err)
@@ -192,7 +192,7 @@ func TestResponseBodyOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.stream {
-				stream, e := client.OpenRunEvents(t.Context(), "run", "")
+				stream, e := client.Runs.OpenEvents(t.Context(), "run", "")
 				err = e
 				if stream != nil {
 					if body.closed {
@@ -201,10 +201,92 @@ func TestResponseBodyOwnership(t *testing.T) {
 					stream.Close()
 				}
 			} else {
-				_, err = client.GetRun(t.Context(), "run")
+				_, err = client.Runs.Get(t.Context(), "run")
 			}
 			if (err != nil) != tc.wantError || !body.closed {
 				t.Fatalf("err=%v closed=%v", err, body.closed)
+			}
+		})
+	}
+}
+
+func TestEventStreamReturnsBeforeCompletion(t *testing.T) {
+	stopped := make(chan struct{})
+	client := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "id: run:1\ndata: {}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(stopped)
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	body, err := client.Runs.OpenEvents(ctx, "run", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := make([]byte, len("id: run:1\ndata: {}\n\n"))
+	_, err = io.ReadFull(body, data)
+	body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-stopped:
+	case <-ctx.Done():
+		t.Fatal("closing the stream did not cancel the server request")
+	}
+}
+
+func TestRunCommands(t *testing.T) {
+	for _, command := range []string{"answer", "resolve", "cancel"} {
+		t.Run(command, func(t *testing.T) {
+			client := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "POST" || r.URL.Path != "/api/v1/runs/run/"+command {
+					t.Errorf("request: %s %s", r.Method, r.URL)
+				}
+				if command != "cancel" {
+					var req sdk.SupplyResultRequest
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.StepID != "step" || req.Result != "approved" {
+						t.Errorf("request=%+v err=%v", req, err)
+					}
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})
+			var api sdk.RunAPI = client.Runs
+			req := sdk.SupplyResultRequest{StepID: "step", Result: "approved"}
+			var err error
+			switch command {
+			case "answer":
+				err = api.Answer(t.Context(), "run", req)
+			case "resolve":
+				err = api.Resolve(t.Context(), "run", req)
+			case "cancel":
+				err = api.Cancel(t.Context(), "run")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestConcurrentServices(t *testing.T) {
+	client := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(r.URL.Path, "/")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"id": parts[len(parts)-1]})
+	})
+	for _, id := range []string{"first", "second", "third", "fourth"} {
+		t.Run(id, func(t *testing.T) {
+			t.Parallel()
+			agent, err := client.Agents.Get(t.Context(), id)
+			if err != nil || agent.ID != id {
+				t.Fatalf("agent=%+v err=%v", agent, err)
+			}
+			session, err := client.Sessions.Get(t.Context(), id)
+			if err != nil || session.ID != id {
+				t.Fatalf("session=%+v err=%v", session, err)
 			}
 		})
 	}

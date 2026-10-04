@@ -21,7 +21,7 @@ func (h *controller) createSession(c *gin.Context) {
 		httpx.Abort(c, 400, "InvalidRequest", "invalid agentID")
 		return
 	}
-	s, err := h.store.CreateSession(c.Request.Context(), httpx.Owner(c), req.AgentID, req.Title)
+	s, err := h.service.CreateSession(c.Request.Context(), httpx.Owner(c), req.AgentID, req.Title)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -29,7 +29,7 @@ func (h *controller) createSession(c *gin.Context) {
 	c.JSON(201, s)
 }
 func (h *controller) getSession(c *gin.Context) {
-	s, err := h.store.Session(c.Request.Context(), httpx.Owner(c), c.Param("id"))
+	s, err := h.service.Session(c.Request.Context(), httpx.Owner(c), c.Param("id"))
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -41,7 +41,7 @@ func (h *controller) listSessions(c *gin.Context) {
 	if !ok {
 		return
 	}
-	items, err := h.store.Sessions(c.Request.Context(), httpx.Owner(c), c.Query("agentID"), c.Query("after"), limit)
+	items, err := h.service.Sessions(c.Request.Context(), httpx.Owner(c), c.Query("agentID"), c.Query("after"), limit)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -58,7 +58,7 @@ func (h *controller) listMessages(c *gin.Context) {
 		httpx.Abort(c, 400, "InvalidCursor", "invalid message cursor")
 		return
 	}
-	items, err := h.store.Messages(c.Request.Context(), httpx.Owner(c), c.Param("id"), after, limit)
+	items, err := h.service.Messages(c.Request.Context(), httpx.Owner(c), c.Param("id"), after, limit)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -70,7 +70,7 @@ func (h *controller) listSessionRuns(c *gin.Context) {
 	if !ok {
 		return
 	}
-	items, err := h.store.SessionRuns(c.Request.Context(), httpx.Owner(c), c.Param("id"), c.Query("after"), limit)
+	items, err := h.service.SessionRuns(c.Request.Context(), httpx.Owner(c), c.Param("id"), c.Query("after"), limit)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return
@@ -98,7 +98,7 @@ func (h *controller) submitMessage(c *gin.Context) {
 		return
 	}
 	owner := httpx.Owner(c)
-	run, created, err := h.store.Submit(c.Request.Context(), owner, c.Param("id"), headers.IdempotencyKey, req.Query, runLifetime, maxRunAttempts)
+	run, created, err := h.service.Submit(c.Request.Context(), owner, c.Param("id"), headers.IdempotencyKey, req.Query, runLifetime, maxRunAttempts)
 	if err != nil {
 		httpx.RespondError(c, err)
 		return

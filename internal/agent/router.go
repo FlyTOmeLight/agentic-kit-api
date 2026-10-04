@@ -5,14 +5,13 @@ import (
 	"slices"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/httpx"
-	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/gin-gonic/gin"
 )
 
-type controller struct{ store *durable.Store }
+type controller struct{ service Service }
 
-func RegisterRoutes(v1 *gin.RouterGroup, store *durable.Store, configOwners []string) {
-	h := &controller{store: store}
+func RegisterRoutes(v1 *gin.RouterGroup, service Service, configOwners []string) {
+	h := &controller{service: service}
 	agents := v1.Group("/agents")
 	agents.GET("", h.listAgents)
 	agents.GET("/:id", h.getAgent)
