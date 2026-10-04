@@ -7,26 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-type Session struct {
-	ID         string    `json:"id"`
-	AgentID    string    `json:"agentID"`
-	Title      string    `json:"title"`
-	MessageSeq int64     `json:"messageSeq"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
-}
-type SessionMessage struct {
-	SessionID string `json:"sessionID"`
-	Seq       int64  `json:"seq"`
-	RunID     string `json:"runID"`
-	Kind      string `json:"kind"`
-	Message
-	CreatedAt time.Time `json:"createdAt"`
-}
+type Session = sdk.Session
+type SessionMessage = sdk.SessionMessage
 
 func (r sessionRecord) session() *Session {
 	return &Session{ID: r.ID, AgentID: r.AgentID, Title: r.Title, MessageSeq: r.MessageSeq, CreatedAt: r.CreatedAt.UTC(), UpdatedAt: r.UpdatedAt.UTC()}
@@ -166,7 +153,7 @@ func (s *Store) Submit(ctx context.Context, owner, session, key, query string, t
 		if err = tx.Where("agent_id = ? AND number = ?", agent.ID, agent.PublishedVersion).Take(&version).Error; err != nil {
 			return err
 		}
-		spec := version.Config.spec(agent.ID, version.Number, query)
+		spec := runSpec(version.Config, agent.ID, version.Number, query)
 		// Keep the existing bounded prompt policy: the last 20 completed user/final pairs.
 		// Tool calls remain available in the message log for inspection and later compression.
 		prior := tx.Model(&runRecord{}).Select("id").Where("owner_id = ? AND session_id = ? AND status = ?", owner, session, Completed).Order("created_at DESC, id DESC").Limit(20)

@@ -59,3 +59,9 @@ TestProcessKillResumesWithoutRepeatingTool 使用真实 HTTP API 提交任务、
 ## 按业务模块拆分
 
 2026-10-04：HTTP 路由、controller 和请求 DTO 按 Agent、Session、Run 拆包；共享事务实现按对应 service 文件组织。保持 v0.2 的路径、权限、参数、响应和持久化格式。继续通过完整路由的集成测试验证契约，未增加只断言目录或转发调用的测试。
+
+## 公开 Go SDK
+
+2026-10-04：对外请求、响应、错误和分页类型统一迁入根目录 sdk；controller 复用这些类型，参数校验仍由服务端执行。SDK 客户端覆盖 Agent、Session、Run 和原始 SSE 订阅，保持现有 HTTP 协议。
+
+在独立 PostgreSQL 17.6、Redis 7.2.10 容器上通过 `make integration`（含 race、vet）和 `make build`。新增测试验证真实 SDK 创建与发布 Agent、会话、消息幂等、任务结果、消息分页、取消、owner 隔离、非法参数及 SSE 回放。客户端测试覆盖请求头、错误解码、context 取消、禁止重定向和响应体关闭责任。`go list -deps ./sdk` 确认除 SDK 自身外均为标准库；未增加生产依赖。

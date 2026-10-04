@@ -6,28 +6,24 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
 )
 
-type Status string
+type Status = sdk.Status
+type Policy = sdk.Policy
 
 const (
-	Queued               Status = "Queued"
-	Running              Status = "Running"
-	WaitingClarification Status = "WaitingClarification"
-	NeedsReview          Status = "NeedsReview"
-	Completed            Status = "Completed"
-	Failed               Status = "Failed"
-	Canceled             Status = "Canceled"
-)
-
-func (s Status) Terminal() bool { return s == Completed || s == Failed || s == Canceled }
-
-type Policy string
-
-const (
-	ReadOnly   Policy = "ReadOnly"
-	Idempotent Policy = "Idempotent"
-	Unsafe     Policy = "Unsafe"
+	Queued               = sdk.Queued
+	Running              = sdk.Running
+	WaitingClarification = sdk.WaitingClarification
+	NeedsReview          = sdk.NeedsReview
+	Completed            = sdk.Completed
+	Failed               = sdk.Failed
+	Canceled             = sdk.Canceled
+	ReadOnly             = sdk.ReadOnly
+	Idempotent           = sdk.Idempotent
+	Unsafe               = sdk.Unsafe
 )
 
 var (
@@ -50,36 +46,10 @@ type Spec struct {
 	MaxTurns      int        `json:"maxTurns"`
 	History       []Message  `json:"history,omitempty"`
 }
-type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
-	ToolCallID string     `json:"toolCallID,omitempty"`
-}
-type ToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-type ModelSpec struct {
-	Temperature *float32 `json:"temperature,omitempty"`
-	TopP        *float32 `json:"topP,omitempty"`
-	MaxTokens   *int     `json:"maxTokens,omitempty"`
-	Name        string   `json:"name"`
-	BaseURL     string   `json:"baseURL"`
-	APIKeyEnv   string   `json:"apiKeyEnv"`
-}
-type ToolSpec struct {
-	Kind        string          `json:"kind,omitempty"`
-	ResourceID  string          `json:"resourceID,omitempty"`
-	ToolID      string          `json:"toolID,omitempty"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
-	URL         string          `json:"url,omitempty"`
-	TokenEnv    string          `json:"tokenEnv,omitempty"`
-	Policy      Policy          `json:"policy"`
-}
+type Message = sdk.Message
+type ToolCall = sdk.ToolCall
+type ModelSpec = sdk.ModelSpec
+type ToolSpec = sdk.ToolSpec
 type Run struct {
 	AgentID       string          `json:"agentID"`
 	ConfigVersion string          `json:"configVersion"`
@@ -107,12 +77,7 @@ type Lease struct {
 
 func (r Run) Lease() Lease { return Lease{r.ID, r.WorkerID, r.Epoch} }
 
-type Event struct {
-	RunID   string          `json:"runID"`
-	Seq     int64           `json:"seq"`
-	Kind    string          `json:"kind"`
-	Payload json.RawMessage `json:"payload"`
-}
+type Event = sdk.Event
 
 func NewID() string {
 	var b [16]byte
@@ -120,4 +85,8 @@ func NewID() string {
 		panic(err)
 	}
 	return hex.EncodeToString(b[:])
+}
+
+func (r Run) Response() sdk.Run {
+	return sdk.Run{ID: r.ID, AgentID: r.AgentID, ConfigVersion: r.ConfigVersion, OwnerID: r.OwnerID, SessionID: r.SessionID, Status: r.Status, Epoch: r.Epoch, Deadline: r.Deadline, Attempt: r.Attempt, EventSeq: r.EventSeq, Output: r.Output, WaitingStep: r.WaitingStep, Error: r.Error}
 }

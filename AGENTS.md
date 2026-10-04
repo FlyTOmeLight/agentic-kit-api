@@ -3,6 +3,7 @@
 ## 目录与依赖
 
 - 调整目录、包边界或跨仓库依赖前，读取 [项目布局](docs/layout.md)。`cmd/` 负责入口与依赖装配，`internal/config/` 负责配置加载，`internal/httpapi/` 负责总路由与中间件，`internal/agent/`、`internal/session/`、`internal/run/` 分别维护业务 HTTP 接口，`configs/` 保存配置样例。
+- 对外 HTTP 请求、响应和 Go 客户端维护在根目录 `sdk/`；修改 HTTP 契约时同步 SDK 和契约测试。SDK 仅依赖标准库，不导入 internal、durable、Gin 或 GORM；绑定与服务端校验留在 internal。
 - `pkg/durable/` 是供本仓库和相邻 worker 仓库共用的任务状态与存储契约。变更其公开接口或持久化格式时，同时检查 worker 的调用与恢复行为；避免让该包依赖 Gin 或 API 的 internal 包。
 - 表结构、约束和索引统一维护在 `pkg/durable/models.go`，由 `cmd/migrate` 调用 GORM AutoMigrate；修改模型时验证已有数据上的重复迁移。项目目录说明集中在 docs/layout.md，具体启动方式以 README.md 为准。
 

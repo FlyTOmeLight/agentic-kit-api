@@ -7,33 +7,15 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-type AgentConfig struct {
-	SystemPrompt string     `json:"systemPrompt"`
-	Model        ModelSpec  `json:"model"`
-	Tools        []ToolSpec `json:"tools,omitempty"`
-	MaxTurns     int        `json:"maxTurns"`
-}
-type Agent struct {
-	ID               string      `json:"id"`
-	Name             string      `json:"name"`
-	Draft            AgentConfig `json:"draft"`
-	Revision         int64       `json:"revision"`
-	PublishedVersion int64       `json:"publishedVersion"`
-	CreatedAt        time.Time   `json:"createdAt"`
-	UpdatedAt        time.Time   `json:"updatedAt"`
-}
-type AgentVersion struct {
-	AgentID   string      `json:"agentID"`
-	Number    int64       `json:"number"`
-	Config    AgentConfig `json:"config"`
-	CreatedAt time.Time   `json:"createdAt"`
-}
+type AgentConfig = sdk.AgentConfig
+type Agent = sdk.Agent
+type AgentVersion = sdk.AgentVersion
 
 func (r agentRecord) agent() *Agent {
 	return &Agent{ID: r.ID, Name: r.Name, Draft: r.Draft, Revision: r.Revision, PublishedVersion: r.PublishedVersion, CreatedAt: r.CreatedAt.UTC(), UpdatedAt: r.UpdatedAt.UTC()}
@@ -41,7 +23,7 @@ func (r agentRecord) agent() *Agent {
 func (r versionRecord) version() *AgentVersion {
 	return &AgentVersion{AgentID: r.AgentID, Number: r.Number, Config: r.Config, CreatedAt: r.CreatedAt.UTC()}
 }
-func (c AgentConfig) spec(agent string, version int64, query string) Spec {
+func runSpec(c AgentConfig, agent string, version int64, query string) Spec {
 	return Spec{AgentID: agent, ConfigVersion: strconv.FormatInt(version, 10), Query: query, SystemPrompt: c.SystemPrompt, Model: c.Model, Tools: c.Tools, MaxTurns: c.MaxTurns}
 }
 func validEndpoint(raw string) bool {

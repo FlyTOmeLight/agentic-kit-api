@@ -6,11 +6,11 @@ Agent 的配置、发布、会话、消息与持久化执行 API。与相邻的 
 
 ## 项目结构
 
-采用 `cmd/`、`internal/`、`pkg/durable/`、`configs/` 分区；目录职责和跨仓库依赖见 [项目布局](docs/layout.md)。
+采用 `cmd/`、`internal/`、`sdk/`、`pkg/durable/`、`configs/` 分区；目录职责和跨仓库依赖见 [项目布局](docs/layout.md)。
 
 ## HTTP 结构
 
-API 使用 Gin v1.11.0。`internal/httpapi` 装配总路由和鉴权、日志、Recovery 中间件；`internal/agent`、`internal/session`、`internal/run` 分别维护业务路由、controller 和请求 DTO。发送消息属于 Session，SSE 属于 Run。`internal/httpx` 提供共享的 JSON 绑定、错误响应、身份读取和分页处理。
+API 使用 Gin v1.11.0。`internal/httpapi` 装配总路由和鉴权、日志、Recovery 中间件；`internal/agent`、`internal/session`、`internal/run` 分别维护业务路由和 controller。公开请求与响应类型维护在根目录 `sdk/`。发送消息属于 Session，SSE 属于 Run。`internal/httpx` 提供共享的 JSON 绑定、错误响应、身份读取和分页处理。
 
 业务事务在 `pkg/durable` 中按 agent_service.go、session_service.go、run_service.go 分开组织，API 与 worker 共用。controller 只处理 HTTP 语义。
 
@@ -91,6 +91,23 @@ curl --fail-with-body -sS "$API_URL/v1/sessions/$session_id/messages" -H "Author
 ```
 
 继续对话时使用相同 session_id、新的 Idempotency-Key 和 query。编辑 Agent 使用 `PUT /v1/agents/{id}`，传完整 name/config 和当前 revision；发布后新任务使用新版本，已有任务仍使用原版本。详情见 [接口契约](docs/api.md)。
+
+## Go SDK
+
+其他 Go 应用导入 `github.com/FlyTOmeLight/agentic-kit-api/sdk`，即可复用请求、响应和客户端。SDK 与 API 同模块发布，仅依赖 Go 标准库，无需导入 Gin、GORM 或 durable。
+
+```go
+client, err := sdk.NewClient(baseURL, token, nil)
+if err != nil {
+    return err
+}
+ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+defer cancel()
+run, created, err := client.SendMessage(ctx, sessionID, "question-001",
+    sdk.SendMessageRequest{Query: "请介绍一下你自己。"})
+```
+
+`created=false` 表示命中服务端幂等记录。重试同一条消息复用请求编号；下一条消息使用新编号。客户端不自动重试。完整示例、错误处理和事件流说明见 [SDK 用法](sdk/README.md)。
 
 ## 服务配置
 

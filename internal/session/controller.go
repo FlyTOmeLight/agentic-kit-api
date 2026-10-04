@@ -5,14 +5,20 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/httpx"
+	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
 	"github.com/gin-gonic/gin"
 )
 
 func (h *controller) createSession(c *gin.Context) {
-	var req createRequest
+	var req sdk.CreateSessionRequest
 	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	if req.AgentID == "" || utf8.RuneCountInString(req.AgentID) > 128 {
+		httpx.Abort(c, 400, "InvalidRequest", "invalid agentID")
 		return
 	}
 	s, err := h.store.CreateSession(c.Request.Context(), httpx.Owner(c), req.AgentID, req.Title)
@@ -40,7 +46,7 @@ func (h *controller) listSessions(c *gin.Context) {
 		httpx.RespondError(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"items": items})
+	c.JSON(200, sdk.Page[sdk.Session]{Items: items})
 }
 func (h *controller) listMessages(c *gin.Context) {
 	limit, ok := httpx.PageLimit(c, 200)
@@ -57,7 +63,7 @@ func (h *controller) listMessages(c *gin.Context) {
 		httpx.RespondError(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"items": items})
+	c.JSON(200, sdk.Page[sdk.SessionMessage]{Items: items})
 }
 func (h *controller) listSessionRuns(c *gin.Context) {
 	limit, ok := httpx.PageLimit(c, 100)
@@ -69,7 +75,11 @@ func (h *controller) listSessionRuns(c *gin.Context) {
 		httpx.RespondError(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"items": items})
+	out := make([]sdk.Run, len(items))
+	for i, r := range items {
+		out[i] = r.Response()
+	}
+	c.JSON(200, sdk.Page[sdk.Run]{Items: out})
 }
 
 const (
@@ -78,7 +88,7 @@ const (
 )
 
 func (h *controller) submitMessage(c *gin.Context) {
-	var req submitMessageRequest
+	var req sdk.SendMessageRequest
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
@@ -97,5 +107,5 @@ func (h *controller) submitMessage(c *gin.Context) {
 	if created {
 		status = http.StatusAccepted
 	}
-	c.JSON(status, run)
+	c.JSON(status, run.Response())
 }

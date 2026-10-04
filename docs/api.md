@@ -1,5 +1,7 @@
 # 任务接口
 
+Go 请求与响应类型统一定义在 [sdk](../sdk)，调用方式见 [SDK 用法](../sdk/README.md)。SDK 不依赖 Gin；服务端负责校验。
+
 所有接口要求 `Authorization: Bearer <token>`。身份来自部署配置，不接受客户端指定 owner。所有对象按 owner 隔离；访问其他 owner 的对象返回 404。创建、编辑和发布 Agent 还要求 owner 在 `auth.config_owners` 中，否则返回 403。当前不支持跨 owner 共享 Agent。
 
 | 方法和路径 | 用途 | 请求 |

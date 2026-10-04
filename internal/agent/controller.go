@@ -5,11 +5,12 @@ import (
 	"strconv"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/httpx"
+	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
 	"github.com/gin-gonic/gin"
 )
 
 func (h *controller) createAgent(c *gin.Context) {
-	var req createAgentRequest
+	var req sdk.CreateAgentRequest
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
@@ -29,7 +30,7 @@ func (h *controller) getAgent(c *gin.Context) {
 	c.JSON(http.StatusOK, a)
 }
 func (h *controller) updateAgent(c *gin.Context) {
-	var req updateAgentRequest
+	var req sdk.UpdateAgentRequest
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
@@ -41,8 +42,12 @@ func (h *controller) updateAgent(c *gin.Context) {
 	c.JSON(http.StatusOK, a)
 }
 func (h *controller) publishAgent(c *gin.Context) {
-	var req publishRequest
+	var req sdk.PublishAgentRequest
 	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	if req.Revision < 1 {
+		httpx.Abort(c, 400, "InvalidRequest", "invalid revision")
 		return
 	}
 	v, err := h.store.PublishAgent(c.Request.Context(), httpx.Owner(c), c.Param("id"), req.Revision)
@@ -75,5 +80,5 @@ func (h *controller) listAgents(c *gin.Context) {
 		httpx.RespondError(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"items": items})
+	c.JSON(200, sdk.Page[sdk.Agent]{Items: items})
 }
