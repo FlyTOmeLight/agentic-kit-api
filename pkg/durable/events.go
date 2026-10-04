@@ -28,16 +28,11 @@ func (s *Store) PublishOne(ctx context.Context, rdb *redis.Client) (bool, error)
 		return false, err
 	}
 	defer tx.Rollback()
-	// A single publisher lock preserves per-run sequence order across multiple API replicas.
-	var locked bool
-	if err = tx.Raw(`SELECT pg_try_advisory_xact_lock(7412102)`).Row().Scan(&locked); err != nil {
-		return false, err
-	}
-	if !locked {
-		return false, nil
-	}
+	// Only the earliest unpublished event of each run is eligible. Hold its row
+	// lock through Redis publication and the database commit. SKIP LOCKED lets
+	// other publishers advance unrelated runs without bypassing this run's head.
 	var e Event
-	err = tx.Raw(`SELECT run_id,seq,kind,payload FROM durable_event e WHERE NOT published AND NOT EXISTS (SELECT 1 FROM durable_event prior WHERE prior.run_id=e.run_id AND prior.seq<e.seq AND NOT prior.published) ORDER BY created_at,run_id,seq LIMIT 1 FOR UPDATE`).Take(&e).Error
+	err = tx.Raw(`SELECT run_id,seq,kind,payload FROM durable_event e WHERE NOT published AND NOT EXISTS (SELECT 1 FROM durable_event prior WHERE prior.run_id=e.run_id AND prior.seq<e.seq AND NOT prior.published) ORDER BY created_at,run_id,seq LIMIT 1 FOR UPDATE OF e SKIP LOCKED`).Take(&e).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
 	}

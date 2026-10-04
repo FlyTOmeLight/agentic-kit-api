@@ -48,7 +48,11 @@ NeedsReview 接口要求用户提供已经确认的外部结果；它不是“�
 
 ## 事件一致性
 
-状态、结果与事件在同一个 PostgreSQL 事务提交。Relay 通过全局事务级 advisory lock 保持发布顺序；Redis 网络调用有 3 秒截止时间，网络阻塞不会无限占住事务。该串行 Relay 是明确的吞吐量取舍，尚未进行容量压测。
+状态、结果与事件在同一个 PostgreSQL 事务提交。每个任务的 event_seq 在该任务行的锁保护下递增，作为任务内的事件顺序。
+
+Relay 只领取每个任务最早的未发布事件：NOT EXISTS 排除前面仍有未发布事件的记录，FOR UPDATE OF e SKIP LOCKED 锁定当前事件并跳过其他发布者已领取的记录。行锁一直持有到 Redis 返回成功、published 标记提交；未提交的标记对其他发布者仍不可见，因此同一任务的后续事件不能越过。事务失败会回滚标记并释放锁，后续重新发布同一事件；Redis 已收到时由显式事件 ID 去重。
+
+不同任务可由多个 Relay 并行发布。每个 API 实例当前运行一个 Relay，多实例共享数据库进行协调；没有跨任务的全局发布锁。单个任务的首条待发布事件失败，会阻止该任务后续事件发布。Redis 调用在 Relay 中设有 3 秒 context 截止时间，同时受客户端网络超时约束，行锁和连接在事务结束时释放。尚未进行容量压测。
 
 Redis Stream 使用事件 seq 作为显式 ID。Lua 在插入前查询该 ID，处理“Redis 已成功、数据库发布标记尚未提交”时的重试。事件不依赖 Redis 8.6 的新幂等命令，测试使用 Redis 7.2。数据库回放覆盖 Redis 丢失或过期；重复消费方仍应按 runID:seq 去重。[Redis XADD 文档](https://redis.io/docs/latest/commands/xadd/)
 
