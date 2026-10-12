@@ -14,6 +14,7 @@ func RegisterRoutes(v1 *gin.RouterGroup, service Service, redisClient *redis.Cli
 	h := &controller{service: service, redis: redisClient}
 	runs := v1.Group("/runs")
 	runs.GET("/:id", h.get)
+	runs.GET("/:id/trace", h.trace)
 	runs.POST("/:id/cancel", h.cancel)
 	runs.POST("/:id/answer", h.answer)
 	runs.POST("/:id/resolve", h.resolve)

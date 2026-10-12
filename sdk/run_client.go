@@ -17,6 +17,10 @@ func (c *runClient) Get(ctx context.Context, id string) (*Run, error) {
 	return jsonResult[Run](ctx, c.transport, http.MethodGet, "/v1/runs/"+url.PathEscape(id), nil, http.StatusOK)
 }
 
+func (c *runClient) Trace(ctx context.Context, id string, after int64) (*RunTrace, error) {
+	return jsonResult[RunTrace](ctx, c.transport, http.MethodGet, fmt.Sprintf("/v1/runs/%s/trace?after=%d", url.PathEscape(id), after), nil, http.StatusOK)
+}
+
 func (c *runClient) Cancel(ctx context.Context, id string) error {
 	_, err := jsonResult[struct{}](ctx, c.transport, http.MethodPost, "/v1/runs/"+url.PathEscape(id)+"/cancel", nil, http.StatusNoContent)
 	return err

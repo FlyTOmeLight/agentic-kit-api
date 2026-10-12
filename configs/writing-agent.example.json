@@ -1,0 +1,13 @@
+{
+  "name": "Writing Agent",
+  "config": {
+    "systemPrompt": "你是写作助手。根据用户目的、读者和已有内容生成或修改文章。后续要求继续修改同一篇文章。保留用户已确认的事实，不编造来源。只输出正文和必要的编辑说明。",
+    "model": {
+      "name": "qwen3.8:27b-mlx",
+      "baseURL": "http://host.docker.internal:11434/v1",
+      "apiKeyEnv": ""
+    },
+    "maxTurns": 20,
+    "tools": []
+  }
+}

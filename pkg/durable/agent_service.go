@@ -24,7 +24,7 @@ func (r versionRecord) version() *AgentVersion {
 	return &AgentVersion{AgentID: r.AgentID, Number: r.Number, Config: r.Config, CreatedAt: r.CreatedAt.UTC()}
 }
 func runSpec(c AgentConfig, agent string, version int64, query string) Spec {
-	return Spec{AgentID: agent, ConfigVersion: strconv.FormatInt(version, 10), Query: query, SystemPrompt: c.SystemPrompt, Model: c.Model, Tools: c.Tools, MaxTurns: c.MaxTurns}
+	return Spec{AgentID: agent, ConfigVersion: strconv.FormatInt(version, 10), Query: query, SystemPrompt: c.SystemPrompt, Model: c.Model, Tools: c.Tools, Toolsets: c.Toolsets, MaxTurns: c.MaxTurns}
 }
 func validEndpoint(raw string) bool {
 	u, err := url.Parse(raw)
@@ -33,6 +33,13 @@ func validEndpoint(raw string) bool {
 func ValidateAgentConfig(c AgentConfig) error {
 	if strings.TrimSpace(c.Model.Name) == "" || !validEndpoint(c.Model.BaseURL) || c.MaxTurns < 1 || c.MaxTurns > 100 || len(c.Tools) > 128 {
 		return ErrInvalid
+	}
+	seenSets := map[string]bool{}
+	for _, set := range c.Toolsets {
+		if set != "filesystem" || seenSets[set] {
+			return ErrInvalid
+		}
+		seenSets[set] = true
 	}
 	seen := map[string]bool{}
 	for _, t := range c.Tools {

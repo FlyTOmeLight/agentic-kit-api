@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -18,7 +20,26 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 		t.Fatal(e)
 	}
 	ctx := context.Background()
-	request := sdk.SubmitExecutionRequest{Spec: sdk.ExecutionSpec{Scope: &sdk.Scope{TenantID: "tenant", ProjectID: "project", ActorID: "actor", TaskID: "task", RoundID: "round"}, Query: "fix", Model: sdk.ModelSpec{Name: "model", BaseURL: "http://model.test/v1"}, MaxTurns: 3}, TimeoutSeconds: 60}
+	legacy, _ := http.NewRequestWithContext(ctx, "POST", server.URL+"/internal/v1/executions", strings.NewReader(`{"spec":{"systemPrompt":"override","model":{"name":"injected"}},"timeoutSeconds":60}`))
+	legacy.Header.Set("Authorization", "Bearer "+testToken)
+	legacy.Header.Set("Content-Type", "application/json")
+	legacyResponse, e := server.Client().Do(legacy)
+	if e != nil {
+		t.Fatal(e)
+	}
+	legacyResponse.Body.Close()
+	if legacyResponse.StatusCode != 400 {
+		t.Fatalf("inline Agent definition accepted: %d", legacyResponse.StatusCode)
+	}
+	agent, e := client.Agents.Create(ctx, sdk.CreateAgentRequest{Name: "Coding", Config: sdk.AgentConfig{Model: sdk.ModelSpec{Name: "model", BaseURL: "http://model.test/v1"}, MaxTurns: 3}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	version, e := client.Agents.Publish(ctx, agent.ID, sdk.PublishAgentRequest{Revision: agent.Revision})
+	if e != nil {
+		t.Fatal(e)
+	}
+	request := sdk.SubmitExecutionRequest{Spec: sdk.ExecutionSpec{Scope: &sdk.Scope{TenantID: "tenant", ProjectID: "project", ActorID: "actor", TaskID: "task", RoundID: "round"}, Query: "fix", AgentID: agent.ID, AgentVersion: version.Number}, TimeoutSeconds: 60}
 	run, created, e := client.Executions.Submit(ctx, "round", request)
 	if e != nil || !created || run.Scope.TenantID != "tenant" {
 		t.Fatal(e)

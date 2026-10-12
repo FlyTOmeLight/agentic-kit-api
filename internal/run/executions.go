@@ -12,7 +12,7 @@ import (
 )
 
 type ExecutionService interface {
-	SubmitExecution(context.Context, string, string, durable.Spec, time.Duration) (*durable.Run, bool, error)
+	SubmitExecution(context.Context, string, string, sdk.ExecutionSpec, time.Duration) (*durable.Run, bool, error)
 	CheckExecutionLease(context.Context, string, string, int64) (bool, error)
 }
 
@@ -36,7 +36,7 @@ func RegisterExecutionRoutes(router *gin.Engine, store ExecutionService, owners 
 		if !httpx.BindJSON(c, &req) {
 			return
 		}
-		r, created, e := store.SubmitExecution(c.Request.Context(), httpx.Owner(c), c.GetHeader("Idempotency-Key"), durable.Spec{Scope: req.Spec.Scope, Query: req.Spec.Query, SystemPrompt: req.Spec.SystemPrompt, Model: req.Spec.Model, Tools: req.Spec.Tools, MaxTurns: req.Spec.MaxTurns}, time.Duration(req.TimeoutSeconds)*time.Second)
+		r, created, e := store.SubmitExecution(c.Request.Context(), httpx.Owner(c), c.GetHeader("Idempotency-Key"), req.Spec, time.Duration(req.TimeoutSeconds)*time.Second)
 		if e != nil {
 			httpx.RespondError(c, e)
 			return

@@ -160,3 +160,15 @@ v0.1 的任务只有 session 标签，无法完整还原 Agent 发布版本和�
 ## Kubernetes
 
 `charts/agentic-kit-api` 部署 API、独立 PostgreSQL 与 Redis。凭据引用 existingSecret / database.existingSecret；镜像由 Dockerfile 构建。部署时使用 `--set existingSecret=agentic-runtime-env,database.existingSecret=agentic-runtime-db`。Coding 使用受信任应用执行接口，业务任务仍由 forge-coding-api 保存。
+
+## 发布应用 Agent
+
+Writing 与 Coding 使用同一个 Agent 发布接口和 Worker。`scripts/publish-agent.py` 接受标准创建请求 JSON；先设置 `AGENTIC_URL`、`AGENTIC_TOKEN`，凭据需具有 config_owners 权限。
+
+```sh
+python3 scripts/publish-agent.py configs/writing-agent.example.json
+# 后续修改同一个 Agent，保留其身份和发布历史
+python3 scripts/publish-agent.py configs/writing-agent.example.json --agent-id <agentID>
+```
+
+修改示例中的模型地址后再发布。Coding 的定义位于 `forge-coding-api/agents/coding.json`，同样由这个命令发布；先把工具 URL 配置为获授权项目的工具环境。应用提交返回的 agentID/agentVersion，不能在执行请求中覆盖 Agent 定义。绑定旧版本的项目不会自动升级，项目管理员显式选择新版本并复检。

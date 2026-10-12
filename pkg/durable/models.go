@@ -62,7 +62,7 @@ type eventRecord struct {
 
 func (eventRecord) TableName() string { return "durable_event" }
 func (e eventRecord) event() Event {
-	return Event{RunID: e.RunID, Seq: e.Seq, Kind: e.Kind, Payload: e.Payload}
+	return Event{RunID: e.RunID, Seq: e.Seq, Kind: e.Kind, Payload: e.Payload, CreatedAt: e.CreatedAt.UTC()}
 }
 
 // Agent drafts are editable. Published versions are append-only through Store.

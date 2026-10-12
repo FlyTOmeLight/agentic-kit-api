@@ -3,6 +3,7 @@ package durable
 import (
 	"context"
 	"errors"
+	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
 	"testing"
 	"time"
 )
@@ -10,7 +11,15 @@ import (
 func TestApplicationExecutionSnapshotAndFencing(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	spec := Spec{Scope: &Scope{TenantID: "t", ProjectID: "p", ActorID: "u", TaskID: "task", RoundID: "round"}, Query: "fix", MaxTurns: 3, Model: ModelSpec{Name: "test", BaseURL: "http://model.test/v1"}}
+	agent, e := s.CreateAgent(ctx, "coding", "Coding", AgentConfig{SystemPrompt: "published", MaxTurns: 3, Model: ModelSpec{Name: "test", BaseURL: "http://model.test/v1"}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	version, e := s.PublishAgent(ctx, "coding", agent.ID, agent.Revision)
+	if e != nil {
+		t.Fatal(e)
+	}
+	spec := sdk.ExecutionSpec{Scope: &Scope{TenantID: "t", ProjectID: "p", ActorID: "u", TaskID: "task", RoundID: "round"}, Query: "fix", AgentID: agent.ID, AgentVersion: version.Number}
 	r, created, e := s.SubmitExecution(ctx, "coding", "round", spec, time.Minute)
 	if e != nil || !created {
 		t.Fatal(e)

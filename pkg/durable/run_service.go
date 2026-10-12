@@ -351,7 +351,7 @@ func (s *Store) Events(ctx context.Context, owner, id string, after int64) ([]Ev
 	}
 	var records []eventRecord
 	err := s.db.WithContext(ctx).Model(&eventRecord{}).
-		Select("run_id", "seq", "kind", "payload").
+		Select("run_id", "seq", "kind", "payload", "created_at").
 		Where("run_id = ? AND seq > ?", id, after).Order("seq").Limit(200).Find(&records).Error
 	events := make([]Event, len(records))
 	for i, record := range records {

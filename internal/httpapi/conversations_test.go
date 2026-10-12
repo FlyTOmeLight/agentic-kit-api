@@ -24,6 +24,7 @@ func TestAgentEditingAndPersistentSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Draft.SystemPrompt = "new prompt"
+	a.Draft.Tools = []durable.ToolSpec{{Name: "deliver", URL: "http://tools/deliver", Policy: durable.Unsafe, ReturnDirectly: true, Parameters: json.RawMessage(`{"type":"object"}`)}}
 	body, _ := json.Marshal(map[string]any{"name": "updated", "revision": a.Revision, "config": a.Draft})
 	w = request(router, "PUT", agentPath, string(body), testToken, "")
 	if w.Code != 200 {
@@ -38,7 +39,7 @@ func TestAgentEditingAndPersistentSessions(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
 		t.Fatal(err)
 	}
-	if v.Number != 2 || v.Config.SystemPrompt != "new prompt" {
+	if v.Number != 2 || v.Config.SystemPrompt != "new prompt" || len(v.Config.Tools) != 1 || !v.Config.Tools[0].ReturnDirectly {
 		t.Fatalf("version=%+v", v)
 	}
 	// Recreating the router must load definitions and history from the database.
@@ -53,6 +54,10 @@ func TestAgentEditingAndPersistentSessions(t *testing.T) {
 	}
 	if run.AgentID != session.AgentID || run.ConfigVersion != "2" {
 		t.Fatalf("run=%+v", run)
+	}
+	frozen, err := store.Get(t.Context(), "owner", run.ID)
+	if err != nil || len(frozen.Spec.Tools) != 1 || !frozen.Spec.Tools[0].ReturnDirectly {
+		t.Fatalf("returnDirectly was not frozen in the run: %v", err)
 	}
 	for _, path := range []string{"/v1/agents", "/v1/sessions?agentID=" + session.AgentID, sessionPath + "/runs", sessionPath + "/messages"} {
 		w = request(router, "GET", path, "", testToken, "")

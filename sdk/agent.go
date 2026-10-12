@@ -3,6 +3,7 @@ package sdk
 import "time"
 
 type AgentConfig struct {
+	Toolsets     []string   `json:"toolsets,omitempty"`
 	SystemPrompt string     `json:"systemPrompt"`
 	Model        ModelSpec  `json:"model"`
 	Tools        []ToolSpec `json:"tools,omitempty"`

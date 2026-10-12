@@ -4,25 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"strings"
 	"time"
 )
 
-// SubmitExecution accepts an immutable application snapshot. Its key is scoped to
-// the authenticated service owner. It creates the session graph atomically.
-func (s *Store) SubmitExecution(ctx context.Context, owner, key string, spec Spec, ttl time.Duration) (*Run, bool, error) {
-	if owner == "" || strings.TrimSpace(key) == "" || len(key) > 128 || spec.Scope == nil || spec.Scope.TenantID == "" || spec.Scope.ProjectID == "" || spec.Scope.ActorID == "" || spec.Scope.TaskID == "" || spec.Scope.RoundID == "" || strings.TrimSpace(spec.Query) == "" || ttl < time.Second || ttl > 24*time.Hour || len(spec.History) > 0 {
+// SubmitExecution freezes a published Agent version and business input.
+// A task reuses its conversation; retries reuse the originally accepted run.
+func (s *Store) SubmitExecution(ctx context.Context, owner, key string, inputSpec sdk.ExecutionSpec, ttl time.Duration) (*Run, bool, error) {
+	if owner == "" || strings.TrimSpace(key) == "" || len(key) > 128 || inputSpec.Scope == nil || inputSpec.Scope.TenantID == "" || inputSpec.Scope.ProjectID == "" || inputSpec.Scope.ActorID == "" || inputSpec.Scope.TaskID == "" || inputSpec.Scope.RoundID == "" || strings.TrimSpace(inputSpec.Query) == "" || ttl < time.Second || ttl > 24*time.Hour || inputSpec.AgentID == "" || inputSpec.AgentVersion < 1 {
 		return nil, false, ErrInvalid
 	}
-	config := AgentConfig{SystemPrompt: spec.SystemPrompt, Model: spec.Model, Tools: spec.Tools, MaxTurns: spec.MaxTurns}
-	if e := ValidateAgentConfig(config); e != nil {
-		return nil, false, e
-	}
 	input, _ := json.Marshal(struct {
-		Spec Spec
+		Spec sdk.ExecutionSpec
 		TTL  time.Duration
-	}{spec, ttl})
+	}{inputSpec, ttl})
 	hash := Hash(input)
 	var result *Run
 	created := false
@@ -42,19 +40,53 @@ func (s *Store) SubmitExecution(ctx context.Context, owner, key string, spec Spe
 		if !errors.Is(e, gorm.ErrRecordNotFound) {
 			return e
 		}
-		agent := agentRecord{ID: NewID(), OwnerID: owner, Name: "Application execution", Draft: config, Revision: 1, PublishedRevision: 1, PublishedVersion: 1}
-		if e = tx.Create(&agent).Error; e != nil {
+		// A business task owns one conversation across rounds. The scope lock also
+		// serializes first creation, before a session row exists to lock.
+		identity, _ := json.Marshal([]string{owner, inputSpec.Scope.TenantID, inputSpec.Scope.ProjectID, inputSpec.Scope.TaskID})
+		sessionID := "application_" + Hash(identity)
+		if e = tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", sessionID).Error; e != nil {
 			return e
 		}
-		if e = tx.Create(&versionRecord{AgentID: agent.ID, Number: 1, Config: config}).Error; e != nil {
+		var agent agentRecord
+		if e = tx.Where("owner_id = ? AND id = ?", owner, inputSpec.AgentID).Take(&agent).Error; e != nil {
+			return recordError(e)
+		}
+		var version versionRecord
+		if e = tx.Where("agent_id = ? AND number = ?", agent.ID, inputSpec.AgentVersion).Take(&version).Error; e != nil {
+			return recordError(e)
+		}
+		var session sessionRecord
+		e = tx.Where("owner_id = ? AND id = ?", owner, sessionID).Clauses(clause.Locking{Strength: "UPDATE"}).Take(&session).Error
+		if errors.Is(e, gorm.ErrRecordNotFound) {
+			session = sessionRecord{ID: sessionID, OwnerID: owner, AgentID: agent.ID, Title: inputSpec.Scope.TaskID}
+			if e = tx.Create(&session).Error; e != nil {
+				return e
+			}
+		} else if e != nil {
+			return e
+		} else if session.AgentID != agent.ID {
+			return ErrConflict
+		}
+		var active int64
+		if e = tx.Model(&runRecord{}).Where("owner_id = ? AND session_id = ? AND status IN ?", owner, session.ID, []Status{Queued, Running, WaitingClarification, NeedsReview}).Count(&active).Error; e != nil {
 			return e
 		}
-		session := sessionRecord{ID: NewID(), OwnerID: owner, AgentID: agent.ID, Title: spec.Scope.TaskID}
-		if e = tx.Create(&session).Error; e != nil {
+		if active > 0 {
+			return ErrConflict
+		}
+		spec := runSpec(version.Config, agent.ID, version.Number, inputSpec.Query)
+		spec.Scope = inputSpec.Scope
+		spec.Filesystem = inputSpec.Filesystem
+		if len(spec.Toolsets) > 0 {
+			if spec.Filesystem == nil || spec.Filesystem.Provider != "AIO" || !validEndpoint(spec.Filesystem.URL) || spec.Filesystem.TokenEnv == "" || !strings.HasPrefix(spec.Filesystem.Workspace, "/") {
+				return ErrInvalid
+			}
+		} else if spec.Filesystem != nil {
+			return ErrInvalid
+		}
+		if e = loadConversationHistory(tx, owner, session.ID, &spec); e != nil {
 			return e
 		}
-		spec.AgentID = agent.ID
-		spec.ConfigVersion = "1"
 		data, _ := json.Marshal(spec)
 		id := NewID()
 		if e = tx.Model(&runRecord{}).Create(map[string]any{"id": id, "owner_id": owner, "session_id": session.ID, "request_key": key, "request_hash": hash, "spec": string(data), "status": Queued, "deadline": gorm.Expr("clock_timestamp()+?*interval '1 millisecond'", ttl.Milliseconds()), "max_attempts": 5}).Error; e != nil {
@@ -64,7 +96,7 @@ func (s *Store) SubmitExecution(ctx context.Context, owner, key string, spec Spe
 		if e != nil {
 			return e
 		}
-		if e = appendMessage(tx, result, "User", Message{Role: "user", Content: spec.Query}); e != nil {
+		if e = appendMessage(tx, result, "User", Message{Role: "user", Content: inputSpec.Query}); e != nil {
 			return e
 		}
 		if e = emit(ctx, tx, id, "RunQueued", map[string]any{"status": Queued}); e != nil {

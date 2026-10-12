@@ -39,7 +39,9 @@ type Scope = sdk.Scope
 
 // Spec is an immutable snapshot. Credentials are environment references, never secret values.
 type Spec struct {
-	Scope *Scope `json:"scope,omitempty"`
+	Toolsets   []string               `json:"toolsets,omitempty"`
+	Filesystem *sdk.FilesystemBinding `json:"filesystem,omitempty"`
+	Scope      *Scope                 `json:"scope,omitempty"`
 
 	AgentID       string     `json:"agentID"`
 	ConfigVersion string     `json:"configVersion"`

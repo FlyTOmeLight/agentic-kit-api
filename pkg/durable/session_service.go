@@ -153,16 +153,12 @@ func (s *Store) Submit(ctx context.Context, owner, session, key, query string, t
 		if err = tx.Where("agent_id = ? AND number = ?", agent.ID, agent.PublishedVersion).Take(&version).Error; err != nil {
 			return err
 		}
-		spec := runSpec(version.Config, agent.ID, version.Number, query)
-		// Keep the existing bounded prompt policy: the last 20 completed user/final pairs.
-		// Tool calls remain available in the message log for inspection and later compression.
-		prior := tx.Model(&runRecord{}).Select("id").Where("owner_id = ? AND session_id = ? AND status = ?", owner, session, Completed).Order("created_at DESC, id DESC").Limit(20)
-		var history []messageRecord
-		if err = tx.Where("session_id = ? AND run_id IN (?) AND kind IN ?", session, prior, []string{"User", "Final"}).Order("seq").Find(&history).Error; err != nil {
-			return err
+		if len(version.Config.Toolsets) > 0 {
+			return ErrInvalid
 		}
-		for _, m := range history {
-			spec.History = append(spec.History, m.Message)
+		spec := runSpec(version.Config, agent.ID, version.Number, query)
+		if err = loadConversationHistory(tx, owner, session, &spec); err != nil {
+			return err
 		}
 		data, err := json.Marshal(spec)
 		if err != nil {
@@ -190,4 +186,18 @@ func (s *Store) Submit(ctx context.Context, owner, session, key, query string, t
 		return nil
 	})
 	return run, created, err
+}
+
+// Tool history remains in the message log. Model context includes the last
+// twenty completed user/final pairs, shared by chat and application execution.
+func loadConversationHistory(tx *gorm.DB, owner, session string, spec *Spec) error {
+	prior := tx.Model(&runRecord{}).Select("id").Where("owner_id = ? AND session_id = ? AND status = ?", owner, session, Completed).Order("created_at DESC, id DESC").Limit(20)
+	var history []messageRecord
+	if err := tx.Where("session_id = ? AND run_id IN (?) AND kind IN ?", session, prior, []string{"User", "Final"}).Order("seq").Find(&history).Error; err != nil {
+		return err
+	}
+	for _, m := range history {
+		spec.History = append(spec.History, m.Message)
+	}
+	return nil
 }

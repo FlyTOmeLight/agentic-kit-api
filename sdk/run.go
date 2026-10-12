@@ -47,15 +47,17 @@ type ModelSpec struct {
 	APIKeyEnv   string   `json:"apiKeyEnv"`
 }
 type ToolSpec struct {
-	Kind        string          `json:"kind,omitempty"`
-	ResourceID  string          `json:"resourceID,omitempty"`
-	ToolID      string          `json:"toolID,omitempty"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
-	URL         string          `json:"url,omitempty"`
-	TokenEnv    string          `json:"tokenEnv,omitempty"`
-	Policy      Policy          `json:"policy"`
+ EndRun bool `json:"endRun,omitempty"`
+	ReturnDirectly bool            `json:"returnDirectly,omitempty"`
+	Kind           string          `json:"kind,omitempty"`
+	ResourceID     string          `json:"resourceID,omitempty"`
+	ToolID         string          `json:"toolID,omitempty"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	Parameters     json.RawMessage `json:"parameters"`
+	URL            string          `json:"url,omitempty"`
+	TokenEnv       string          `json:"tokenEnv,omitempty"`
+	Policy         Policy          `json:"policy"`
 }
 type Run struct {
 	Scope         *Scope    `json:"scope,omitempty"`
@@ -73,11 +75,22 @@ type Run struct {
 	WaitingStep   string    `json:"waitingStep,omitempty"`
 	Error         string    `json:"error,omitempty"`
 }
+
+// RunTrace is a replayable page of public execution events, never a checkpoint.
+type RunTrace struct {
+	Run         Run     `json:"run"`
+	Events      []Event `json:"events"`
+	LatestEvent *Event  `json:"latestEvent,omitempty"`
+	NextSeq     int64   `json:"nextSeq"`
+	HasMore     bool    `json:"hasMore"`
+}
+
 type Event struct {
-	RunID   string          `json:"runID"`
-	Seq     int64           `json:"seq"`
-	Kind    string          `json:"kind"`
-	Payload json.RawMessage `json:"payload"`
+	CreatedAt time.Time       `json:"createdAt"`
+	RunID     string          `json:"runID"`
+	Seq       int64           `json:"seq"`
+	Kind      string          `json:"kind"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
 type SupplyResultRequest struct {
