@@ -4,8 +4,8 @@
 
 - 调整目录、包边界或跨仓库依赖前，读取 [项目布局](docs/layout.md)。`cmd/` 负责入口与依赖装配，`internal/config/` 负责配置加载，`internal/service/` 负责资源、总路由与生命周期，通用 HTTP 中间件由 server-go 管理，`internal/app/agent/`、`internal/app/session/`、`internal/app/run/` 分别维护业务 HTTP 接口，`conf/server/` 保存服务配置，`examples/` 保存接口与评测样例。
 - 对外 HTTP 请求、响应和 Go 客户端维护在 `sdk/go/agenticv1/`；修改 HTTP 契约时同步 SDK 和契约测试。SDK 按 AgentAPI、SessionAPI、RunAPI 提供接口，私有实现复用 server-go SDK；不导入 internal、durable、Gin 或 GORM。各 HTTP 模块在消费方定义 Service 接口，由装配层注入实现；Controller 使用 server-go binder 绑定与校验；领域错误由 internal/app/apperror 映射，SDK 直接复用框架错误类型。
-- `pkg/durable/` 是供本仓库和相邻 worker 仓库共用的任务状态与存储契约。变更其公开接口或持久化格式时，同时检查 worker 的调用与恢复行为；避免让该包依赖 Gin 或 API 的 internal 包。
-- 表结构、约束和索引统一维护在 `pkg/durable/models.go`，由 `cmd/cli migrate` 调用 GORM AutoMigrate；修改模型时验证已有数据上的重复迁移。项目目录说明集中在 docs/layout.md，具体启动方式以 README.md 为准。
+- `pkg/durable/` 是供本仓库和相邻 worker 仓库共用的任务状态与存储契约。变更其公开接口或持久化格式时，同时检查 worker 的调用与恢复行为；该包可内部依赖 internal/table，但不依赖 Gin 或 HTTP 模块，对外不暴露私有表类型；worker 只导入公开 durable 接口。
+- 表结构、约束和索引按领域维护在 `internal/table/`，模型注册集中在 `internal/table/migrate.go`，由 `cmd/cli migrate` 经 durable.Store 调用 GORM AutoMigrate；修改模型时验证已有数据上的重复迁移。项目目录说明集中在 docs/layout.md，具体启动方式以 README.md 为准。
 
 ## 执行与接口契约
 

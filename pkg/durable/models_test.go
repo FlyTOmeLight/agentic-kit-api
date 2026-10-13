@@ -7,13 +7,15 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
 // Bypass Store validation so these tests exercise the database constraints.
 func TestModelConstraints(t *testing.T) {
 	s := testStore(t)
 	run := createRun(t, s)
-	step := stepRecord{RunID: run.ID, StepID: "step", InputHash: "hash", Policy: ReadOnly, Status: "Started"}
+	step := table.Step{RunID: run.ID, StepID: "step", InputHash: "hash", Policy: ReadOnly, Status: "Started"}
 	if err := s.db.Create(&step).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -23,17 +25,17 @@ func TestModelConstraints(t *testing.T) {
 		want  error
 	}{
 		{name: "run status", write: func() error {
-			return s.db.Model(&runRecord{}).Where("id = ?", run.ID).Update("status", "invalid").Error
+			return s.db.Model(&table.Run{}).Where("id = ?", run.ID).Update("status", "invalid").Error
 		}, want: gorm.ErrCheckConstraintViolated},
 		{name: "step policy", write: func() error {
-			return s.db.Model(&stepRecord{}).Where("run_id = ?", run.ID).Update("policy", "invalid").Error
+			return s.db.Model(&table.Step{}).Where("run_id = ?", run.ID).Update("policy", "invalid").Error
 		}, want: gorm.ErrCheckConstraintViolated},
 		{name: "step status", write: func() error {
-			return s.db.Model(&stepRecord{}).Where("run_id = ?", run.ID).Update("status", "invalid").Error
+			return s.db.Model(&table.Step{}).Where("run_id = ?", run.ID).Update("status", "invalid").Error
 		}, want: gorm.ErrCheckConstraintViolated},
 		{name: "step foreign key", write: func() error {
 			return s.db.Create(
-				&stepRecord{
+				&table.Step{
 					RunID:     "missing",
 					StepID:    "step",
 					InputHash: "hash",
@@ -44,7 +46,7 @@ func TestModelConstraints(t *testing.T) {
 		}, want: gorm.ErrForeignKeyViolated},
 		{name: "event foreign key", write: func() error {
 			return s.db.Create(
-				&eventRecord{
+				&table.Event{
 					RunID:   "missing",
 					Seq:     1,
 					Kind:    "Progress",
@@ -59,12 +61,12 @@ func TestModelConstraints(t *testing.T) {
 		},
 		{name: "event primary key", write: func() error {
 			return s.db.Create(
-				&eventRecord{RunID: run.ID, Seq: 1, Kind: "Progress", Payload: json.RawMessage(`{}`)},
+				&table.Event{RunID: run.ID, Seq: 1, Kind: "Progress", Payload: json.RawMessage(`{}`)},
 			).Error
 		}, want: gorm.ErrDuplicatedKey},
 		{
 			name:  "referenced run deletion",
-			write: func() error { return s.db.Delete(&runRecord{}, "id = ?", run.ID).Error },
+			write: func() error { return s.db.Delete(&table.Run{}, "id = ?", run.ID).Error },
 			want:  gorm.ErrForeignKeyViolated,
 		},
 	}
@@ -86,13 +88,13 @@ func TestModelSessionAndRequestUniqueness(t *testing.T) {
 				t.Fatal(tx.Error)
 			}
 			defer tx.Rollback()
-			first := runRecord{
+			first := table.Run{
 				ID:          NewID(),
 				OwnerID:     "owner",
 				SessionID:   "session",
 				RequestKey:  "first",
 				RequestHash: "hash",
-				Spec:        Spec{},
+				Spec:        table.ExecutionSnapshot{},
 				Status:      status,
 				Deadline:    time.Now().Add(time.Hour),
 				MaxAttempts: 3,
@@ -123,7 +125,7 @@ func TestModelDatabaseDefaults(t *testing.T) {
 	s := testStore(t)
 	id := NewID()
 	// A map leaves omitted fields to PostgreSQL instead of GORM's struct defaults.
-	err := s.db.Model(&runRecord{}).Create(map[string]any{
+	err := s.db.Model(&table.Run{}).Create(map[string]any{
 		"id":           id,
 		"owner_id":     "owner",
 		"session_id":   "session",
@@ -137,7 +139,7 @@ func TestModelDatabaseDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got runRecord
+	var got table.Run
 	if err = s.db.Take(&got, "id = ?", id).Error; err != nil {
 		t.Fatal(err)
 	}

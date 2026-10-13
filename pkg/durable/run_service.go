@@ -10,12 +10,14 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
 func Hash(data []byte) string { h := sha256.Sum256(data); return hex.EncodeToString(h[:]) }
 
 func (s *Store) Get(ctx context.Context, owner, id string) (*Run, error) {
-	return readRun(s.db.WithContext(ctx).Model(&runRecord{}).Where("id = ? AND owner_id = ?", id, owner))
+	return readRun(s.db.WithContext(ctx).Model(&table.Run{}).Where("id = ? AND owner_id = ?", id, owner))
 }
 
 func emit(ctx context.Context, tx *gorm.DB, id, kind string, payload any) error {
@@ -23,7 +25,7 @@ func emit(ctx context.Context, tx *gorm.DB, id, kind string, payload any) error 
 	if err != nil {
 		return err
 	}
-	var updated runRecord
+	var updated table.Run
 	result := tx.WithContext(ctx).Model(&updated).Where("id = ?", id).
 		Clauses(clause.Returning{Columns: []clause.Column{{Name: "event_seq"}}}).
 		Updates(map[string]any{"event_seq": gorm.Expr("event_seq + 1"), "updated_at": gorm.Expr("clock_timestamp()")})
@@ -34,7 +36,7 @@ func emit(ctx context.Context, tx *gorm.DB, id, kind string, payload any) error 
 		return ErrNotFound
 	}
 	return tx.WithContext(ctx).
-		Create(&eventRecord{RunID: id, Seq: updated.EventSeq, Kind: kind, Payload: json.RawMessage(data)}).
+		Create(&table.Event{RunID: id, Seq: updated.EventSeq, Kind: kind, Payload: json.RawMessage(data)}).
 		Error
 }
 
@@ -49,7 +51,7 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (
 	}
 	defer tx.Rollback()
 	r, err := readRun(
-		tx.Model(&runRecord{}).
+		tx.Model(&table.Run{}).
 			Where("(status='Queued' AND available_at<=clock_timestamp()) OR (status='Running' AND lease_until<=clock_timestamp()) OR (status IN ('WaitingClarification','NeedsReview') AND deadline<=clock_timestamp())").
 			Order("available_at,created_at").
 			Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}),
@@ -61,7 +63,7 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (
 		return nil, err
 	}
 	var expired bool
-	if err = tx.Model(&runRecord{}).
+	if err = tx.Model(&table.Run{}).
 		Select("deadline <= clock_timestamp()").
 		Where("id = ?", r.ID).
 		Scan(&expired).
@@ -73,7 +75,7 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (
 		if !expired {
 			reason = "execution attempts exhausted"
 		}
-		err = tx.Model(&runRecord{}).
+		err = tx.Model(&table.Run{}).
 			Where("id = ?", r.ID).
 			Updates(map[string]any{"status": Failed, "epoch": gorm.Expr("epoch + 1"), "lease_until": nil, "error": reason}).
 			Error
@@ -88,7 +90,7 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (
 		}
 		return nil, ErrNoWork
 	}
-	var claimed runRecord
+	var claimed table.Run
 	err = tx.Model(&claimed).Where("id = ?", r.ID).Clauses(clause.Returning{}).Updates(map[string]any{
 		"status":    Running,
 		"worker_id": worker,
@@ -100,7 +102,7 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (
 		),
 		"updated_at": gorm.Expr("clock_timestamp()"),
 	}).Error
-	r = claimed.run()
+	r = runFromRow(claimed)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +114,7 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (
 
 func lockLease(ctx context.Context, tx *gorm.DB, l Lease) (*Run, error) {
 	r, err := readRun(
-		tx.Model(&runRecord{}).
+		tx.Model(&table.Run{}).
 			Where("id = ? AND worker_id = ? AND epoch = ? AND status = ? AND lease_until > clock_timestamp() AND deadline > clock_timestamp()", l.RunID, l.WorkerID, l.Epoch, Running).
 			Clauses(clause.Locking{Strength: "UPDATE"}),
 	)
@@ -124,7 +126,7 @@ func lockLease(ctx context.Context, tx *gorm.DB, l Lease) (*Run, error) {
 
 func (s *Store) Renew(ctx context.Context, l Lease, d time.Duration) error {
 	tag := s.db.WithContext(ctx).
-		Model(&runRecord{}).
+		Model(&table.Run{}).
 		Where("id = ? AND worker_id = ? AND epoch = ? AND status = ? AND lease_until > clock_timestamp() AND deadline > clock_timestamp()", l.RunID, l.WorkerID, l.Epoch, Running).
 		Updates(map[string]any{"lease_until": gorm.Expr("clock_timestamp()+?*interval '1 millisecond'", d.Milliseconds()), "updated_at": gorm.Expr("clock_timestamp()")})
 	if tag.Error != nil {
@@ -188,7 +190,7 @@ func (s *Store) save(
 	if status != Running {
 		updates["lease_until"] = nil
 	}
-	err = tx.Model(&runRecord{}).Where("id = ?", l.RunID).Updates(updates).Error
+	err = tx.Model(&table.Run{}).Where("id = ?", l.RunID).Updates(updates).Error
 	if err != nil {
 		return err
 	}
@@ -224,8 +226,8 @@ func (s *Store) BeginStep(ctx context.Context, l Lease, id, input string, policy
 	if _, err = lockLease(ctx, tx, l); err != nil {
 		return "", false, err
 	}
-	var step stepRecord
-	err = tx.Model(&stepRecord{}).Where("run_id = ? AND step_id = ?", l.RunID, id).Take(&step).Error
+	var step table.Step
+	err = tx.Model(&table.Step{}).Where("run_id = ? AND step_id = ?", l.RunID, id).Take(&step).Error
 	if err == nil {
 		if step.InputHash != Hash([]byte(input)) || policy != step.Policy {
 			return "", false, ErrConflict
@@ -242,7 +244,7 @@ func (s *Store) BeginStep(ctx context.Context, l Lease, id, input string, policy
 		return "", false, err
 	}
 	err = tx.Create(
-		&stepRecord{
+		&table.Step{
 			RunID:     l.RunID,
 			StepID:    id,
 			InputHash: Hash([]byte(input)),
@@ -273,7 +275,7 @@ func (s *Store) FinishStep(ctx context.Context, l Lease, id, result string, stat
 	if err != nil {
 		return err
 	}
-	tag := tx.Model(&stepRecord{}).
+	tag := tx.Model(&table.Step{}).
 		Where("run_id = ? AND step_id = ? AND status = ?", l.RunID, id, "Started").
 		Updates(map[string]any{"status": "Completed", "result": result})
 	if tag.Error != nil {
@@ -282,7 +284,7 @@ func (s *Store) FinishStep(ctx context.Context, l Lease, id, result string, stat
 	if tag.RowsAffected != 1 {
 		return ErrConflict
 	}
-	if err = tx.Model(&runRecord{}).Where("id = ?", l.RunID).Update("state", string(state)).Error; err != nil {
+	if err = tx.Model(&table.Run{}).Where("id = ?", l.RunID).Update("state", string(state)).Error; err != nil {
 		return err
 	}
 	if err = appendMessage(tx, run, "Tool", Message{Role: "tool", Content: result, ToolCallID: id}); err != nil {
@@ -309,7 +311,7 @@ func (s *Store) Retry(ctx context.Context, l Lease, state json.RawMessage, reaso
 	if r.Attempt >= r.MaxAttempts {
 		status = Failed
 	}
-	err = tx.Model(&runRecord{}).
+	err = tx.Model(&table.Run{}).
 		Where("id = ?", l.RunID).
 		Updates(map[string]any{"state": string(state), "status": status, "error": reason, "lease_until": nil, "available_at": gorm.Expr("clock_timestamp()+?*interval '1 millisecond'", delay.Milliseconds())}).
 		Error
@@ -329,7 +331,7 @@ func (s *Store) Cancel(ctx context.Context, owner, id string) error {
 
 func cancelRun(ctx context.Context, tx *gorm.DB, owner, id string) (bool, error) {
 	r, err := readRun(
-		tx.Model(&runRecord{}).
+		tx.Model(&table.Run{}).
 			Where("id = ? AND owner_id = ?", id, owner).
 			Clauses(clause.Locking{Strength: "UPDATE"}),
 	)
@@ -339,7 +341,7 @@ func cancelRun(ctx context.Context, tx *gorm.DB, owner, id string) (bool, error)
 	if r.Status.Terminal() {
 		return false, nil
 	}
-	if err = tx.Model(&runRecord{}).
+	if err = tx.Model(&table.Run{}).
 		Where("id = ?", id).
 		Updates(map[string]any{"status": Canceled, "epoch": gorm.Expr("epoch + 1"), "lease_until": nil}).
 		Error; err != nil {
@@ -360,7 +362,7 @@ func (s *Store) SupplyResult(ctx context.Context, owner, id, step, result string
 	}
 	defer tx.Rollback()
 	r, err := readRun(
-		tx.Model(&runRecord{}).
+		tx.Model(&table.Run{}).
 			Where("id = ? AND owner_id = ?", id, owner).
 			Clauses(clause.Locking{Strength: "UPDATE"}),
 	)
@@ -368,7 +370,7 @@ func (s *Store) SupplyResult(ctx context.Context, owner, id, step, result string
 		return err
 	}
 	var saved struct{ Result, Status string }
-	err = tx.Model(&stepRecord{}).
+	err = tx.Model(&table.Step{}).
 		Select("result", "status").
 		Where("run_id = ? AND step_id = ?", id, step).
 		Take(&saved).
@@ -399,7 +401,7 @@ func (s *Store) SupplyResult(ctx context.Context, owner, id, step, result string
 		return ErrConflict
 	}
 	var expired bool
-	if err = tx.Model(&runRecord{}).
+	if err = tx.Model(&table.Run{}).
 		Select("deadline <= clock_timestamp()").
 		Where("id = ?", id).
 		Scan(&expired).
@@ -409,13 +411,13 @@ func (s *Store) SupplyResult(ctx context.Context, owner, id, step, result string
 	if expired {
 		return ErrConflict
 	}
-	if err = tx.Model(&stepRecord{}).
+	if err = tx.Model(&table.Step{}).
 		Where("run_id = ? AND step_id = ?", id, step).
 		Updates(map[string]any{"status": "Completed", "result": result}).
 		Error; err != nil {
 		return err
 	}
-	if err = tx.Model(&runRecord{}).
+	if err = tx.Model(&table.Run{}).
 		Where("id = ?", id).
 		Updates(map[string]any{"status": Queued, "attempt": 0, "available_at": gorm.Expr("clock_timestamp()"), "error": ""}).
 		Error; err != nil {
@@ -443,13 +445,13 @@ func (s *Store) Events(ctx context.Context, owner, id string, after int64) ([]Ev
 	if _, err := s.Get(ctx, owner, id); err != nil {
 		return nil, err
 	}
-	var records []eventRecord
-	err := s.db.WithContext(ctx).Model(&eventRecord{}).
+	var records []table.Event
+	err := s.db.WithContext(ctx).Model(&table.Event{}).
 		Select("run_id", "seq", "kind", "payload", "created_at").
 		Where("run_id = ? AND seq > ?", id, after).Order("seq").Limit(200).Find(&records).Error
 	events := make([]Event, len(records))
 	for i, record := range records {
-		events[i] = record.event()
+		events[i] = eventFromRow(record)
 	}
 	return events, err
 }

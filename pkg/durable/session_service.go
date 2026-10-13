@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -17,7 +18,7 @@ type Session = sdk.Session
 
 type SessionMessage = sdk.SessionMessage
 
-func (r sessionRecord) session() *Session {
+func sessionFromRow(r table.Session) *Session {
 	return &Session{
 		ID:         r.ID,
 		AgentID:    r.AgentID,
@@ -40,19 +41,19 @@ func (s *Store) CreateSession(ctx context.Context, owner, agent, title string) (
 	if a.PublishedVersion == 0 {
 		return nil, ErrConflict
 	}
-	r := sessionRecord{ID: NewID(), OwnerID: owner, AgentID: agent, Title: title}
+	r := table.Session{ID: NewID(), OwnerID: owner, AgentID: agent, Title: title}
 	if err = s.db.WithContext(ctx).Create(&r).Error; err != nil {
 		return nil, err
 	}
-	return r.session(), nil
+	return sessionFromRow(r), nil
 }
 
 func (s *Store) Session(ctx context.Context, owner, id string) (*Session, error) {
-	var r sessionRecord
+	var r table.Session
 	if err := s.db.WithContext(ctx).Where("owner_id = ? AND id = ?", owner, id).Take(&r).Error; err != nil {
 		return nil, recordError(err)
 	}
-	return r.session(), nil
+	return sessionFromRow(r), nil
 }
 
 func (s *Store) Sessions(ctx context.Context, owner, agent, after string, limit int) ([]Session, error) {
@@ -63,11 +64,11 @@ func (s *Store) Sessions(ctx context.Context, owner, agent, after string, limit 
 	if agent != "" {
 		q = q.Where("agent_id = ?", agent)
 	}
-	var records []sessionRecord
+	var records []table.Session
 	err := q.Order("id").Limit(limit).Find(&records).Error
 	out := make([]Session, len(records))
 	for i, r := range records {
-		out[i] = *r.session()
+		out[i] = *sessionFromRow(r)
 	}
 	return out, err
 }
@@ -79,7 +80,7 @@ func (s *Store) Messages(ctx context.Context, owner, session string, after int64
 	if _, err := s.Session(ctx, owner, session); err != nil {
 		return nil, err
 	}
-	var records []messageRecord
+	var records []table.Message
 	err := s.db.WithContext(ctx).
 		Where("session_id = ? AND seq > ?", session, after).
 		Order("seq").
@@ -107,7 +108,7 @@ func (s *Store) SessionRuns(ctx context.Context, owner, session, after string, l
 	if _, err := s.Session(ctx, owner, session); err != nil {
 		return nil, err
 	}
-	var records []runRecord
+	var records []table.Run
 	err := s.db.WithContext(ctx).
 		Where("owner_id = ? AND session_id = ? AND id > ?", owner, session, after).
 		Order("id").
@@ -116,14 +117,14 @@ func (s *Store) SessionRuns(ctx context.Context, owner, session, after string, l
 		Error
 	out := make([]Run, len(records))
 	for i, r := range records {
-		out[i] = *r.run()
+		out[i] = *runFromRow(r)
 	}
 	return out, err
 }
 
 // Caller holds the run lock. The session counter serializes all displayed messages.
 func appendMessage(tx *gorm.DB, run *Run, kind string, message Message) error {
-	var session sessionRecord
+	var session table.Session
 	result := tx.Model(&session).Where("id = ? AND owner_id = ?", run.SessionID, run.OwnerID).
 		Clauses(clause.Returning{Columns: []clause.Column{{Name: "message_seq"}}}).
 		Update("message_seq", gorm.Expr("message_seq + 1"))
@@ -134,7 +135,7 @@ func appendMessage(tx *gorm.DB, run *Run, kind string, message Message) error {
 		return ErrNotFound
 	}
 	return tx.Create(
-		&messageRecord{
+		&table.Message{
 			SessionID: run.SessionID,
 			Seq:       session.MessageSeq,
 			RunID:     run.ID,
@@ -170,19 +171,19 @@ func (s *Store) Submit(
 		).Error; err != nil {
 			return err
 		}
-		var existing runRecord
+		var existing table.Run
 		err := tx.Where("owner_id = ? AND request_key = ?", owner, key).Take(&existing).Error
 		if err == nil {
 			if existing.RequestHash != hash {
 				return ErrConflict
 			}
-			run = existing.run()
+			run = runFromRow(existing)
 			return nil
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		var conversation sessionRecord
+		var conversation table.Session
 		if err = tx.Where("owner_id = ? AND id = ?", owner, session).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Take(&conversation).
@@ -190,7 +191,7 @@ func (s *Store) Submit(
 			return recordError(err)
 		}
 		var active int64
-		if err = tx.Model(&runRecord{}).
+		if err = tx.Model(&table.Run{}).
 			Where("owner_id = ? AND session_id = ? AND status IN ?", owner, session, []Status{Queued, Running, WaitingClarification, NeedsReview}).
 			Count(&active).
 			Error; err != nil {
@@ -199,7 +200,7 @@ func (s *Store) Submit(
 		if active > 0 {
 			return ErrConflict
 		}
-		var agent agentRecord
+		var agent table.Agent
 		if err = tx.Where("owner_id = ? AND id = ?", owner, conversation.AgentID).
 			Take(&agent).
 			Error; err != nil {
@@ -208,7 +209,7 @@ func (s *Store) Submit(
 		if agent.PublishedVersion == 0 {
 			return ErrConflict
 		}
-		var version versionRecord
+		var version table.AgentVersion
 		if err = tx.Where("agent_id = ? AND number = ?", agent.ID, agent.PublishedVersion).
 			Take(&version).
 			Error; err != nil {
@@ -226,7 +227,7 @@ func (s *Store) Submit(
 			return err
 		}
 		id := NewID()
-		if err = tx.Model(&runRecord{}).Create(map[string]any{
+		if err = tx.Model(&table.Run{}).Create(map[string]any{
 			"id":           id,
 			"owner_id":     owner,
 			"session_id":   session,
@@ -262,12 +263,12 @@ func (s *Store) Submit(
 // Tool history remains in the message log. Model context includes the last
 // twenty completed user/final pairs, shared by chat and application execution.
 func loadConversationHistory(tx *gorm.DB, owner, session string, spec *Spec) error {
-	prior := tx.Model(&runRecord{}).
+	prior := tx.Model(&table.Run{}).
 		Select("id").
 		Where("owner_id = ? AND session_id = ? AND status = ?", owner, session, Completed).
 		Order("created_at DESC, id DESC").
 		Limit(20)
-	var history []messageRecord
+	var history []table.Message
 	if err := tx.Where("session_id = ? AND run_id IN (?) AND kind IN ?", session, prior, []string{"User", "Final"}).
 		Order("seq").
 		Find(&history).

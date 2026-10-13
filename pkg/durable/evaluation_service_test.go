@@ -10,6 +10,7 @@ import (
 
 	"gorm.io/driver/postgres"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -161,7 +162,7 @@ func TestEvaluationSubmissionRollsBackAllRuns(t *testing.T) {
 	if _, _, err := s.StartEvaluation(t.Context(), "owner", "rollback", req); err == nil {
 		t.Fatal("expected failure")
 	}
-	for _, model := range []any{&evaluationRecord{}, &evaluationTrialRecord{}, &runRecord{}, &eventRecord{}, &messageRecord{}} {
+	for _, model := range []any{&table.Evaluation{}, &table.EvaluationTrial{}, &table.Run{}, &table.Event{}, &table.Message{}} {
 		var n int64
 		if err := s.db.Model(model).Count(&n).Error; err != nil || n != 0 {
 			t.Fatalf("partial commit %T: %d %v", model, n, err)
@@ -408,7 +409,7 @@ func TestEvaluationCompletionWaitsForPersistedReport(t *testing.T) {
 	if err = s.ReconcileEvaluation(ctx, out.ID); err != nil {
 		t.Fatal(err)
 	}
-	var row evaluationRecord
+	var row table.Evaluation
 	if err = s.db.Take(
 		&row,
 		"id = ?",

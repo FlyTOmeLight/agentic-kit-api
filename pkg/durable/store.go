@@ -8,6 +8,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
 // Store owns one GORM database handle and its database/sql connection pool.
@@ -48,9 +50,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 		// v0.1 stored a session label only, not an Agent/session/message graph.
 		// Refuse to invent published configurations or silently hide old history.
-		if tx.Migrator().HasTable(&runRecord{}) && !tx.Migrator().HasTable(&sessionRecord{}) {
+		if tx.Migrator().HasTable(&table.Run{}) && !tx.Migrator().HasTable(&table.Session{}) {
 			var count int64
-			if err := tx.Model(&runRecord{}).Count(&count).Error; err != nil {
+			if err := tx.Model(&table.Run{}).Count(&count).Error; err != nil {
 				return err
 			}
 			if count > 0 {
@@ -59,30 +61,17 @@ func (s *Store) Migrate(ctx context.Context) error {
 				)
 			}
 		}
-		return tx.AutoMigrate(
-			&agentRecord{},
-			&versionRecord{},
-			&sessionRecord{},
-			&runRecord{},
-			&stepRecord{},
-			&eventRecord{},
-			&messageRecord{},
-			&evaluationRecord{},
-			&evaluationTrialRecord{},
-			&evaluationPlanRecord{},
-			&datasetRecord{},
-			&datasetVersionRecord{},
-		)
+		return table.Migrate(tx)
 	})
 }
 
 func readRun(query *gorm.DB) (*Run, error) {
-	var r runRecord
+	var r table.Run
 	if err := query.Take(&r).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	return r.run(), nil
+	return runFromRow(r), nil
 }

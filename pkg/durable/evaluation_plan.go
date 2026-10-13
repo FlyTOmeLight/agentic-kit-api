@@ -10,11 +10,12 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/evaluation"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
-func (r evaluationPlanRecord) response() *sdk.EvaluationPlan {
+func evaluationPlanFromRow(r table.EvaluationPlan) *sdk.EvaluationPlan {
 	return &sdk.EvaluationPlan{
 		ProjectID: r.ProjectID,
 		ID:        r.ID,
@@ -47,7 +48,7 @@ func (s *Store) SaveEvaluationPlan(
 	if err != nil {
 		return nil, ErrInvalid
 	}
-	var row evaluationPlanRecord
+	var row table.EvaluationPlan
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(
 			`SELECT pg_advisory_xact_lock(hashtextextended(?,0))`,
@@ -60,7 +61,7 @@ func (s *Store) SaveEvaluationPlan(
 			if req.Revision != 0 {
 				return ErrNotFound
 			}
-			row = evaluationPlanRecord{
+			row = table.EvaluationPlan{
 				ID:        id,
 				OwnerID:   owner,
 				Revision:  1,
@@ -88,15 +89,15 @@ func (s *Store) SaveEvaluationPlan(
 	if err != nil {
 		return nil, err
 	}
-	return row.response(), nil
+	return evaluationPlanFromRow(row), nil
 }
 
 func (s *Store) EvaluationPlan(ctx context.Context, owner, id string) (*sdk.EvaluationPlan, error) {
-	var row evaluationPlanRecord
+	var row table.EvaluationPlan
 	if err := s.db.WithContext(ctx).Where("owner_id = ? AND id = ?", owner, id).Take(&row).Error; err != nil {
 		return nil, recordError(err)
 	}
-	return row.response(), nil
+	return evaluationPlanFromRow(row), nil
 }
 
 func (s *Store) EvaluationPlans(ctx context.Context, owner, after string, limit int) ([]sdk.EvaluationPlan, error) {
@@ -112,7 +113,7 @@ func (s *Store) WorkspaceEvaluationPlans(
 	if limit < 1 || limit > 100 {
 		return nil, ErrInvalid
 	}
-	var rows []evaluationPlanRecord
+	var rows []table.EvaluationPlan
 	q := s.db.WithContext(ctx).Where("owner_id = ? AND id > ?", owner, after)
 	if projects != nil {
 		q = q.Where("project_id = '' OR project_id IN ?", projects)
@@ -122,7 +123,7 @@ func (s *Store) WorkspaceEvaluationPlans(
 	}
 	out := make([]sdk.EvaluationPlan, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, *row.response())
+		out = append(out, *evaluationPlanFromRow(row))
 	}
 	return out, nil
 }

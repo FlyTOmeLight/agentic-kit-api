@@ -17,7 +17,8 @@ agentic-kit-api/
 │   │   ├── evaluation/         # 持久实验接口
 │   │   └── platform/           # Forge 项目与企业资产接入、授权编排
 │   ├── client/                 # Tenant 鉴权与 Coding 环境的外部协议、连接所有权
-│   └── config/                 # 类型化配置、框架配置快照与校验
+│   ├── config/                 # 类型化配置、框架配置快照与校验
+│   └── table/                  # 持久化模型、约束、索引与迁移注册
 ├── sdk/go/agenticv1/            # 公开 HTTP 契约与 server-go 客户端
 │   ├── agentic_client.go       # 客户端构造、业务入口与 Close
 │   ├── agentic_api_*.go        # 各领域请求、响应和公开数据
@@ -25,7 +26,7 @@ agentic-kit-api/
 │   ├── agentic_client_*.go     # 各领域 HTTP 调用
 │   └── agentic_transport.go    # 框架传输、超时与标准错误解码
 ├── pkg/
-│   ├── durable/                # API 与 worker 共用的状态、模型、存储与业务事务
+│   ├── durable/                # API 与 worker 共用的执行契约、存储操作与业务事务
 │   └── evaluation/             # CLI 与持久实验共用的确定性评分、配对比较
 ├── conf/server/config.toml     # 框架默认配置路径
 ├── examples/
@@ -48,15 +49,17 @@ Forge 接入位于 `internal/app/platform`，负责项目和企业资产的身�
 
 ## 共享持久化边界
 
-`pkg/durable` 是 API 与独立 worker 实际共用的执行模块。模型、查询与事务由该包集中维护，业务规则按 agent_service、session_service、run_service、execution_service、evaluation_service 等领域文件组织。Store 接收 context 并使用 GORM；事务由业务操作确定范围。用户消息与任务、执行消息与状态及 Outbox 都需要同事务提交。
+`internal/table` 按 Agent、Session、Run、Evaluation、Dataset 定义 GORM 模型，表名、字段、约束和索引由此统一维护。`table.Migrate` 注册完整模型集合，`durable.Store.Migrate` 保留迁移事务与旧数据检查。表模型依赖 SDK 的领域类型，不依赖 durable 或 HTTP 模块。
 
-该包继续公开，worker 可以导入；迁到 `internal/table` 会使 worker 无法访问。因此本项目的共享模型与存储职责放在 `pkg/durable`，不建立第二份模型或转发层。表结构仍以 models.go 为唯一来源，由 `cmd/cli migrate` 调用 AutoMigrate。`pkg/evaluation` 提供跨 CLI 与持久实验使用的纯函数评分逻辑。
+`pkg/durable` 保留 API 与独立 worker 使用的公开执行类型、Store 和事务规则，内部直接使用 table 模型，不保留旧模型别名或副本。查询与业务事务仍在对应 durable 领域文件中完成，包含执行权、epoch 和消息/任务/事件的一致提交；表记录在消费方转换为公开领域对象。公开 Spec 与私有 ExecutionSnapshot 在读取时显式转换，持久化 JSON 字段保持一致。
+
+worker 不能直接导入 API 的 internal/table，但可使用内部依赖该包的公开 durable 模块；Go 的 internal 限制作用于直接导入者，而不是禁止公开包内部使用私有实现。`pkg/evaluation` 提供 CLI 与持久实验共用的纯函数评分逻辑。
 
 Worker 仓库维持自己的 `cmd/worker`、`internal/engine`、`internal/adapters` 和 `configs`。它只引用公开共享包，不导入 API 的 internal。跨进程恢复测试实际构建 `cmd/server`，通过 HTTP 提交和读取任务；本地联合验证使用临时 Go workspace。
 
 ## SDK
 
-公开导入路径为 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`，包名 `agenticv1`。文件按领域拆分请求、响应、接口和调用方法。SDK 不导入 API 的 internal、durable、Gin 或 GORM。durable 复用 SDK 的公开领域类型，保留私有执行快照、租约与 GORM 模型，HTTP 返回值显式转换为公开响应。
+公开导入路径为 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`，包名 `agenticv1`。文件按领域拆分请求、响应、接口和调用方法。SDK 不导入 API 的 internal、durable、Gin 或 GORM。durable 复用 SDK 的公开领域类型，保留公开执行快照和租约契约，内部使用 table 的 GORM 模型，HTTP 返回值显式转换为公开响应。
 
 Client 提供 Agents、Sessions、Runs、Executions、Evaluations，ProjectClient 提供 Forge 会话接口。私有传输复用 server-go sdk.Client，每次调用创建独立请求，显式传递 context；身份只属于对应客户端或本次请求。普通 JSON 有明确超时，SSE 由调用方 context 控制，不缓冲完整事件流。SDK 使用框架的 sdk.DecodeError，向调用方返回 *server-go/errors.Error；Status 是 HTTP 状态，StatusCode 是框架错误编号。
 

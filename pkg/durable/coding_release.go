@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -24,7 +25,7 @@ func (s *Store) PublishCodingRelease(
 		return nil, ErrInvalid
 	}
 	id := Hash([]byte(fmt.Sprintf("coding-release:%s:%s:%s:%d", runtimeOwner, projectOwner, agent, version)))[:32]
-	var result versionRecord
+	var result table.AgentVersion
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(
 			`SELECT pg_advisory_xact_lock(hashtextextended(?,0))`,
@@ -32,11 +33,11 @@ func (s *Store) PublishCodingRelease(
 		).Error; err != nil {
 			return err
 		}
-		var source agentRecord
+		var source table.Agent
 		if err := tx.Where("owner_id = ? AND id = ?", projectOwner, agent).Take(&source).Error; err != nil {
 			return recordError(err)
 		}
-		var candidate versionRecord
+		var candidate table.AgentVersion
 		if err := tx.Where("agent_id = ? AND number = ?", agent, version).Take(&candidate).Error; err != nil {
 			return recordError(err)
 		}
@@ -58,7 +59,7 @@ func (s *Store) PublishCodingRelease(
 		if err := ValidateAgentConfig(config); err != nil {
 			return err
 		}
-		var existing agentRecord
+		var existing table.Agent
 		err := tx.Where("id = ?", id).Take(&existing).Error
 		if err == nil {
 			if existing.OwnerID != runtimeOwner {
@@ -81,7 +82,7 @@ func (s *Store) PublishCodingRelease(
 		if len(name) > 180 {
 			name = agent
 		}
-		record := agentRecord{
+		record := table.Agent{
 			ID:                id,
 			OwnerID:           runtimeOwner,
 			Name:              "项目 Coding · " + name,
@@ -93,11 +94,11 @@ func (s *Store) PublishCodingRelease(
 		if err := tx.Create(&record).Error; err != nil {
 			return err
 		}
-		result = versionRecord{AgentID: id, Number: 1, Config: config}
+		result = table.AgentVersion{AgentID: id, Number: 1, Config: config}
 		return tx.Create(&result).Error
 	})
 	if err != nil {
 		return nil, err
 	}
-	return result.version(), nil
+	return versionFromRow(result), nil
 }

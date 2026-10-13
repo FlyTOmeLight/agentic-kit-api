@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -19,13 +20,13 @@ func (s *Store) Trace(ctx context.Context, owner, id string, after int64) (*sdk.
 	}
 	var trace sdk.RunTrace
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		run, err := readRun(tx.Model(&runRecord{}).Where("id = ? AND owner_id = ?", id, owner))
+		run, err := readRun(tx.Model(&table.Run{}).Where("id = ? AND owner_id = ?", id, owner))
 		if err != nil {
 			return err
 		}
 		trace.Run = run.Response()
 		trace.NextSeq = after
-		var messages []messageRecord
+		var messages []table.Message
 		if err = tx.Where("run_id = ? AND kind = ?", id, "Assistant").Find(&messages).Error; err != nil {
 			return err
 		}
@@ -35,7 +36,7 @@ func (s *Store) Trace(ctx context.Context, owner, id string, after int64) (*sdk.
 				calls[call.ID] = call
 			}
 		}
-		var events []eventRecord
+		var events []table.Event
 		if err = tx.Where("run_id = ? AND seq > ?", id, after).
 			Order("seq").
 			Limit(50).
@@ -49,7 +50,7 @@ func (s *Store) Trace(ctx context.Context, owner, id string, after int64) (*sdk.
 			trace.NextSeq = record.Seq
 		}
 		if run.EventSeq > 0 {
-			var latest eventRecord
+			var latest table.Event
 			if err = tx.Where("run_id = ? AND seq = ?", id, run.EventSeq).Take(&latest).Error; err != nil {
 				return err
 			}
@@ -62,8 +63,8 @@ func (s *Store) Trace(ctx context.Context, owner, id string, after int64) (*sdk.
 	return &trace, err
 }
 
-func traceEvent(record eventRecord, calls map[string]sdk.ToolCall) sdk.Event {
-	event := record.event()
+func traceEvent(record table.Event, calls map[string]sdk.ToolCall) sdk.Event {
+	event := eventFromRow(record)
 	var payload map[string]any
 	if json.Unmarshal(event.Payload, &payload) != nil {
 		return event

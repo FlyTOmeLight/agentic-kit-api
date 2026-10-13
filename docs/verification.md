@@ -111,3 +111,9 @@ API 和 worker 均通过 make integration（全仓库 race 与 vet），使用�
 采用 server-go v0.3.1，发布 SDK/命令/配置目录迁移、平铺错误契约，以及当前工作区的持久评测和 Forge 项目/企业空间能力。README 升级说明与 Helm 元数据同步，chart 版本为 0.2.0、appVersion 为 0.5.0。Go 源码使用 gorgeous 整理，符合推送钩子。
 
 格式整理后的代码通过 GOWORK=off make integration（race、vet）、CGO_ENABLED=0 make build；worker 联合测试通过完整 make integration，包括真实 API 进程、强杀接管与事件回放。Dockerfile 从公开依赖构建 agentic-kit-api:v0.5.0 成功，镜像内 CLI 帮助可运行；Helm lint 和 diff 空白检查通过。Docker 镜像在本机构建，未推送容器仓库。
+
+## API v0.5.1 私有表模型归位
+
+表结构按领域迁至 internal/table，模型集合由 table.Migrate 注册。pkg/durable 保留公开执行类型、Store 和业务事务，内部使用表模型并转换为领域对象；删除原 models.go，没有保留模型别名。公开 Spec 仍定义在 durable，持久化 ExecutionSnapshot 单独定义以避免循环依赖，JSON 格式不变。
+
+通过 API 与 worker 的完整 make integration（race、vet）、GOWORK=off CGO_ENABLED=0 make build、gorgeous 格式检查。额外用已发布 v0.5.0 的模型创建隔离数据库并写入已完成任务、执行快照、checkpoint、事件和工具结果；新实现连续迁移两次后，145 项列/约束/索引定义逐项一致，全部已有数据保持一致。隔离 schema 在验证后清理。Docker 镜像 agentic-kit-api:v0.5.1 构建及镜像内 CLI 帮助通过，Helm lint 通过；首次 Docker Hub TLS 超时重试后成功。

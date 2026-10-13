@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -62,13 +63,13 @@ func submitExecution(
 		if e := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, owner+":"+key).Error; e != nil {
 			return e
 		}
-		var old runRecord
+		var old table.Run
 		e := tx.Where("owner_id = ? AND request_key = ?", owner, key).Take(&old).Error
 		if e == nil {
 			if old.RequestHash != hash {
 				return ErrConflict
 			}
-			result = old.run()
+			result = runFromRow(old)
 			return nil
 		}
 		if !errors.Is(e, gorm.ErrRecordNotFound) {
@@ -83,11 +84,11 @@ func submitExecution(
 		if e = tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", sessionID).Error; e != nil {
 			return e
 		}
-		var agent agentRecord
+		var agent table.Agent
 		if e = tx.Where("owner_id = ? AND id = ?", owner, inputSpec.AgentID).Take(&agent).Error; e != nil {
 			return recordError(e)
 		}
-		var version versionRecord
+		var version table.AgentVersion
 		if e = tx.Where("agent_id = ? AND number = ?", agent.ID, inputSpec.AgentVersion).
 			Take(&version).
 			Error; e != nil {
@@ -97,13 +98,13 @@ func submitExecution(
 			(len(version.Config.Tools) != 0 || len(version.Config.Toolsets) != 0 || inputSpec.Filesystem != nil) {
 			return ErrInvalid
 		}
-		var session sessionRecord
+		var session table.Session
 		e = tx.Where("owner_id = ? AND id = ?", owner, sessionID).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Take(&session).
 			Error
 		if errors.Is(e, gorm.ErrRecordNotFound) {
-			session = sessionRecord{
+			session = table.Session{
 				ID:      sessionID,
 				OwnerID: owner,
 				AgentID: agent.ID,
@@ -118,7 +119,7 @@ func submitExecution(
 			return ErrConflict
 		}
 		var active int64
-		if e = tx.Model(&runRecord{}).
+		if e = tx.Model(&table.Run{}).
 			Where("owner_id = ? AND session_id = ? AND status IN ?", owner, session.ID, []Status{Queued, Running, WaitingClarification, NeedsReview}).
 			Count(&active).
 			Error; e != nil {
@@ -145,7 +146,7 @@ func submitExecution(
 		}
 		data, _ := json.Marshal(spec)
 		id := NewID()
-		if e = tx.Model(&runRecord{}).
+		if e = tx.Model(&table.Run{}).
 			Create(map[string]any{"id": id, "owner_id": owner, "session_id": session.ID, "request_key": key, "request_hash": hash, "spec": string(data), "status": Queued, "deadline": gorm.Expr("clock_timestamp()+?*interval '1 millisecond'", ttl.Milliseconds()), "max_attempts": 5}).
 			Error; e != nil {
 			return recordError(e)
@@ -171,7 +172,7 @@ func submitExecution(
 func (s *Store) CheckExecutionLease(ctx context.Context, owner, id string, epoch int64) (bool, error) {
 	var n int64
 	e := s.db.WithContext(ctx).
-		Model(&runRecord{}).
+		Model(&table.Run{}).
 		Where("owner_id = ? AND id = ? AND epoch = ? AND status = ? AND lease_until > clock_timestamp()", owner, id, epoch, Running).
 		Count(&n).
 		Error

@@ -13,6 +13,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
 func testStore(t *testing.T) *Store {
@@ -132,7 +134,7 @@ func TestConcurrentClaimAndFence(t *testing.T) {
 	}
 	old := winners[0]
 	if err := s.db.WithContext(ctx).
-		Model(&runRecord{}).
+		Model(&table.Run{}).
 		Where("id = ?", r.ID).
 		Update("lease_until", gorm.Expr("clock_timestamp()-interval '1 second'")).
 		Error; err != nil {
@@ -318,7 +320,7 @@ func TestDeadlineAndAttemptLimit(t *testing.T) {
 	ctx := context.Background()
 	r := createRun(t, s)
 	if err := s.db.WithContext(ctx).
-		Model(&runRecord{}).
+		Model(&table.Run{}).
 		Where("id = ?", r.ID).
 		Update("deadline", gorm.Expr("clock_timestamp()-interval '1 second'")).
 		Error; err != nil {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -130,7 +131,7 @@ func TestApplicationsReusePublishedAgentsAndTaskConversations(t *testing.T) {
 				t.Fatalf("project isolation: %+v %v", third, err)
 			}
 			var agents int64
-			if err = s.db.Model(&agentRecord{}).Count(&agents).Error; err != nil || agents != 1 {
+			if err = s.db.Model(&table.Agent{}).Count(&agents).Error; err != nil || agents != 1 {
 				t.Fatalf("execution created agents: %d %v", agents, err)
 			}
 		})

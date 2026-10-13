@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -20,7 +21,7 @@ type Agent = sdk.Agent
 
 type AgentVersion = sdk.AgentVersion
 
-func (r agentRecord) agent() *Agent {
+func agentFromRow(r table.Agent) *Agent {
 	return &Agent{
 		ID:               r.ID,
 		Name:             r.Name,
@@ -32,7 +33,7 @@ func (r agentRecord) agent() *Agent {
 	}
 }
 
-func (r versionRecord) version() *AgentVersion {
+func versionFromRow(r table.AgentVersion) *AgentVersion {
 	return &AgentVersion{AgentID: r.AgentID, Number: r.Number, Config: r.Config, CreatedAt: r.CreatedAt.UTC()}
 }
 
@@ -118,19 +119,19 @@ func (s *Store) CreateAgent(ctx context.Context, owner, name string, config Agen
 	if err := ValidateAgentConfig(config); err != nil {
 		return nil, err
 	}
-	r := agentRecord{ID: NewID(), OwnerID: owner, Name: name, Draft: config, Revision: 1}
+	r := table.Agent{ID: NewID(), OwnerID: owner, Name: name, Draft: config, Revision: 1}
 	if err := s.db.WithContext(ctx).Create(&r).Error; err != nil {
 		return nil, err
 	}
-	return r.agent(), nil
+	return agentFromRow(r), nil
 }
 
 func (s *Store) Agent(ctx context.Context, owner, id string) (*Agent, error) {
-	var r agentRecord
+	var r table.Agent
 	if err := s.db.WithContext(ctx).Where("owner_id = ? AND id = ?", owner, id).Take(&r).Error; err != nil {
 		return nil, recordError(err)
 	}
-	return r.agent(), nil
+	return agentFromRow(r), nil
 }
 
 // UpdateAgent replaces the draft only if the caller edited the current revision.
@@ -147,7 +148,7 @@ func (s *Store) UpdateAgent(
 	if err := ValidateAgentConfig(config); err != nil {
 		return nil, err
 	}
-	var r agentRecord
+	var r table.Agent
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("owner_id = ? AND id = ?", owner, id).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -170,13 +171,13 @@ func (s *Store) UpdateAgent(
 	if err != nil {
 		return nil, err
 	}
-	return r.agent(), nil
+	return agentFromRow(r), nil
 }
 
 func (s *Store) PublishAgent(ctx context.Context, owner, id string, revision int64) (*AgentVersion, error) {
-	var v versionRecord
+	var v table.AgentVersion
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var a agentRecord
+		var a table.Agent
 		if err := tx.Where("owner_id = ? AND id = ?", owner, id).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Take(&a).
@@ -192,7 +193,7 @@ func (s *Store) PublishAgent(ctx context.Context, owner, id string, revision int
 		if err := ValidateAgentConfig(a.Draft); err != nil {
 			return err
 		}
-		v = versionRecord{AgentID: id, Number: a.PublishedVersion + 1, Config: a.Draft}
+		v = table.AgentVersion{AgentID: id, Number: a.PublishedVersion + 1, Config: a.Draft}
 		if err := tx.Create(&v).Error; err != nil {
 			return err
 		}
@@ -203,18 +204,18 @@ func (s *Store) PublishAgent(ctx context.Context, owner, id string, revision int
 	if err != nil {
 		return nil, err
 	}
-	return v.version(), nil
+	return versionFromRow(v), nil
 }
 
 func (s *Store) AgentVersion(ctx context.Context, owner, id string, number int64) (*AgentVersion, error) {
 	if _, err := s.Agent(ctx, owner, id); err != nil {
 		return nil, err
 	}
-	var r versionRecord
+	var r table.AgentVersion
 	if err := s.db.WithContext(ctx).Where("agent_id = ? AND number = ?", id, number).Take(&r).Error; err != nil {
 		return nil, recordError(err)
 	}
-	return r.version(), nil
+	return versionFromRow(r), nil
 }
 
 // Lists use stable ID cursors and bounded pages; IDs are opaque, not chronological.
@@ -222,7 +223,7 @@ func (s *Store) Agents(ctx context.Context, owner, after string, limit int) ([]A
 	if limit < 1 || limit > 100 {
 		return nil, ErrInvalid
 	}
-	var records []agentRecord
+	var records []table.Agent
 	err := s.db.WithContext(ctx).
 		Where("owner_id = ? AND id > ?", owner, after).
 		Order("id").
@@ -231,7 +232,7 @@ func (s *Store) Agents(ctx context.Context, owner, after string, limit int) ([]A
 		Error
 	out := make([]Agent, len(records))
 	for i, r := range records {
-		out[i] = *r.agent()
+		out[i] = *agentFromRow(r)
 	}
 	return out, err
 }

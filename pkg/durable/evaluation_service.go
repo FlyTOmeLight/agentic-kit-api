@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/evaluation"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
@@ -39,7 +40,7 @@ func (s *Store) StartEvaluation(
 		return nil, false, ErrInvalid
 	}
 	hash := Hash(data)
-	var row evaluationRecord
+	var row table.Evaluation
 	created := false
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(
@@ -59,13 +60,13 @@ func (s *Store) StartEvaluation(
 			return err
 		}
 		if req.Suite.Scenario.Kind == "coding" {
-			var a agentRecord
+			var a table.Agent
 			if err := tx.Where("owner_id = ? AND id = ?", owner, req.Suite.Target.AgentID).
 				Take(&a).
 				Error; err != nil {
 				return recordError(err)
 			}
-			var v versionRecord
+			var v table.AgentVersion
 			if err := tx.Where("agent_id = ? AND number = ?", a.ID, req.Suite.Target.AgentVersion).
 				Take(&v).
 				Error; err != nil {
@@ -75,7 +76,7 @@ func (s *Store) StartEvaluation(
 				return ErrInvalid
 			}
 		}
-		row = evaluationRecord{
+		row = table.Evaluation{
 			ID:          NewID(),
 			OwnerID:     owner,
 			RequestKey:  key,
@@ -91,7 +92,7 @@ func (s *Store) StartEvaluation(
 			return err
 		}
 		for _, c := range req.Suite.Dataset.Cases {
-			trial := evaluationTrialRecord{ID: NewID(), ExperimentID: row.ID, CaseID: c.ID}
+			trial := table.EvaluationTrial{ID: NewID(), ExperimentID: row.ID, CaseID: c.ID}
 			if req.Suite.Scenario.Kind == "coding" {
 				trial.Coding = &sdk.CodingEvaluationEvidence{
 					Status:   "Preparing",
@@ -142,7 +143,7 @@ func (s *Store) StartEvaluation(
 	return out, created, err
 }
 
-func evaluationSnapshot(tx *gorm.DB, row evaluationRecord) (*sdk.EvaluationExperiment, error) {
+func evaluationSnapshot(tx *gorm.DB, row table.Evaluation) (*sdk.EvaluationExperiment, error) {
 	out := &sdk.EvaluationExperiment{
 		ID: row.ID,
 		Scope: sdk.EvaluationScope{
@@ -158,7 +159,7 @@ func evaluationSnapshot(tx *gorm.DB, row evaluationRecord) (*sdk.EvaluationExper
 		UpdatedAt:   row.UpdatedAt.UTC(),
 		Trials:      []sdk.EvaluationTrial{},
 	}
-	var trials []evaluationTrialRecord
+	var trials []table.EvaluationTrial
 	if err := tx.Where("experiment_id = ?", row.ID).Order("case_id").Find(&trials).Error; err != nil {
 		return nil, err
 	}
@@ -239,7 +240,7 @@ func evaluationSnapshot(tx *gorm.DB, row evaluationRecord) (*sdk.EvaluationExper
 }
 
 func (s *Store) Evaluation(ctx context.Context, owner, id string) (*sdk.EvaluationExperiment, error) {
-	var row evaluationRecord
+	var row table.Evaluation
 	// A consistent read prevents mixing pre-cancel and post-cancel Trial states.
 	var out *sdk.EvaluationExperiment
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -268,7 +269,7 @@ func (s *Store) Evaluations(
 	if opts.Limit < 1 || opts.Limit > 100 || opts.TenantID == "" {
 		return nil, ErrInvalid
 	}
-	var rows []evaluationRecord
+	var rows []table.Evaluation
 	q := s.db.WithContext(ctx).Where("owner_id = ? AND tenant_id = ? AND id > ?", owner, opts.TenantID, opts.After)
 	if opts.ProjectID != "" {
 		q = q.Where("project_id = ?", opts.ProjectID)
@@ -295,7 +296,7 @@ func (s *Store) Evaluations(
 // tool calls; concurrent API instances serialize on the experiment row.
 func (s *Store) ReconcileEvaluation(ctx context.Context, id string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var row evaluationRecord
+		var row table.Evaluation
 		if err := tx.Where("id = ?", id).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Take(&row).
@@ -321,7 +322,7 @@ func (s *Store) ReconcileEvaluation(ctx context.Context, id string) error {
 
 func (s *Store) CancelEvaluation(ctx context.Context, owner, id string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var row evaluationRecord
+		var row table.Evaluation
 		if err := tx.Where("owner_id = ? AND id = ?", owner, id).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Take(&row).
@@ -331,7 +332,7 @@ func (s *Store) CancelEvaluation(ctx context.Context, owner, id string) error {
 		if row.Status == "Completed" || row.Status == "Canceled" {
 			return nil
 		}
-		var trials []evaluationTrialRecord
+		var trials []table.EvaluationTrial
 		if err := tx.Where("experiment_id = ?", id).Order("run_id").Find(&trials).Error; err != nil {
 			return err
 		}
@@ -373,7 +374,7 @@ func (s *Store) CancelEvaluation(ctx context.Context, owner, id string) error {
 // ReconcileEvaluations visits pending records in updated order, so long-running
 // trials do not starve newer experiments. Database state survives process exit.
 func (s *Store) ReconcileEvaluations(ctx context.Context) error {
-	var rows []evaluationRecord
+	var rows []table.Evaluation
 	if err := s.db.WithContext(ctx).
 		Select("id").
 		Where("status IN ?", []string{"Running", "NeedsAttention"}).

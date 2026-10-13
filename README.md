@@ -2,7 +2,7 @@
 
 Agent 的配置、发布、会话、消息与持久化执行 API。与相邻的 `agentic-kit-worker` 仓库一起运行，解决原 `agentic-kit` 中后台 goroutine 随服务重启消失、执行进度不能接管、数据库与完成事件双写不一致的问题。
 
-当前版本为 v0.5.0，支持通过接口创建和发布 Agent、连续对话、查询历史及故障接管。使用独立 PostgreSQL 表，不会自动迁移原 agentic-kit 的 `agent_run` 数据。原产品的完整功能迁移状态见 [迁移范围](docs/migration.md)，不能直接替换旧服务流量。
+当前版本为 v0.5.1，支持通过接口创建和发布 Agent、连续对话、查询历史及故障接管。使用独立 PostgreSQL 表，不会自动迁移原 agentic-kit 的 `agent_run` 数据。原产品的完整功能迁移状态见 [迁移范围](docs/migration.md)，不能直接替换旧服务流量。
 
 ## 项目结构
 
@@ -12,7 +12,7 @@ Agent 的配置、发布、会话、消息与持久化执行 API。与相邻的 
 
 API 使用 [server-go](https://github.com/FlyTOmeLight/server-go) 管理配置、资源、HTTP 生命周期与通用 HTTP 行为。`cmd/server` 处理启动与信号，`internal/service` 装配资源、业务路由和后台任务；`internal/app` 按领域维护 Controller 与 Service 接口。JSON 绑定、请求大小限制、Bearer 鉴权、身份读取、分页参数、请求日志、Recovery 和错误响应统一使用框架能力。`internal/app/apperror` 只把 durable 的领域错误映射为 HTTP 错误。公开请求、响应与客户端维护在 `sdk/go/agenticv1/`。
 
-业务事务在 `pkg/durable` 中按 agent_service.go、session_service.go、run_service.go 分开组织，API 与 worker 共用。controller 只处理 HTTP 语义，并依赖本业务模块的 Service 接口；总装配层注入 durable.Store。
+持久化模型与迁移注册位于 `internal/table`；业务事务在 `pkg/durable` 中按 agent_service.go、session_service.go、run_service.go 分开组织，API 与 worker 共用其公开接口。controller 只处理 HTTP 语义，并依赖本业务模块的 Service 接口；总装配层注入 durable.Store。
 
 使用 server-go binder 的严格 JSON 绑定和 Gin 校验器，拒绝未知字段和多段 JSON，不修改 Gin 全局 decoder 标志。SSE 传输使用 server-go stream；Gin Context 不传入后台 worker，数据库操作继续传递 Request.Context。生产运行可设置 `GIN_MODE=release`。
 
@@ -154,7 +154,7 @@ make integration
 
 连接、事务、查询和写入集中在 `pkg/durable` 的 GORM Store；API 与 worker 使用同一实现。读写使用 GORM Model、查询构造器和 Updates；领取与执行权校验使用 Locking 子句，更新结果使用 Returning 子句，Outbox 领取使用子查询。数据库时钟与原子递增使用 gorm.Expr；事务级 advisory lock 通过 GORM Exec 调用 PostgreSQL 函数。
 
-`pkg/durable/models.go` 是表结构的唯一来源，包含复合主键、CHECK、外键、部分唯一索引和数据库默认值。`cmd/cli` 在持有迁移锁的 GORM 事务中调用 AutoMigrate；API 和 worker 启动时不自动建表。AutoMigrate 会补齐缺失的表、列、约束和索引，也可能调整列类型或可空性；不会自动删除废弃列。变更模型后应先验证已有数据库上的迁移，再执行部署迁移命令。连接池每进程最多 20 个连接、5 个空闲连接；退出时关闭。SQL 日志关闭，避免输出模型上下文与工具结果。
+`internal/table/` 中的领域模型是表结构的唯一来源，迁移模型注册集中在 `internal/table/migrate.go`，包含复合主键、CHECK、外键、部分唯一索引和数据库默认值。`cmd/cli` 在持有迁移锁的 GORM 事务中调用 AutoMigrate；API 和 worker 启动时不自动建表。AutoMigrate 会补齐缺失的表、列、约束和索引，也可能调整列类型或可空性；不会自动删除废弃列。变更模型后应先验证已有数据库上的迁移，再执行部署迁移命令。连接池每进程最多 20 个连接、5 个空闲连接；退出时关闭。SQL 日志关闭，避免输出模型上下文与工具结果。
 
 ## 依赖选择
 

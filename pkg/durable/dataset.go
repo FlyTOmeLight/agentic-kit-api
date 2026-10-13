@@ -10,10 +10,11 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
-func (r datasetRecord) response() *sdk.Dataset {
+func datasetFromRow(r table.Dataset) *sdk.Dataset {
 	return &sdk.Dataset{
 		ID:               r.ID,
 		Name:             r.Name,
@@ -28,7 +29,7 @@ func (s *Store) Datasets(ctx context.Context, owner, after string, limit int) ([
 	if limit < 1 || limit > 100 {
 		return nil, ErrInvalid
 	}
-	var rows []datasetRecord
+	var rows []table.Dataset
 	if err := s.db.WithContext(ctx).
 		Where("owner_id = ? AND id > ?", owner, after).
 		Order("id").
@@ -39,17 +40,17 @@ func (s *Store) Datasets(ctx context.Context, owner, after string, limit int) ([
 	}
 	out := make([]sdk.Dataset, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, *r.response())
+		out = append(out, *datasetFromRow(r))
 	}
 	return out, nil
 }
 
 func (s *Store) Dataset(ctx context.Context, owner, id string) (*sdk.Dataset, error) {
-	var r datasetRecord
+	var r table.Dataset
 	if err := s.db.WithContext(ctx).Where("owner_id = ? AND id = ?", owner, id).Take(&r).Error; err != nil {
 		return nil, recordError(err)
 	}
-	return r.response(), nil
+	return datasetFromRow(r), nil
 }
 
 func (s *Store) SaveDataset(ctx context.Context, owner, id string, req sdk.SaveDatasetRequest) (*sdk.Dataset, error) {
@@ -67,7 +68,7 @@ func (s *Store) SaveDataset(ctx context.Context, owner, id string, req sdk.SaveD
 		}
 		seen[c.ID] = true
 	}
-	var row datasetRecord
+	var row table.Dataset
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(
 			"SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
@@ -80,7 +81,7 @@ func (s *Store) SaveDataset(ctx context.Context, owner, id string, req sdk.SaveD
 			if req.Revision != 0 {
 				return ErrNotFound
 			}
-			row = datasetRecord{ID: id, OwnerID: owner, Name: req.Name, Revision: 1, Cases: req.Cases}
+			row = table.Dataset{ID: id, OwnerID: owner, Name: req.Name, Revision: 1, Cases: req.Cases}
 			return tx.Create(&row).Error
 		}
 		if err != nil {
@@ -105,13 +106,13 @@ func (s *Store) SaveDataset(ctx context.Context, owner, id string, req sdk.SaveD
 	if err != nil {
 		return nil, err
 	}
-	return row.response(), nil
+	return datasetFromRow(row), nil
 }
 
 func (s *Store) PublishDataset(ctx context.Context, owner, id string, revision int64) (*sdk.DatasetVersion, error) {
-	var version datasetVersionRecord
+	var version table.DatasetVersion
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var row datasetRecord
+		var row table.Dataset
 		if err := tx.Where("owner_id = ? AND id = ?", owner, id).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Take(&row).
@@ -134,7 +135,7 @@ func (s *Store) PublishDataset(ctx context.Context, owner, id string, revision i
 			}
 		}
 		n := row.PublishedVersion + 1
-		version = datasetVersionRecord{
+		version = table.DatasetVersion{
 			DatasetID: id,
 			Number:    n,
 			Snapshot: sdk.EvaluationDataset{
@@ -164,7 +165,7 @@ func (s *Store) DatasetVersion(ctx context.Context, owner, id string, n int64) (
 	if _, err := s.Dataset(ctx, owner, id); err != nil {
 		return nil, err
 	}
-	var v datasetVersionRecord
+	var v table.DatasetVersion
 	if err := s.db.WithContext(ctx).Where("dataset_id = ? AND number = ?", id, n).Take(&v).Error; err != nil {
 		return nil, recordError(err)
 	}

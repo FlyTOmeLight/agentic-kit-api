@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
 func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
@@ -166,7 +168,7 @@ func TestConcurrentPublishAndSubmit(t *testing.T) {
 	}
 	wg.Wait()
 	var versions int64
-	if err := s.db.Model(&versionRecord{}).Count(&versions).Error; err != nil || versions != 1 {
+	if err := s.db.Model(&table.AgentVersion{}).Count(&versions).Error; err != nil || versions != 1 {
 		t.Fatalf("versions=%d err=%v", versions, err)
 	}
 	for range 8 {
@@ -267,10 +269,10 @@ func TestMessageAndRunRollbackTogether(t *testing.T) {
 		t.Fatal("expected failure")
 	}
 	var runs, events int64
-	if err = s.db.Model(&runRecord{}).Count(&runs).Error; err != nil {
+	if err = s.db.Model(&table.Run{}).Count(&runs).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = s.db.Model(&eventRecord{}).Count(&events).Error; err != nil {
+	if err = s.db.Model(&table.Event{}).Count(&events).Error; err != nil {
 		t.Fatal(err)
 	}
 	read, err := s.Session(ctx, "owner", session.ID)
@@ -315,18 +317,18 @@ func TestMigrationRefusesUnmanagedLegacyRuns(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	// Reproduce a v0.1 database: only the three durable tables, with an existing run.
-	for _, model := range []any{&messageRecord{}, &sessionRecord{}, &versionRecord{}, &agentRecord{}} {
+	for _, model := range []any{&table.Message{}, &table.Session{}, &table.AgentVersion{}, &table.Agent{}} {
 		if err := s.db.Migrator().DropTable(model); err != nil {
 			t.Fatal(err)
 		}
 	}
-	legacy := runRecord{
+	legacy := table.Run{
 		ID:          "old-run",
 		OwnerID:     "owner",
 		SessionID:   "old-label",
 		RequestKey:  "request",
 		RequestHash: "hash",
-		Spec:        Spec{},
+		Spec:        table.ExecutionSnapshot{},
 		Status:      Queued,
 		Deadline:    time.Now().Add(time.Hour),
 		MaxAttempts: 3,
@@ -337,7 +339,7 @@ func TestMigrationRefusesUnmanagedLegacyRuns(t *testing.T) {
 	if err := s.Migrate(ctx); err == nil {
 		t.Fatal("accepted legacy runs without a conversation migration")
 	}
-	if s.db.Migrator().HasTable(&sessionRecord{}) {
+	if s.db.Migrator().HasTable(&table.Session{}) {
 		t.Fatal("failed migration partially created tables")
 	}
 	got, err := s.Get(ctx, "owner", legacy.ID)

@@ -11,6 +11,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm/clause"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
 func eventRedis(t *testing.T) *redis.Client {
@@ -75,15 +77,15 @@ func TestOutboxLockedHeadDoesNotBlockOtherRun(t *testing.T) {
 				t.Fatal(tx.Error)
 			}
 			defer tx.Rollback()
-			var head eventRecord
-			if err := tx.Model(&eventRecord{}).
+			var head table.Event
+			if err := tx.Model(&table.Event{}).
 				Where("run_id = ? AND seq = ?", a.ID, 1).
 				Clauses(clause.Locking{Strength: "UPDATE"}).
 				Take(&head).
 				Error; err != nil {
 				t.Fatal(err)
 			}
-			data, err := json.Marshal(head.event())
+			data, err := json.Marshal(eventFromRow(head))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -91,7 +93,7 @@ func TestOutboxLockedHeadDoesNotBlockOtherRun(t *testing.T) {
 				Err(); err != nil {
 				t.Fatal(err)
 			}
-			if err = tx.Model(&eventRecord{}).
+			if err = tx.Model(&table.Event{}).
 				Where("run_id=? AND seq=1", a.ID).
 				Update("published", true).
 				Error; err != nil {
@@ -181,7 +183,7 @@ func TestConcurrentOutboxPublishersPreservePerRunOrder(t *testing.T) {
 		checkStream(t, ctx, rdb, r.ID, 2)
 	}
 	var pending int64
-	if err := s.db.WithContext(ctx).Model(&eventRecord{}).Where("NOT published").Count(&pending).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&table.Event{}).Where("NOT published").Count(&pending).Error; err != nil {
 		t.Fatal(err)
 	}
 	if pending != 0 {

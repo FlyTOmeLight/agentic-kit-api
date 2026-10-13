@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -26,7 +27,7 @@ type CodingEvaluationEnvironment interface {
 // Reconciliation persists preparation before submitting a Run. External operations
 // use the immutable Trial ID; retries cannot allocate a second environment or Run.
 func (s *Store) ReconcileCodingEvaluations(ctx context.Context, environments CodingEvaluationEnvironment) error {
-	var rows []evaluationRecord
+	var rows []table.Evaluation
 	if err := s.db.WithContext(ctx).
 		Where("suite->'scenario'->>'kind' = 'coding' AND status <> 'Completed' AND EXISTS (SELECT 1 FROM evaluation_trial t WHERE t.experiment_id=evaluation_experiment.id AND NOT (t.coding->>'stopped')::boolean)").
 		Order("updated_at,id").
@@ -36,7 +37,7 @@ func (s *Store) ReconcileCodingEvaluations(ctx context.Context, environments Cod
 		return err
 	}
 	for _, row := range rows {
-		var trials []evaluationTrialRecord
+		var trials []table.EvaluationTrial
 		if err := s.db.WithContext(ctx).Where("experiment_id = ?", row.ID).Find(&trials).Error; err != nil {
 			return err
 		}
@@ -99,14 +100,14 @@ func (s *Store) ReconcileCodingEvaluations(ctx context.Context, environments Cod
 				}
 			}
 			err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-				var current evaluationRecord
+				var current table.Evaluation
 				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 					Where("id = ?", row.ID).
 					Take(&current).
 					Error; err != nil {
 					return err
 				}
-				var t evaluationTrialRecord
+				var t table.EvaluationTrial
 				if err := tx.Where("id = ?", trial.ID).Take(&t).Error; err != nil {
 					return err
 				}
@@ -192,11 +193,11 @@ func (s *Store) ReconcileCodingEvaluations(ctx context.Context, environments Cod
 // This narrow service lease allows the Coding gateway to authorize only the Run
 // belonging to this coding Trial. It never grants cross-owner Run access.
 func (s *Store) CheckCodingEvaluationLease(ctx context.Context, trialID, runID string, epoch int64) (bool, error) {
-	var trial evaluationTrialRecord
+	var trial table.EvaluationTrial
 	if err := s.db.WithContext(ctx).Where("id = ? AND run_id = ?", trialID, runID).Take(&trial).Error; err != nil {
 		return false, recordError(err)
 	}
-	var row evaluationRecord
+	var row table.Evaluation
 	if err := s.db.WithContext(ctx).Where("id = ?", trial.ExperimentID).Take(&row).Error; err != nil {
 		return false, err
 	}
