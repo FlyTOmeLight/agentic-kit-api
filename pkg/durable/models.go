@@ -3,6 +3,8 @@ package durable
 import (
 	"encoding/json"
 	"time"
+
+	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
 // Records are the schema source of truth. Run timestamps use the database
@@ -31,11 +33,29 @@ type runRecord struct {
 }
 
 func (runRecord) TableName() string { return "durable_run" }
+
 func (r runRecord) run() *Run {
-	return &Run{Scope: r.Spec.Scope, AgentID: r.Spec.AgentID, ConfigVersion: r.Spec.ConfigVersion, ID: r.ID, OwnerID: r.OwnerID, SessionID: r.SessionID, Spec: r.Spec, State: r.State,
-		Status: r.Status, WorkerID: r.WorkerID, Epoch: r.Epoch, LeaseUntil: r.LeaseUntil,
-		Deadline: r.Deadline, Attempt: r.Attempt, MaxAttempts: r.MaxAttempts, EventSeq: r.EventSeq,
-		Output: r.Output, Error: r.Error, WaitingStep: waitingStep(r.State)}
+	return &Run{
+		Scope:         r.Spec.Scope,
+		AgentID:       r.Spec.AgentID,
+		ConfigVersion: r.Spec.ConfigVersion,
+		ID:            r.ID,
+		OwnerID:       r.OwnerID,
+		SessionID:     r.SessionID,
+		Spec:          r.Spec,
+		State:         r.State,
+		Status:        r.Status,
+		WorkerID:      r.WorkerID,
+		Epoch:         r.Epoch,
+		LeaseUntil:    r.LeaseUntil,
+		Deadline:      r.Deadline,
+		Attempt:       r.Attempt,
+		MaxAttempts:   r.MaxAttempts,
+		EventSeq:      r.EventSeq,
+		Output:        r.Output,
+		Error:         r.Error,
+		WaitingStep:   waitingStep(r.State),
+	}
 }
 
 type stepRecord struct {
@@ -61,6 +81,7 @@ type eventRecord struct {
 }
 
 func (eventRecord) TableName() string { return "durable_event" }
+
 func (e eventRecord) event() Event {
 	return Event{RunID: e.RunID, Seq: e.Seq, Kind: e.Kind, Payload: e.Payload, CreatedAt: e.CreatedAt.UTC()}
 }
@@ -115,3 +136,67 @@ type messageRecord struct {
 }
 
 func (messageRecord) TableName() string { return "agent_message" }
+
+// An experiment freezes its suite and every Trial-to-Run identity in one transaction.
+type evaluationRecord struct {
+	ID          string                `gorm:"type:text;primaryKey;not null"`
+	OwnerID     string                `gorm:"type:text;not null;uniqueIndex:evaluation_request,priority:1;index:evaluation_scope,priority:1"`
+	RequestKey  string                `gorm:"type:text;not null;uniqueIndex:evaluation_request,priority:2"`
+	RequestHash string                `gorm:"type:text;not null"`
+	TenantID    string                `gorm:"type:text;not null;index:evaluation_scope,priority:2"`
+	ProjectID   string                `gorm:"type:text;not null;index:evaluation_scope,priority:3"`
+	ActorID     string                `gorm:"type:text;not null"`
+	Status      string                `gorm:"type:text;not null;check:evaluation_status,status IN ('Running','NeedsAttention','Completed','Canceled');index:evaluation_pending,where:status = 'Running' OR status = 'NeedsAttention'"`
+	Suite       sdk.EvaluationSuite   `gorm:"serializer:json;type:jsonb;not null"`
+	SuiteDigest string                `gorm:"type:text;not null"`
+	Report      *sdk.EvaluationReport `gorm:"serializer:json;type:jsonb"`
+	CreatedAt   time.Time             `gorm:"type:timestamptz;not null"`
+	UpdatedAt   time.Time             `gorm:"type:timestamptz;not null"`
+}
+
+func (evaluationRecord) TableName() string { return "evaluation_experiment" }
+
+type evaluationTrialRecord struct {
+	ID           string                        `gorm:"type:text;primaryKey;not null"`
+	ExperimentID string                        `gorm:"type:text;not null;uniqueIndex:evaluation_case,priority:1"`
+	CaseID       string                        `gorm:"type:text;not null;uniqueIndex:evaluation_case,priority:2"`
+	RunID        *string                       `gorm:"type:text;uniqueIndex"`
+	Coding       *sdk.CodingEvaluationEvidence `gorm:"serializer:json;type:jsonb"`
+	Experiment   *evaluationRecord             `gorm:"foreignKey:ExperimentID;references:ID"`
+	Run          *runRecord                    `gorm:"foreignKey:RunID;references:ID"`
+}
+
+func (evaluationTrialRecord) TableName() string { return "evaluation_trial" }
+
+type evaluationPlanRecord struct {
+	ProjectID string              `gorm:"type:text;not null;default:''"`
+	ID        string              `gorm:"primaryKey;size:128"`
+	OwnerID   string              `gorm:"primaryKey;size:128"`
+	Revision  int64               `gorm:"not null"`
+	Suite     sdk.EvaluationSuite `gorm:"serializer:json;type:jsonb;not null"`
+	UpdatedAt time.Time
+}
+
+func (evaluationPlanRecord) TableName() string { return "evaluation_plans" }
+
+type datasetRecord struct {
+	ID               string               `gorm:"primaryKey;size:128"`
+	OwnerID          string               `gorm:"not null;size:128;index"`
+	Name             string               `gorm:"not null"`
+	Revision         int64                `gorm:"not null"`
+	PublishedVersion int64                `gorm:"not null;default:0"`
+	Cases            []sdk.EvaluationCase `gorm:"serializer:json;type:jsonb;not null"`
+	UpdatedAt        time.Time
+}
+
+func (datasetRecord) TableName() string { return "evaluation_dataset" }
+
+type datasetVersionRecord struct {
+	DatasetID string                `gorm:"primaryKey;size:128"`
+	Number    int64                 `gorm:"primaryKey;autoIncrement:false"`
+	Snapshot  sdk.EvaluationDataset `gorm:"serializer:json;type:jsonb;not null"`
+	CreatedAt time.Time
+	Dataset   *datasetRecord `gorm:"foreignKey:DatasetID;references:ID"`
+}
+
+func (datasetVersionRecord) TableName() string { return "evaluation_dataset_version" }

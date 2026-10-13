@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "name": "m0-writing-format",
+  "version": "1",
+  "target": {
+    "kind": "Agentic",
+    "agentID": "<published-agent-id>",
+    "agentVersion": 1,
+    "capabilities": [
+      "output"
+    ]
+  },
+  "scenario": {
+    "kind": "single_turn",
+    "timeoutSeconds": 300
+  },
+  "dataset": {
+    "name": "m0-writing-notices",
+    "version": "1",
+    "cases": [
+      {
+        "id": "notice",
+        "input": "拟写服务公告。事实：今晚22:00开始维护，预计持续30分钟，期间登录功能不可用。输出需包含维护和22:00。"
+      },
+      {
+        "id": "reminder",
+        "input": "拟写简短的服务维护提醒。事实：维护今晚22:00开始，持续30分钟，登录功能不可用。不要增加补偿或其他承诺。输出需包含维护和22:00。"
+      }
+    ]
+  },
+  "evaluators": [
+    {
+      "id": "facts",
+      "version": "1",
+      "kind": "contains_all",
+      "scope": "output",
+      "requires": [
+        "output"
+      ],
+      "values": [
+        "维护",
+        "22:00"
+      ]
+    },
+    {
+      "id": "json",
+      "version": "1",
+      "kind": "json_valid",
+      "scope": "output",
+      "requires": [
+        "output"
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "id": "fact_preservation",
+      "evaluator": "facts",
+      "aggregate": "pass_rate",
+      "minimumScore": 1,
+      "minimumCoverage": 1
+    },
+    {
+      "id": "valid_json",
+      "evaluator": "json",
+      "aggregate": "pass_rate",
+      "minimumScore": 1,
+      "minimumCoverage": 1
+    }
+  ]
+}

@@ -13,5 +13,5 @@ vet:
 	go vet ./...
 
 build:
-	go build -o bin/api ./cmd/api
-	go build -o bin/migrate ./cmd/migrate
+	go build -o bin/server ./cmd/server
+	go build -o bin/cli ./cmd/cli

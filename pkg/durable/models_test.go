@@ -22,26 +22,51 @@ func TestModelConstraints(t *testing.T) {
 		write func() error
 		want  error
 	}{
-		{"run status", func() error {
+		{name: "run status", write: func() error {
 			return s.db.Model(&runRecord{}).Where("id = ?", run.ID).Update("status", "invalid").Error
-		}, gorm.ErrCheckConstraintViolated},
-		{"step policy", func() error {
+		}, want: gorm.ErrCheckConstraintViolated},
+		{name: "step policy", write: func() error {
 			return s.db.Model(&stepRecord{}).Where("run_id = ?", run.ID).Update("policy", "invalid").Error
-		}, gorm.ErrCheckConstraintViolated},
-		{"step status", func() error {
+		}, want: gorm.ErrCheckConstraintViolated},
+		{name: "step status", write: func() error {
 			return s.db.Model(&stepRecord{}).Where("run_id = ?", run.ID).Update("status", "invalid").Error
-		}, gorm.ErrCheckConstraintViolated},
-		{"step foreign key", func() error {
-			return s.db.Create(&stepRecord{RunID: "missing", StepID: "step", InputHash: "hash", Policy: ReadOnly, Status: "Started"}).Error
-		}, gorm.ErrForeignKeyViolated},
-		{"event foreign key", func() error {
-			return s.db.Create(&eventRecord{RunID: "missing", Seq: 1, Kind: "Progress", Payload: json.RawMessage(`{}`)}).Error
-		}, gorm.ErrForeignKeyViolated},
-		{"step primary key", func() error { return s.db.Create(&step).Error }, gorm.ErrDuplicatedKey},
-		{"event primary key", func() error {
-			return s.db.Create(&eventRecord{RunID: run.ID, Seq: 1, Kind: "Progress", Payload: json.RawMessage(`{}`)}).Error
-		}, gorm.ErrDuplicatedKey},
-		{"referenced run deletion", func() error { return s.db.Delete(&runRecord{}, "id = ?", run.ID).Error }, gorm.ErrForeignKeyViolated},
+		}, want: gorm.ErrCheckConstraintViolated},
+		{name: "step foreign key", write: func() error {
+			return s.db.Create(
+				&stepRecord{
+					RunID:     "missing",
+					StepID:    "step",
+					InputHash: "hash",
+					Policy:    ReadOnly,
+					Status:    "Started",
+				},
+			).Error
+		}, want: gorm.ErrForeignKeyViolated},
+		{name: "event foreign key", write: func() error {
+			return s.db.Create(
+				&eventRecord{
+					RunID:   "missing",
+					Seq:     1,
+					Kind:    "Progress",
+					Payload: json.RawMessage(`{}`),
+				},
+			).Error
+		}, want: gorm.ErrForeignKeyViolated},
+		{
+			name:  "step primary key",
+			write: func() error { return s.db.Create(&step).Error },
+			want:  gorm.ErrDuplicatedKey,
+		},
+		{name: "event primary key", write: func() error {
+			return s.db.Create(
+				&eventRecord{RunID: run.ID, Seq: 1, Kind: "Progress", Payload: json.RawMessage(`{}`)},
+			).Error
+		}, want: gorm.ErrDuplicatedKey},
+		{
+			name:  "referenced run deletion",
+			write: func() error { return s.db.Delete(&runRecord{}, "id = ?", run.ID).Error },
+			want:  gorm.ErrForeignKeyViolated,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,7 +86,17 @@ func TestModelSessionAndRequestUniqueness(t *testing.T) {
 				t.Fatal(tx.Error)
 			}
 			defer tx.Rollback()
-			first := runRecord{ID: NewID(), OwnerID: "owner", SessionID: "session", RequestKey: "first", RequestHash: "hash", Spec: Spec{}, Status: status, Deadline: time.Now().Add(time.Hour), MaxAttempts: 3}
+			first := runRecord{
+				ID:          NewID(),
+				OwnerID:     "owner",
+				SessionID:   "session",
+				RequestKey:  "first",
+				RequestHash: "hash",
+				Spec:        Spec{},
+				Status:      status,
+				Deadline:    time.Now().Add(time.Hour),
+				MaxAttempts: 3,
+			}
 			if err := tx.Create(&first).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -89,8 +124,15 @@ func TestModelDatabaseDefaults(t *testing.T) {
 	id := NewID()
 	// A map leaves omitted fields to PostgreSQL instead of GORM's struct defaults.
 	err := s.db.Model(&runRecord{}).Create(map[string]any{
-		"id": id, "owner_id": "owner", "session_id": "session", "request_key": "request", "request_hash": "hash",
-		"spec": "{}", "status": Queued, "deadline": gorm.Expr("clock_timestamp()+interval '1 hour'"), "max_attempts": 3,
+		"id":           id,
+		"owner_id":     "owner",
+		"session_id":   "session",
+		"request_key":  "request",
+		"request_hash": "hash",
+		"spec":         "{}",
+		"status":       Queued,
+		"deadline":     gorm.Expr("clock_timestamp()+interval '1 hour'"),
+		"max_attempts": 3,
 	}).Error
 	if err != nil {
 		t.Fatal(err)
@@ -99,10 +141,15 @@ func TestModelDatabaseDefaults(t *testing.T) {
 	if err = s.db.Take(&got, "id = ?", id).Error; err != nil {
 		t.Fatal(err)
 	}
-	if string(got.State) != "{}" || got.LeaseUntil != nil || got.Epoch != 0 || got.Attempt != 0 || got.EventSeq != 0 || got.Output != "" || got.Error != "" || got.WorkerID != "" {
+	if string(got.State) != "{}" || got.LeaseUntil != nil || got.Epoch != 0 || got.Attempt != 0 ||
+		got.EventSeq != 0 ||
+		got.Output != "" ||
+		got.Error != "" ||
+		got.WorkerID != "" {
 		t.Fatalf("unexpected defaults: %+v", got)
 	}
-	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() || got.AvailableAt.IsZero() || !got.Deadline.After(got.CreatedAt) {
+	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() || got.AvailableAt.IsZero() ||
+		!got.Deadline.After(got.CreatedAt) {
 		t.Fatalf("missing database timestamps: %+v", got)
 	}
 }

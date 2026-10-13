@@ -54,9 +54,15 @@ func testStore(t *testing.T) *Store {
 	}
 	return s
 }
+
 func testConversation(t *testing.T, s *Store, spec Spec) *Session {
 	t.Helper()
-	cfg := AgentConfig{SystemPrompt: spec.SystemPrompt, Model: spec.Model, Tools: spec.Tools, MaxTurns: spec.MaxTurns}
+	cfg := AgentConfig{
+		SystemPrompt: spec.SystemPrompt,
+		Model:        spec.Model,
+		Tools:        spec.Tools,
+		MaxTurns:     spec.MaxTurns,
+	}
 	if cfg.MaxTurns == 0 {
 		cfg.MaxTurns = 5
 	}
@@ -79,6 +85,7 @@ func testConversation(t *testing.T, s *Store, spec Spec) *Session {
 	}
 	return session
 }
+
 func createRun(t *testing.T, s *Store) *Run {
 	t.Helper()
 	session := testConversation(t, s, Spec{MaxTurns: 5})
@@ -88,6 +95,7 @@ func createRun(t *testing.T, s *Store) *Run {
 	}
 	return r
 }
+
 func claim(t *testing.T, s *Store, worker string) *Run {
 	t.Helper()
 	r, err := s.Claim(context.Background(), worker, time.Minute)
@@ -96,6 +104,7 @@ func claim(t *testing.T, s *Store, worker string) *Run {
 	}
 	return r
 }
+
 func TestConcurrentClaimAndFence(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -122,20 +131,43 @@ func TestConcurrentClaimAndFence(t *testing.T) {
 		t.Fatalf("got %d owners", len(winners))
 	}
 	old := winners[0]
-	if err := s.db.WithContext(ctx).Model(&runRecord{}).Where("id = ?", r.ID).Update("lease_until", gorm.Expr("clock_timestamp()-interval '1 second'")).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Model(&runRecord{}).
+		Where("id = ?", r.ID).
+		Update("lease_until", gorm.Expr("clock_timestamp()-interval '1 second'")).
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	next := claim(t, s, "replacement")
 	if next.Epoch <= old.Epoch {
 		t.Fatal("epoch did not increase")
 	}
-	if err := s.Save(ctx, old.Lease(), json.RawMessage(`{}`), Completed, "stale", "", "RunCompleted"); !errors.Is(err, ErrLeaseLost) {
+	if err := s.Save(
+		ctx,
+		old.Lease(),
+		json.RawMessage(`{}`),
+		Completed,
+		"stale",
+		"",
+		"RunCompleted",
+	); !errors.Is(
+		err,
+		ErrLeaseLost,
+	) {
 		t.Fatalf("stale save accepted: %v", err)
 	}
 	if err := s.Renew(ctx, old.Lease(), time.Minute); !errors.Is(err, ErrLeaseLost) {
 		t.Fatalf("stale renewal accepted: %v", err)
 	}
-	if err := s.Save(ctx, next.Lease(), json.RawMessage(`{}`), Completed, "correct", "", "RunCompleted"); err != nil {
+	if err := s.Save(
+		ctx,
+		next.Lease(),
+		json.RawMessage(`{}`),
+		Completed,
+		"correct",
+		"",
+		"RunCompleted",
+	); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Get(ctx, "owner", r.ID)
@@ -143,6 +175,7 @@ func TestConcurrentClaimAndFence(t *testing.T) {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
+
 func TestIdempotencyOwnershipAndCancellation(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -168,13 +201,25 @@ func TestIdempotencyOwnershipAndCancellation(t *testing.T) {
 	if err = s.Cancel(ctx, "owner", r.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Save(ctx, active.Lease(), json.RawMessage(`{}`), Completed, "wrong", "", "RunCompleted"); !errors.Is(err, ErrLeaseLost) {
+	if err = s.Save(
+		ctx,
+		active.Lease(),
+		json.RawMessage(`{}`),
+		Completed,
+		"wrong",
+		"",
+		"RunCompleted",
+	); !errors.Is(
+		err,
+		ErrLeaseLost,
+	) {
 		t.Fatal(err)
 	}
 	if _, err = s.Claim(ctx, "b", time.Minute); !errors.Is(err, ErrNoWork) {
 		t.Fatal("canceled task reclaimed", err)
 	}
 }
+
 func TestUnsafeStepAndHumanResolution(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -202,13 +247,16 @@ func TestUnsafeStepAndHumanResolution(t *testing.T) {
 		t.Fatalf("result=%q cached=%v err=%v", result, cached, err)
 	}
 }
+
 func TestResultAndEventCommitTogether(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	createRun(t, s)
 	r := claim(t, s, "a")
 	// Force an event insert failure: the state update MUST roll back too.
-	err := s.db.WithContext(ctx).Exec(`CREATE FUNCTION reject_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$; CREATE TRIGGER reject_event BEFORE INSERT ON durable_event FOR EACH ROW EXECUTE FUNCTION reject_event()`).Error
+	err := s.db.WithContext(ctx).
+		Exec(`CREATE FUNCTION reject_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$; CREATE TRIGGER reject_event BEFORE INSERT ON durable_event FOR EACH ROW EXECUTE FUNCTION reject_event()`).
+		Error
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,6 +272,7 @@ func TestResultAndEventCommitTogether(t *testing.T) {
 		t.Fatalf("partial commit: %+v", got)
 	}
 }
+
 func TestOutboxRetryAfterPublishAndRedisLoss(t *testing.T) {
 	raw := os.Getenv("TEST_REDIS_URL")
 	if raw == "" {
@@ -263,11 +312,16 @@ func TestOutboxRetryAfterPublishAndRedisLoss(t *testing.T) {
 		t.Fatal("Redis deletion lost durable event", err)
 	}
 }
+
 func TestDeadlineAndAttemptLimit(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	r := createRun(t, s)
-	if err := s.db.WithContext(ctx).Model(&runRecord{}).Where("id = ?", r.ID).Update("deadline", gorm.Expr("clock_timestamp()-interval '1 second'")).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Model(&runRecord{}).
+		Where("id = ?", r.ID).
+		Update("deadline", gorm.Expr("clock_timestamp()-interval '1 second'")).
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Claim(ctx, "a", time.Minute); !errors.Is(err, ErrNoWork) {
@@ -287,21 +341,41 @@ func TestSessionHistoryAndSingleActiveRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = s.Submit(ctx, "owner", session.ID, "second", "second question", time.Hour, 3); !errors.Is(err, ErrConflict) {
+	if _, _, err = s.Submit(
+		ctx,
+		"owner",
+		session.ID,
+		"second",
+		"second question",
+		time.Hour,
+		3,
+	); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatal("active predecessor accepted", err)
 	}
 	running := claim(t, s, "a")
 	if running.ID != first.ID {
 		t.Fatal("wrong task")
 	}
-	if err = s.Save(ctx, running.Lease(), json.RawMessage(`{}`), Completed, "first answer", "", "RunCompleted"); err != nil {
+	if err = s.Save(
+		ctx,
+		running.Lease(),
+		json.RawMessage(`{}`),
+		Completed,
+		"first answer",
+		"",
+		"RunCompleted",
+	); err != nil {
 		t.Fatal(err)
 	}
 	second, _, err := s.Submit(ctx, "owner", session.ID, "second", "second question", time.Hour, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Spec.History) != 2 || second.Spec.History[0].Content != "first question" || second.Spec.History[1].Content != "first answer" {
+	if len(second.Spec.History) != 2 || second.Spec.History[0].Content != "first question" ||
+		second.Spec.History[1].Content != "first answer" {
 		t.Fatalf("history %+v", second.Spec.History)
 	}
 }
@@ -310,9 +384,26 @@ func TestJSONRoundTripAndRepeatedMigration(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	temperature := float32(0.3)
-	spec := Spec{AgentID: "agent", ConfigVersion: "1", Query: "中文问题", MaxTurns: 5,
-		Model: ModelSpec{Name: "model", BaseURL: "http://localhost:11434/v1", Temperature: &temperature},
-		Tools: []ToolSpec{{Name: "lookup", URL: "http://localhost:9000/tool", Parameters: json.RawMessage(`{"type":"object","properties":{"term":{"type":"string"}}}`), Policy: ReadOnly}},
+	spec := Spec{
+		AgentID:       "agent",
+		ConfigVersion: "1",
+		Query:         "中文问题",
+		MaxTurns:      5,
+		Model: ModelSpec{
+			Name:        "model",
+			BaseURL:     "http://localhost:11434/v1",
+			Temperature: &temperature,
+		},
+		Tools: []ToolSpec{
+			{
+				Name: "lookup",
+				URL:  "http://localhost:9000/tool",
+				Parameters: json.RawMessage(
+					`{"type":"object","properties":{"term":{"type":"string"}}}`,
+				),
+				Policy: ReadOnly,
+			},
+		},
 	}
 	session := testConversation(t, s, spec)
 	spec.AgentID = session.AgentID
@@ -340,7 +431,15 @@ func TestJSONRoundTripAndRepeatedMigration(t *testing.T) {
 		t.Fatalf("configuration changed: %s", gotJSON)
 	}
 	active := claim(t, s, "worker")
-	if err = s.Save(ctx, active.Lease(), json.RawMessage(`{"waitingStep":"example"}`), Running, "draft", "draft error", "Progress"); err != nil {
+	if err = s.Save(
+		ctx,
+		active.Lease(),
+		json.RawMessage(`{"waitingStep":"example"}`),
+		Running,
+		"draft",
+		"draft error",
+		"Progress",
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Save(ctx, active.Lease(), json.RawMessage(`{}`), Completed, "", "", "RunCompleted"); err != nil {

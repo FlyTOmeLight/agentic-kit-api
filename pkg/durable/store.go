@@ -3,7 +3,6 @@ package durable
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -38,7 +37,9 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	}
 	return &Store{db: db}, nil
 }
+
 func (s *Store) Close() { pool, _ := s.db.DB(); _ = pool.Close() }
+
 func (s *Store) Migrate(ctx context.Context) error {
 	// Serialize schema changes across concurrently started migration commands.
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -53,10 +54,25 @@ func (s *Store) Migrate(ctx context.Context) error {
 				return err
 			}
 			if count > 0 {
-				return fmt.Errorf("database contains v0.1 runs without managed sessions; finish old tasks with v0.1 and use an empty database for v0.2")
+				return errors.New(
+					"database contains v0.1 runs without managed sessions; finish old tasks with v0.1 and use an empty database for v0.2",
+				)
 			}
 		}
-		return tx.AutoMigrate(&agentRecord{}, &versionRecord{}, &sessionRecord{}, &runRecord{}, &stepRecord{}, &eventRecord{}, &messageRecord{})
+		return tx.AutoMigrate(
+			&agentRecord{},
+			&versionRecord{},
+			&sessionRecord{},
+			&runRecord{},
+			&stepRecord{},
+			&eventRecord{},
+			&messageRecord{},
+			&evaluationRecord{},
+			&evaluationTrialRecord{},
+			&evaluationPlanRecord{},
+			&datasetRecord{},
+			&datasetVersionRecord{},
+		)
 	})
 }
 

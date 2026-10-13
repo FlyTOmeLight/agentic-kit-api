@@ -7,10 +7,11 @@ import (
 	"errors"
 	"time"
 
-	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
+	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
 type Status = sdk.Status
+
 type Policy = sdk.Policy
 
 const (
@@ -52,10 +53,15 @@ type Spec struct {
 	MaxTurns      int        `json:"maxTurns"`
 	History       []Message  `json:"history,omitempty"`
 }
+
 type Message = sdk.Message
+
 type ToolCall = sdk.ToolCall
+
 type ModelSpec = sdk.ModelSpec
+
 type ToolSpec = sdk.ToolSpec
+
 type Run struct {
 	Scope *Scope `json:"scope,omitempty"`
 
@@ -78,12 +84,13 @@ type Run struct {
 	WaitingStep   string          `json:"waitingStep,omitempty"`
 	Error         string          `json:"error,omitempty"`
 }
+
 type Lease struct {
 	RunID, WorkerID string
 	Epoch           int64
 }
 
-func (r Run) Lease() Lease { return Lease{r.ID, r.WorkerID, r.Epoch} }
+func (r Run) Lease() Lease { return Lease{RunID: r.ID, WorkerID: r.WorkerID, Epoch: r.Epoch} }
 
 type Event = sdk.Event
 
@@ -96,5 +103,20 @@ func NewID() string {
 }
 
 func (r Run) Response() sdk.Run {
-	return sdk.Run{Scope: r.Scope, ID: r.ID, AgentID: r.AgentID, ConfigVersion: r.ConfigVersion, OwnerID: r.OwnerID, SessionID: r.SessionID, Status: r.Status, Epoch: r.Epoch, Deadline: r.Deadline, Attempt: r.Attempt, EventSeq: r.EventSeq, Output: r.Output, WaitingStep: r.WaitingStep, Error: r.Error}
+	return sdk.Run{
+		Scope:         r.Scope,
+		ID:            r.ID,
+		AgentID:       r.AgentID,
+		ConfigVersion: r.ConfigVersion,
+		OwnerID:       r.OwnerID,
+		SessionID:     r.SessionID,
+		Status:        r.Status,
+		Epoch:         r.Epoch,
+		Deadline:      r.Deadline,
+		Attempt:       r.Attempt,
+		EventSeq:      r.EventSeq,
+		Output:        r.Output,
+		WaitingStep:   r.WaitingStep,
+		Error:         r.Error,
+	}
 }

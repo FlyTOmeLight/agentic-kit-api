@@ -22,6 +22,7 @@ redis.call('EXPIRE',KEYS[1],86400)
 return 1`
 
 func StreamKey(id string) string { return "durable:run:" + id + ":events" }
+
 func (s *Store) PublishOne(ctx context.Context, rdb *redis.Client) (bool, error) {
 	tx := s.db.WithContext(ctx).Begin()
 	err := tx.Error
@@ -38,7 +39,8 @@ func (s *Store) PublishOne(ctx context.Context, rdb *redis.Client) (bool, error)
 	err = tx.Model(&eventRecord{}).Table("durable_event AS e").Select("e.*").
 		Where("NOT e.published").Where("NOT EXISTS (?)", earlier).
 		Order("e.created_at, e.run_id, e.seq").
-		Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "e"}, Options: "SKIP LOCKED"}).Take(&record).Error
+		Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "e"}, Options: "SKIP LOCKED"}).
+		Take(&record).Error
 	e := record.event()
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
@@ -50,14 +52,19 @@ func (s *Store) PublishOne(ctx context.Context, rdb *redis.Client) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	if err = rdb.Eval(ctx, publishLua, []string{StreamKey(e.RunID)}, strconv.FormatInt(e.Seq, 10)+"-0", string(b)).Err(); err != nil {
+	if err = rdb.Eval(ctx, publishLua, []string{StreamKey(e.RunID)}, strconv.FormatInt(e.Seq, 10)+"-0", string(b)).
+		Err(); err != nil {
 		return false, fmt.Errorf("publish outbox: %w", err)
 	}
-	if err = tx.Model(&eventRecord{}).Where("run_id = ? AND seq = ?", e.RunID, e.Seq).Update("published", true).Error; err != nil {
+	if err = tx.Model(&eventRecord{}).
+		Where("run_id = ? AND seq = ?", e.RunID, e.Seq).
+		Update("published", true).
+		Error; err != nil {
 		return false, err
 	}
 	return true, tx.Commit().Error
 }
+
 func (s *Store) Relay(ctx context.Context, rdb *redis.Client, onError func(error)) {
 	for ctx.Err() == nil {
 		publishCtx, cancel := context.WithTimeout(ctx, 3*time.Second)

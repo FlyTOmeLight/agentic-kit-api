@@ -34,7 +34,17 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 	if updated.Revision != 2 || updated.Draft.SystemPrompt != "version two" {
 		t.Fatalf("updated: %+v", updated)
 	}
-	if _, err = s.UpdateAgent(ctx, "owner", agent.ID, "stale", agent.Revision, agent.Draft); !errors.Is(err, ErrConflict) {
+	if _, err = s.UpdateAgent(
+		ctx,
+		"owner",
+		agent.ID,
+		"stale",
+		agent.Revision,
+		agent.Draft,
+	); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("stale draft accepted: %v", err)
 	}
 	if _, err = s.PublishAgent(ctx, "owner", agent.ID, agent.Revision); !errors.Is(err, ErrConflict) {
@@ -45,34 +55,66 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 		t.Fatalf("publish: %+v %v", version, err)
 	}
 	repeat, created, err := s.Submit(ctx, "owner", session.ID, "first", "first question", time.Hour, 3)
-	if err != nil || created || repeat.ID != first.ID || repeat.Spec.SystemPrompt != "version one" || repeat.ConfigVersion != "1" {
+	if err != nil || created || repeat.ID != first.ID || repeat.Spec.SystemPrompt != "version one" ||
+		repeat.ConfigVersion != "1" {
 		t.Fatalf("replay changed snapshot: %+v %v", repeat, err)
 	}
-	if _, _, err = s.Submit(ctx, "owner", session.ID, "first", "changed input", time.Hour, 3); !errors.Is(err, ErrConflict) {
+	if _, _, err = s.Submit(
+		ctx,
+		"owner",
+		session.ID,
+		"first",
+		"changed input",
+		time.Hour,
+		3,
+	); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("changed retry accepted: %v", err)
 	}
 	running := claim(t, s, "worker")
 	if running.Spec.SystemPrompt != "version one" {
 		t.Fatal("queued run adopted draft")
 	}
-	decision := Message{Role: "assistant", Content: "searching", ToolCalls: []ToolCall{{ID: "search", Name: "lookup", Arguments: `{}`}}}
+	decision := Message{
+		Role:      "assistant",
+		Content:   "searching",
+		ToolCalls: []ToolCall{{ID: "search", Name: "lookup", Arguments: `{}`}},
+	}
 	if err = s.SaveDecision(ctx, running.Lease(), json.RawMessage(`{"version":1}`), decision); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err = s.BeginStep(ctx, running.Lease(), "search", "input", ReadOnly); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.FinishStep(ctx, running.Lease(), "search", "tool result", json.RawMessage(`{"version":1}`)); err != nil {
+	if err = s.FinishStep(
+		ctx,
+		running.Lease(),
+		"search",
+		"tool result",
+		json.RawMessage(`{"version":1}`),
+	); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Save(ctx, running.Lease(), json.RawMessage(`{}`), Completed, "first answer", "", "RunCompleted"); err != nil {
+	if err = s.Save(
+		ctx,
+		running.Lease(),
+		json.RawMessage(`{}`),
+		Completed,
+		"first answer",
+		"",
+		"RunCompleted",
+	); err != nil {
 		t.Fatal(err)
 	}
 	second, _, err := s.Submit(ctx, "owner", session.ID, "second", "follow up", time.Hour, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Spec.SystemPrompt != "version two" || second.ConfigVersion != "2" || len(second.Spec.History) != 2 || second.Spec.History[0].Content != "first question" || second.Spec.History[1].Content != "first answer" {
+	if second.Spec.SystemPrompt != "version two" || second.ConfigVersion != "2" || len(second.Spec.History) != 2 ||
+		second.Spec.History[0].Content != "first question" ||
+		second.Spec.History[1].Content != "first answer" {
 		t.Fatalf("bad second turn: %+v", second.Spec)
 	}
 	messages, err := s.Messages(ctx, "owner", session.ID, 0, 200)
@@ -167,14 +209,32 @@ func TestConversationOwnership(t *testing.T) {
 		name string
 		read func() error
 	}{
-		{"agent", func() error { _, e := s.Agent(ctx, "other", session.AgentID); return e }},
-		{"version", func() error { _, e := s.AgentVersion(ctx, "other", session.AgentID, 1); return e }},
-		{"publish", func() error { _, e := s.PublishAgent(ctx, "other", session.AgentID, 1); return e }},
-		{"session", func() error { _, e := s.Session(ctx, "other", session.ID); return e }},
-		{"create session", func() error { _, e := s.CreateSession(ctx, "other", session.AgentID, ""); return e }},
-		{"messages", func() error { _, e := s.Messages(ctx, "other", session.ID, 0, 50); return e }},
-		{"runs", func() error { _, e := s.SessionRuns(ctx, "other", session.ID, "", 50); return e }},
-		{"submit", func() error { _, _, e := s.Submit(ctx, "other", session.ID, "key", "question", time.Hour, 3); return e }},
+		{name: "agent", read: func() error { _, e := s.Agent(ctx, "other", session.AgentID); return e }},
+		{
+			name: "version",
+			read: func() error { _, e := s.AgentVersion(ctx, "other", session.AgentID, 1); return e },
+		},
+		{
+			name: "publish",
+			read: func() error { _, e := s.PublishAgent(ctx, "other", session.AgentID, 1); return e },
+		},
+		{name: "session", read: func() error { _, e := s.Session(ctx, "other", session.ID); return e }},
+		{
+			name: "create session",
+			read: func() error { _, e := s.CreateSession(ctx, "other", session.AgentID, ""); return e },
+		},
+		{
+			name: "messages",
+			read: func() error { _, e := s.Messages(ctx, "other", session.ID, 0, 50); return e },
+		},
+		{
+			name: "runs",
+			read: func() error { _, e := s.SessionRuns(ctx, "other", session.ID, "", 50); return e },
+		},
+		{
+			name: "submit",
+			read: func() error { _, _, e := s.Submit(ctx, "other", session.ID, "key", "question", time.Hour, 3); return e },
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -197,7 +257,9 @@ func TestMessageAndRunRollbackTogether(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	session := testConversation(t, s, Spec{})
-	err := s.db.Exec(`CREATE FUNCTION reject_message() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$; CREATE TRIGGER reject_message BEFORE INSERT ON agent_message FOR EACH ROW EXECUTE FUNCTION reject_message()`).Error
+	err := s.db.Exec(
+		`CREATE FUNCTION reject_message() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$; CREATE TRIGGER reject_message BEFORE INSERT ON agent_message FOR EACH ROW EXECUTE FUNCTION reject_message()`,
+	).Error
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,10 +285,20 @@ func TestMessageAndRunRollbackTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	active := claim(t, s, "worker")
-	if err = s.db.Exec(`CREATE TRIGGER reject_message BEFORE INSERT ON agent_message FOR EACH ROW EXECUTE FUNCTION reject_message()`).Error; err != nil {
+	if err = s.db.Exec(
+		`CREATE TRIGGER reject_message BEFORE INSERT ON agent_message FOR EACH ROW EXECUTE FUNCTION reject_message()`,
+	).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Save(ctx, active.Lease(), json.RawMessage(`{}`), Completed, "answer", "", "RunCompleted"); err == nil {
+	if err = s.Save(
+		ctx,
+		active.Lease(),
+		json.RawMessage(`{}`),
+		Completed,
+		"answer",
+		"",
+		"RunCompleted",
+	); err == nil {
 		t.Fatal("expected final message failure")
 	}
 	got, err := s.Get(ctx, "owner", run.ID)
@@ -248,7 +320,17 @@ func TestMigrationRefusesUnmanagedLegacyRuns(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	legacy := runRecord{ID: "old-run", OwnerID: "owner", SessionID: "old-label", RequestKey: "request", RequestHash: "hash", Spec: Spec{}, Status: Queued, Deadline: time.Now().Add(time.Hour), MaxAttempts: 3}
+	legacy := runRecord{
+		ID:          "old-run",
+		OwnerID:     "owner",
+		SessionID:   "old-label",
+		RequestKey:  "request",
+		RequestHash: "hash",
+		Spec:        Spec{},
+		Status:      Queued,
+		Deadline:    time.Now().Add(time.Hour),
+		MaxAttempts: 3,
+	}
 	if err := s.db.Create(&legacy).Error; err != nil {
 		t.Fatal(err)
 	}

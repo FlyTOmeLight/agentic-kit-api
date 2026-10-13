@@ -8,30 +8,57 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
 type AgentConfig = sdk.AgentConfig
+
 type Agent = sdk.Agent
+
 type AgentVersion = sdk.AgentVersion
 
 func (r agentRecord) agent() *Agent {
-	return &Agent{ID: r.ID, Name: r.Name, Draft: r.Draft, Revision: r.Revision, PublishedVersion: r.PublishedVersion, CreatedAt: r.CreatedAt.UTC(), UpdatedAt: r.UpdatedAt.UTC()}
+	return &Agent{
+		ID:               r.ID,
+		Name:             r.Name,
+		Draft:            r.Draft,
+		Revision:         r.Revision,
+		PublishedVersion: r.PublishedVersion,
+		CreatedAt:        r.CreatedAt.UTC(),
+		UpdatedAt:        r.UpdatedAt.UTC(),
+	}
 }
+
 func (r versionRecord) version() *AgentVersion {
 	return &AgentVersion{AgentID: r.AgentID, Number: r.Number, Config: r.Config, CreatedAt: r.CreatedAt.UTC()}
 }
+
 func runSpec(c AgentConfig, agent string, version int64, query string) Spec {
-	return Spec{AgentID: agent, ConfigVersion: strconv.FormatInt(version, 10), Query: query, SystemPrompt: c.SystemPrompt, Model: c.Model, Tools: c.Tools, Toolsets: c.Toolsets, MaxTurns: c.MaxTurns}
+	return Spec{
+		AgentID:       agent,
+		ConfigVersion: strconv.FormatInt(version, 10),
+		Query:         query,
+		SystemPrompt:  c.SystemPrompt,
+		Model:         c.Model,
+		Tools:         c.Tools,
+		Toolsets:      c.Toolsets,
+		MaxTurns:      c.MaxTurns,
+	}
 }
+
 func validEndpoint(raw string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Host != "" && (u.Scheme == "http" || u.Scheme == "https") && u.User == nil && u.Fragment == ""
+	return err == nil && u.Host != "" && (u.Scheme == "http" || u.Scheme == "https") && u.User == nil &&
+		u.Fragment == ""
 }
+
 func ValidateAgentConfig(c AgentConfig) error {
-	if strings.TrimSpace(c.Model.Name) == "" || !validEndpoint(c.Model.BaseURL) || c.MaxTurns < 1 || c.MaxTurns > 100 || len(c.Tools) > 128 {
+	if strings.TrimSpace(c.Model.Name) == "" || !validEndpoint(c.Model.BaseURL) || c.MaxTurns < 1 ||
+		c.MaxTurns > 100 ||
+		len(c.Tools) > 128 {
 		return ErrInvalid
 	}
 	seenSets := map[string]bool{}
@@ -44,7 +71,9 @@ func ValidateAgentConfig(c AgentConfig) error {
 	seen := map[string]bool{}
 	for _, t := range c.Tools {
 		var params map[string]any
-		if strings.TrimSpace(t.Name) == "" || seen[t.Name] || json.Unmarshal(t.Parameters, &params) != nil || params == nil || params["type"] != "object" {
+		if strings.TrimSpace(t.Name) == "" || seen[t.Name] || json.Unmarshal(t.Parameters, &params) != nil ||
+			params == nil ||
+			params["type"] != "object" {
 			return ErrInvalid
 		}
 		seen[t.Name] = true
@@ -70,6 +99,7 @@ func ValidateAgentConfig(c AgentConfig) error {
 	}
 	return nil
 }
+
 func recordError(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ErrNotFound
@@ -79,6 +109,7 @@ func recordError(err error) error {
 	}
 	return err
 }
+
 func (s *Store) CreateAgent(ctx context.Context, owner, name string, config AgentConfig) (*Agent, error) {
 	name = strings.TrimSpace(name)
 	if owner == "" || name == "" || len(name) > 200 {
@@ -93,6 +124,7 @@ func (s *Store) CreateAgent(ctx context.Context, owner, name string, config Agen
 	}
 	return r.agent(), nil
 }
+
 func (s *Store) Agent(ctx context.Context, owner, id string) (*Agent, error) {
 	var r agentRecord
 	if err := s.db.WithContext(ctx).Where("owner_id = ? AND id = ?", owner, id).Take(&r).Error; err != nil {
@@ -102,7 +134,12 @@ func (s *Store) Agent(ctx context.Context, owner, id string) (*Agent, error) {
 }
 
 // UpdateAgent replaces the draft only if the caller edited the current revision.
-func (s *Store) UpdateAgent(ctx context.Context, owner, id, name string, revision int64, config AgentConfig) (*Agent, error) {
+func (s *Store) UpdateAgent(
+	ctx context.Context,
+	owner, id, name string,
+	revision int64,
+	config AgentConfig,
+) (*Agent, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 200 || revision < 1 {
 		return nil, ErrInvalid
@@ -112,7 +149,10 @@ func (s *Store) UpdateAgent(ctx context.Context, owner, id, name string, revisio
 	}
 	var r agentRecord
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("owner_id = ? AND id = ?", owner, id).Clauses(clause.Locking{Strength: "UPDATE"}).Take(&r).Error; err != nil {
+		if err := tx.Where("owner_id = ? AND id = ?", owner, id).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Take(&r).
+			Error; err != nil {
 			return recordError(err)
 		}
 		if r.Revision != revision {
@@ -122,18 +162,25 @@ func (s *Store) UpdateAgent(ctx context.Context, owner, id, name string, revisio
 		if err != nil {
 			return err
 		}
-		return tx.Model(&r).Clauses(clause.Returning{}).Updates(map[string]any{"name": name, "draft": string(data), "revision": revision + 1}).Error
+		return tx.Model(&r).
+			Clauses(clause.Returning{}).
+			Updates(map[string]any{"name": name, "draft": string(data), "revision": revision + 1}).
+			Error
 	})
 	if err != nil {
 		return nil, err
 	}
 	return r.agent(), nil
 }
+
 func (s *Store) PublishAgent(ctx context.Context, owner, id string, revision int64) (*AgentVersion, error) {
 	var v versionRecord
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var a agentRecord
-		if err := tx.Where("owner_id = ? AND id = ?", owner, id).Clauses(clause.Locking{Strength: "UPDATE"}).Take(&a).Error; err != nil {
+		if err := tx.Where("owner_id = ? AND id = ?", owner, id).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Take(&a).
+			Error; err != nil {
 			return recordError(err)
 		}
 		if a.Revision != revision {
@@ -149,13 +196,16 @@ func (s *Store) PublishAgent(ctx context.Context, owner, id string, revision int
 		if err := tx.Create(&v).Error; err != nil {
 			return err
 		}
-		return tx.Model(&a).Updates(map[string]any{"published_revision": revision, "published_version": v.Number}).Error
+		return tx.Model(&a).
+			Updates(map[string]any{"published_revision": revision, "published_version": v.Number}).
+			Error
 	})
 	if err != nil {
 		return nil, err
 	}
 	return v.version(), nil
 }
+
 func (s *Store) AgentVersion(ctx context.Context, owner, id string, number int64) (*AgentVersion, error) {
 	if _, err := s.Agent(ctx, owner, id); err != nil {
 		return nil, err
@@ -173,7 +223,12 @@ func (s *Store) Agents(ctx context.Context, owner, after string, limit int) ([]A
 		return nil, ErrInvalid
 	}
 	var records []agentRecord
-	err := s.db.WithContext(ctx).Where("owner_id = ? AND id > ?", owner, after).Order("id").Limit(limit).Find(&records).Error
+	err := s.db.WithContext(ctx).
+		Where("owner_id = ? AND id > ?", owner, after).
+		Order("id").
+		Limit(limit).
+		Find(&records).
+		Error
 	out := make([]Agent, len(records))
 	for i, r := range records {
 		out[i] = *r.agent()

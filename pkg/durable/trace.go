@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
-	"gorm.io/gorm"
 	"unicode/utf8"
+
+	"gorm.io/gorm"
+
+	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
 // Trace reads a consistent public projection. Engine state, prompts and credentials
@@ -34,7 +36,11 @@ func (s *Store) Trace(ctx context.Context, owner, id string, after int64) (*sdk.
 			}
 		}
 		var events []eventRecord
-		if err = tx.Where("run_id = ? AND seq > ?", id, after).Order("seq").Limit(50).Find(&events).Error; err != nil {
+		if err = tx.Where("run_id = ? AND seq > ?", id, after).
+			Order("seq").
+			Limit(50).
+			Find(&events).
+			Error; err != nil {
 			return err
 		}
 		trace.Events = make([]sdk.Event, 0, len(events))

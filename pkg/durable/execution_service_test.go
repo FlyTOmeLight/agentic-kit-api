@@ -3,15 +3,25 @@ package durable
 import (
 	"context"
 	"errors"
-	"github.com/FlyTOmeLight/agentic-kit-api/sdk"
 	"testing"
 	"time"
+
+	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
 func TestApplicationExecutionSnapshotAndFencing(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	agent, e := s.CreateAgent(ctx, "coding", "Coding", AgentConfig{SystemPrompt: "published", MaxTurns: 3, Model: ModelSpec{Name: "test", BaseURL: "http://model.test/v1"}})
+	agent, e := s.CreateAgent(
+		ctx,
+		"coding",
+		"Coding",
+		AgentConfig{
+			SystemPrompt: "published",
+			MaxTurns:     3,
+			Model:        ModelSpec{Name: "test", BaseURL: "http://model.test/v1"},
+		},
+	)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -19,7 +29,12 @@ func TestApplicationExecutionSnapshotAndFencing(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	spec := sdk.ExecutionSpec{Scope: &Scope{TenantID: "t", ProjectID: "p", ActorID: "u", TaskID: "task", RoundID: "round"}, Query: "fix", AgentID: agent.ID, AgentVersion: version.Number}
+	spec := sdk.ExecutionSpec{
+		Scope:        &Scope{TenantID: "t", ProjectID: "p", ActorID: "u", TaskID: "task", RoundID: "round"},
+		Query:        "fix",
+		AgentID:      agent.ID,
+		AgentVersion: version.Number,
+	}
 	r, created, e := s.SubmitExecution(ctx, "coding", "round", spec, time.Minute)
 	if e != nil || !created {
 		t.Fatal(e)

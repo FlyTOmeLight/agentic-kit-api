@@ -76,17 +76,25 @@ func TestOutboxLockedHeadDoesNotBlockOtherRun(t *testing.T) {
 			}
 			defer tx.Rollback()
 			var head eventRecord
-			if err := tx.Model(&eventRecord{}).Where("run_id = ? AND seq = ?", a.ID, 1).Clauses(clause.Locking{Strength: "UPDATE"}).Take(&head).Error; err != nil {
+			if err := tx.Model(&eventRecord{}).
+				Where("run_id = ? AND seq = ?", a.ID, 1).
+				Clauses(clause.Locking{Strength: "UPDATE"}).
+				Take(&head).
+				Error; err != nil {
 				t.Fatal(err)
 			}
 			data, err := json.Marshal(head.event())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = rdb.Eval(ctx, publishLua, []string{StreamKey(a.ID)}, "1-0", string(data)).Err(); err != nil {
+			if err = rdb.Eval(ctx, publishLua, []string{StreamKey(a.ID)}, "1-0", string(data)).
+				Err(); err != nil {
 				t.Fatal(err)
 			}
-			if err = tx.Model(&eventRecord{}).Where("run_id=? AND seq=1", a.ID).Update("published", true).Error; err != nil {
+			if err = tx.Model(&eventRecord{}).
+				Where("run_id=? AND seq=1", a.ID).
+				Update("published", true).
+				Error; err != nil {
 				t.Fatal(err)
 			}
 

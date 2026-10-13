@@ -3,12 +3,13 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -tags=nomsgpack -trimpath -ldflags="-s -w" -o /api ./cmd/api
-RUN CGO_ENABLED=0 go build -tags=nomsgpack -trimpath -ldflags="-s -w" -o /migrate ./cmd/migrate
+RUN CGO_ENABLED=0 go build -tags=nomsgpack -trimpath -ldflags="-s -w" -o /server ./cmd/server
+RUN CGO_ENABLED=0 go build -tags=nomsgpack -trimpath -ldflags="-s -w" -o /cli ./cmd/cli
 FROM scratch
-COPY --from=build /api /api
-COPY --from=build /migrate /migrate
+COPY --from=build /server /server
+COPY --from=build /cli /cli
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 USER 65532:65532
 ENV GIN_MODE=release
-ENTRYPOINT ["/api"]
+COPY conf/server/config.toml /conf/server/config.toml
+ENTRYPOINT ["/server"]
