@@ -1,7 +1,9 @@
 FROM golang:1.27.1-alpine AS build
 WORKDIR /src
+RUN apk add --no-cache git
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=secret,id=github_netrc,target=/root/.netrc,required=true \
+    GOPRIVATE=github.com/FlyTOmeLight/forge-coding-api go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -tags=nomsgpack -trimpath -ldflags="-s -w" -o /server ./cmd/server
 RUN CGO_ENABLED=0 go build -tags=nomsgpack -trimpath -ldflags="-s -w" -o /cli ./cmd/cli

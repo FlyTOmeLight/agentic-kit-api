@@ -1,5 +1,7 @@
 github.com/BurntSushi/toml v1.5.0 h1:W5quZX/G/csjUnuI8SUYlsHs9M38FC7znL0lIO+DvMg=
 github.com/BurntSushi/toml v1.5.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
+github.com/FlyTOmeLight/forge-coding-api/sdk/go/codingv1 v0.16.1 h1:1C0wn9owile1dWi9aup+vDI2hiZukPdSHBbJSFWBtyE=
+github.com/FlyTOmeLight/forge-coding-api/sdk/go/codingv1 v0.16.1/go.mod h1:fcnuYWKfZEleXcWd7VlLZZmBOz3mwMeWT/6QLQwhKto=
 github.com/FlyTOmeLight/server-go v0.3.1 h1:g2iLarWBtl84H15FvaXvLgy/5P/AY9VjMmc2FmYcA3A=
 github.com/FlyTOmeLight/server-go v0.3.1/go.mod h1:rnA2JLh6NZl+RXgMF4QCdyJp+6vYGFQiYh3j4Bs0DOE=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=

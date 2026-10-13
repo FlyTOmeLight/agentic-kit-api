@@ -222,3 +222,6 @@ go run ./cmd/cli eval --suite examples/evaluation/evaluation-writing.example.jso
 `internal/app/platform` 在同一 API 进程提供项目 Agent 和评测入口，使用 Forge 会话、CSRF 与实时项目授权。配置 `PLATFORM_TENANT_URL`、`PLATFORM_TENANT_TOKEN`、`PLATFORM_TEMPLATE_OWNER`、`PLATFORM_TEMPLATES_JSON` 后启用。模型连接与模板版本由部署管理员批准；浏览器只编辑项目副本的 Prompt、名称和轮数。
 
 项目候选和实验复用现有持久执行链路，以服务端派生的项目 owner 隔离。项目候选不自动切换业务调用。支持 Writing 输出评测和 Coding 独立仓库评测。Coding 需配置 `PLATFORM_CODING_URL`、`PLATFORM_CODING_TOKEN` 并批准 Coding 模板；服务凭据只保存在部署环境。评测候选不会自动替换业务执行版本。完整接口与 SDK 见 [HTTP 契约](docs/api.md#forge-项目-agent-与评测入口) 和 sdk/go/agenticv1/agentic_client_project.go。
+
+
+Coding 环境通过独立 SDK `github.com/FlyTOmeLight/forge-coding-api/sdk/go/codingv1 v0.16.1` 调用；请求、错误和流资源由该 SDK 管理，平台适配只转换评测 scope、scenario 和检查结果。Go 1.25 调用方无需升级到 Coding 后端的 Go 1.27。该 SDK 在私有仓库，模块下载需要具备仓库读取权限的 GitHub 凭据；使用 `GOPRIVATE=github.com/FlyTOmeLight/forge-coding-api`。Docker 构建增加 `--secret id=github_netrc,src=/path/to/github.netrc`，凭据只挂载到构建阶段，不进入最终镜像。

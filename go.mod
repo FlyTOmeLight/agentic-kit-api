@@ -3,6 +3,7 @@ module github.com/FlyTOmeLight/agentic-kit-api
 go 1.25.1
 
 require (
+	github.com/FlyTOmeLight/forge-coding-api/sdk/go/codingv1 v0.16.1
 	github.com/FlyTOmeLight/server-go v0.3.1
 	github.com/gin-gonic/gin v1.11.0
 	github.com/jackc/pgx/v5 v5.10.0

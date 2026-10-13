@@ -45,7 +45,7 @@ agentic-kit-api/
 
 各领域 Controller 处理 HTTP 绑定、状态码与响应，调用消费方定义的 Service 接口。请求与响应复用 `sdk/go/agenticv1` 的公开类型；绑定和校验留在服务端。Session 负责提交消息，Run 负责执行状态与 SSE。领域包之间不互相调用 Controller，context 沿调用链传递。
 
-Forge 接入位于 `internal/app/platform`，负责项目和企业资产的身份、权限及业务编排。Tenant 会话及授权协议、Coding 独立环境协议位于 `internal/client`，由装配层显式构造并管理连接；客户端不导入 Controller 或 Gin。
+Forge 接入位于 `internal/app/platform`，负责项目和企业资产的身份、权限及业务编排。Tenant 会话及授权协议、Coding 独立环境适配位于 `internal/client`，由装配层显式构造并管理连接；Coding 调用正式发布的 `forge-coding-api/sdk/go/codingv1 v0.16.1`，只转换平台领域类型，不再维护 HTTP 协议。客户端不导入 Controller 或 Gin。
 
 ## 共享持久化边界
 

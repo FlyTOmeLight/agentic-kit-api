@@ -63,7 +63,15 @@ func (a *API) Initialize(ctx context.Context) error {
 		a.tenant = client.NewTenant(a.platform.TenantURL, a.platform.TenantToken)
 	}
 	if a.platform != nil && a.platform.CodingURL != "" {
-		a.coding = client.NewCodingEnvironment(a.platform.CodingURL, a.platform.CodingToken)
+		a.coding, err = client.NewCodingEnvironment(a.platform.CodingURL, a.platform.CodingToken)
+		if err != nil {
+			if a.tenant != nil {
+				a.tenant.Close()
+			}
+			_ = a.redis.Close()
+			a.store.Close()
+			return err
+		}
 	}
 
 	return nil
