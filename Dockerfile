@@ -3,13 +3,11 @@ WORKDIR /src
 RUN apk add --no-cache git
 COPY go.mod go.sum ./
 RUN --mount=type=secret,id=github_netrc,target=/root/.netrc,required=true \
-    GOPRIVATE=github.com/FlyTOmeLight/forge-coding-api go mod download
+    go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -tags=nomsgpack -trimpath -ldflags="-s -w" -o /server ./cmd/server
-RUN CGO_ENABLED=0 go build -tags=nomsgpack -trimpath -ldflags="-s -w" -o /cli ./cmd/cli
 FROM scratch
 COPY --from=build /server /server
-COPY --from=build /cli /cli
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 USER 65532:65532
 ENV GIN_MODE=release

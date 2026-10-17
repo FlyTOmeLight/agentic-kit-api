@@ -18,7 +18,6 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 			t,
 			store,
 			nil,
-			[]string{"owner"},
 			map[string]string{testToken: "owner", "ordinary-token-with-24-characters": "ordinary"},
 		),
 	)

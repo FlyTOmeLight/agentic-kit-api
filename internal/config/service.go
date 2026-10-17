@@ -9,10 +9,7 @@ import (
 	"github.com/FlyTOmeLight/server-go/conf"
 	"github.com/FlyTOmeLight/server-go/db"
 	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
-	framesdk "github.com/FlyTOmeLight/server-go/sdk"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/platform"
 )
 
 type Service struct {
@@ -20,13 +17,11 @@ type Service struct {
 	AppCode    int
 	RunMode    string
 	HTTPServer conf.HTTPServerConfig
-	Tenant     framesdk.Config
-	Coding     framesdk.Config
 	DB         db.Config
 	Redis      frameworkredis.Config
 }
 
-// Load decodes the framework snapshot used by the server and migration command.
+// Load decodes the framework snapshot used by the server.
 func Load(path string) (Service, error) {
 	snapshot, err := conf.Load(path)
 	if err != nil {
@@ -44,7 +39,9 @@ func (cfg Service) ValidateDatabase() error {
 		return errors.New("DB.Driver must be PostgreSQL")
 	}
 	if cfg.DB.AutoMigrate {
-		return errors.New("DB.AutoMigrate must be false; use the migrate command")
+		return errors.New(
+			"DB.AutoMigrate must be false; schema initialization is managed outside the API lifecycle",
+		)
 	}
 	if strings.TrimSpace(cfg.DB.DSN) == "" {
 		return errors.New("DB.DSN is required")
@@ -55,27 +52,7 @@ func (cfg Service) ValidateDatabase() error {
 	return nil
 }
 
-func (cfg Service) ProjectPlatform() (*platform.Config, error) {
-	if cfg.Tenant.Endpoint == "" && cfg.Coding.Endpoint == "" {
-		return nil, nil
-	}
-	if cfg.Tenant.Endpoint == "" {
-		return nil, errors.New("Tenant.Endpoint is required when Coding is configured")
-	}
-	for _, clientConfig := range []framesdk.Config{cfg.Tenant, cfg.Coding} {
-		if clientConfig.Endpoint == "" {
-			continue
-		}
-		c, err := framesdk.NewClientWithConfig(&clientConfig)
-		if err != nil {
-			return nil, err
-		}
-		_ = c.Close()
-	}
-	return &platform.Config{Tenant: cfg.Tenant, CodingURL: cfg.Coding.Endpoint}, nil
-}
-
-// ValidateAPI checks settings that the migration command does not need.
+// ValidateAPI checks the standalone HTTP and notification settings.
 func (cfg Service) ValidateAPI() error {
 	if err := cfg.ValidateDatabase(); err != nil {
 		return err
@@ -84,9 +61,6 @@ func (cfg Service) ValidateAPI() error {
 		return errors.New(
 			"HTTPServer requires an empty APIBasePath and negative WriteTimeout for the public API and SSE",
 		)
-	}
-	if _, err := cfg.ProjectPlatform(); err != nil {
-		return err
 	}
 	_, port, err := net.SplitHostPort(cfg.HTTPServer.Listen)
 	number, portErr := strconv.Atoi(port)

@@ -90,7 +90,7 @@ func TestServiceConfigFailures(t *testing.T) {
 	}
 }
 
-func TestMigrationEnvironmentOnly(t *testing.T) {
+func TestDatabaseConfigurationWithoutAPISettings(t *testing.T) {
 	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_ADDR")
 	t.Setenv("DATABASE_URL", "postgres://localhost/db")
 	t.Setenv(
@@ -112,26 +112,6 @@ func TestMigrationEnvironmentOnly(t *testing.T) {
 	}
 	if _, err := Load(filepath.Join(t.TempDir(), "missing.toml")); err == nil {
 		t.Fatal("explicit missing file accepted")
-	}
-}
-
-func TestProjectPlatformConfiguration(t *testing.T) {
-	var cfg Service
-	if got, err := cfg.ProjectPlatform(); err != nil || got != nil {
-		t.Fatal(got, err)
-	}
-	cfg.Coding.Endpoint = "http://coding"
-	if _, err := cfg.ProjectPlatform(); err == nil {
-		t.Fatal("Coding without Tenant accepted")
-	}
-	cfg.Tenant.Endpoint = "http://tenant"
-	got, err := cfg.ProjectPlatform()
-	if err != nil || got.CodingURL != cfg.Coding.Endpoint {
-		t.Fatal(got, err)
-	}
-	cfg.Tenant.Endpoint = ":bad"
-	if _, err := cfg.ProjectPlatform(); err == nil {
-		t.Fatal("invalid endpoint accepted")
 	}
 }
 

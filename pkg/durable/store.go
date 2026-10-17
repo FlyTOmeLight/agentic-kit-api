@@ -73,7 +73,7 @@ func (s *Store) Close() {
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
-	// Serialize schema changes across concurrently started migration commands.
+	// Serialize concurrent schema initialization.
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(7412101)").Error; err != nil {
 			return err

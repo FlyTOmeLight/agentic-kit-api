@@ -20,22 +20,3 @@ DSN = "${env:DATABASE_URL:postgres://agentic:agentic_local@127.0.0.1:55432/agent
 [Redis]
 Addrs = ["${env:REDIS_ADDR:127.0.0.1:56379}"]
 DB = 0
-
-# Optional outbound service clients. Timeout is in seconds.
-[Tenant]
-Endpoint = "${env:TENANT_ENDPOINT:}"
-ProxyURL = "${env:TENANT_PROXY_URL:}"
-Retry = 0
-Timeout = 10
-[Tenant.Credentials]
-AuthType = "api_key"
-APIKey = "${env:TENANT_API_KEY:}"
-
-[Coding]
-Endpoint = "${env:CODING_ENDPOINT:}"
-ProxyURL = "${env:CODING_PROXY_URL:}"
-Retry = 0
-Timeout = 20
-[Coding.Credentials]
-AuthType = "api_key"
-APIKey = "${env:CODING_API_KEY:}"

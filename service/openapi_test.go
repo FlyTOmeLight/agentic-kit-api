@@ -12,8 +12,6 @@ import (
 	"github.com/FlyTOmeLight/server-go/httpintegration"
 	"github.com/FlyTOmeLight/server-go/swagger"
 	"github.com/gin-gonic/gin"
-
-	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/platform"
 )
 
 func TestOpenAPIMatchesRoutes(t *testing.T) {
@@ -34,7 +32,7 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := gin.New()
-	newRoutes(nil, nil, &platform.Config{}, nil).register(router.Group(""))
+	newRoutes(nil, nil).register(router.Group(""))
 	colon := regexp.MustCompile(`:([A-Za-z0-9_]+)`)
 	documented := map[string]bool{}
 	for _, route := range router.Routes() {

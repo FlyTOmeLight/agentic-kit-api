@@ -64,9 +64,6 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	t.Setenv("SERVER_CONFIG_PATH", "../conf/server/config.toml")
 	token := "framework-lifecycle-test-token-32chars"
-	for _, key := range []string{"TENANT_ENDPOINT", "TENANT_API_KEY", "CODING_ENDPOINT", "CODING_API_KEY"} {
-		t.Setenv(key, "")
-	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

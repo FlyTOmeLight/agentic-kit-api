@@ -22,7 +22,6 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 			t,
 			store,
 			nil,
-			[]string{"owner"},
 			map[string]string{testToken: "owner", "other-token-at-least-24-characters": "other"},
 		),
 	)

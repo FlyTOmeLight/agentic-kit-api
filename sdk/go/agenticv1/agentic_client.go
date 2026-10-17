@@ -10,12 +10,11 @@ import (
 // Client groups operations by business responsibility. Its services can be
 // shared by goroutines; do not replace the fields while requests are in flight.
 type Client struct {
-	transport   *transport
-	Evaluations EvaluationAPI
-	Executions  ExecutionAPI
-	Agents      AgentAPI
-	Sessions    SessionAPI
-	Runs        RunAPI
+	transport  *transport
+	Executions ExecutionAPI
+	Agents     AgentAPI
+	Sessions   SessionAPI
+	Runs       RunAPI
 }
 
 // NewClient constructs framework-backed services with a 20-second JSON timeout.
@@ -37,12 +36,11 @@ func NewClient(baseURL, token string, httpClient *http.Client) (*Client, error) 
 		return nil, err
 	}
 	return &Client{
-		transport:   httpTransport,
-		Evaluations: &evaluationClient{transport: httpTransport},
-		Executions:  &executionClient{transport: httpTransport},
-		Agents:      &agentClient{transport: httpTransport},
-		Sessions:    &sessionClient{transport: httpTransport},
-		Runs:        &runClient{transport: httpTransport},
+		transport:  httpTransport,
+		Executions: &executionClient{transport: httpTransport},
+		Agents:     &agentClient{transport: httpTransport},
+		Sessions:   &sessionClient{transport: httpTransport},
+		Runs:       &runClient{transport: httpTransport},
 	}, nil
 }
 

@@ -32,7 +32,7 @@ func (s *Store) SubmitExecution(
 	return result, created, err
 }
 
-// submitExecution allows experiment and Run creation to commit together.
+// submitExecution accepts a published version in the caller's transaction.
 func submitExecution(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -93,10 +93,6 @@ func submitExecution(
 			Take(&version).
 			Error; e != nil {
 			return recordError(e)
-		}
-		if inputSpec.Scope.ProjectID == "" &&
-			(len(version.Config.Tools) != 0 || len(version.Config.Toolsets) != 0 || inputSpec.Filesystem != nil) {
-			return ErrInvalid
 		}
 		var session table.Session
 		e = tx.Where("owner_id = ? AND id = ?", owner, sessionID).

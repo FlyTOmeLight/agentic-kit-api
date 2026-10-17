@@ -22,7 +22,7 @@
 - durable_step：工具执行前的意图、输入摘要、重试策略、执行结果。操作编号是 runID:stepID，重试不改变。
 - durable_event：与状态同事务写入的事件，也是 Outbox。Redis 只是通知与缓存，数据库是事件权威来源。
 
-API 仓库拥有共享持久化包，worker 只调用其中的状态变更方法。持久化访问统一由 GORM 管理；领取使用 Locking 子句，事件计数用 Updates 与 Returning 子句递增并取回；事件写入仍在同一事务。表结构、约束与索引由 internal/table 中的领域模型定义，迁移命令在事务中执行 AutoMigrate。数据库时钟和数值递增通过 gorm.Expr 表达，事务级 advisory lock 通过 GORM Exec 调用。数据库时间决定执行权期限，避免多个 worker 的本地时钟差异影响领取判断。
+API 仓库拥有共享持久化包，worker 只调用其中的状态变更方法。持久化访问统一由 GORM 管理；领取使用 Locking 子句，事件计数用 Updates 与 Returning 子句递增并取回；事件写入仍在同一事务。表结构、约束与索引由 internal/table 中的领域模型定义，Store 的结构初始化方法在事务中执行 AutoMigrate，不再提供迁移 CLI。数据库时钟和数值递增通过 gorm.Expr 表达，事务级 advisory lock 通过 GORM Exec 调用。数据库时间决定执行权期限，避免多个 worker 的本地时钟差异影响领取判断。
 
 ## 会话提交与记录
 

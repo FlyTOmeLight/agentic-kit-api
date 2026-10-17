@@ -2,7 +2,7 @@
 
 导入 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`。SDK 与 API 同模块发布；私有仓库认证见根目录 README。
 
-下面的函数完成创建 Agent、发布、创建会话和提交消息。token 对应的 owner 需要配置写权限。
+下面的函数完成创建 Agent、发布、创建会话和提交消息。身份校验由接入的 Forge middleware 负责。
 
 ```go
 package example
@@ -89,7 +89,7 @@ func NewConversation(sessions sdk.SessionAPI) *Conversation {
 
 所有操作接收标准 `context.Context` 和一个操作请求指针。路径 ID、query 分页和本次请求的 Header 与 JSON body 字段放在同一请求中；SDK 按协议分别编码，不将路径和 Header 字段写入 JSON。比如 `Runs.Get(ctx, &sdk.GetRunRequest{ID: runID})`、`Sessions.ListMessages(ctx, &sdk.ListMessagesRequest{SessionID: sessionID, ListMessagesOptions: sdk.ListMessagesOptions{After: 10, Limit: 50}})`。
 
-普通查询返回领域对象或分页结果；没有响应 body 的操作返回 `error`。提交消息、执行、实验和试运行返回包含领域结果与 `Created` 的操作响应。事件流使用 `OpenEvents(ctx, &sdk.OpenRunEventsRequest{ID: runID, LastEventID: "runID:seq"})`，调用方负责关闭返回的 `io.ReadCloser`。
+普通查询返回领域对象或分页结果；没有响应 body 的操作返回 `error`。提交消息和执行返回包含领域结果与 `Created` 的操作响应。事件流使用 `OpenEvents(ctx, &sdk.OpenRunEventsRequest{ID: runID, LastEventID: "runID:seq"})`，调用方负责关闭返回的 `io.ReadCloser`。
 
 错误类型复用 `server-go/errors.Error`，普通 JSON 请求直接使用框架 `sdk.Complete` 处理网络、取消、解码和 HTTP 失败。客户端额外拒绝重定向，避免把认证信息带到其他地址。
 
@@ -97,24 +97,6 @@ func NewConversation(sessions sdk.SessionAPI) *Conversation {
 
 `Client.Executions` 提供 Submit 与 CheckLease，使用 SubmitExecutionRequest / ExecutionSpec / Scope。ExecutionSpec 仅包含 agentID、agentVersion、scope 和 query。先通过 Agents 创建并发布定义，再调用 Executions.Submit；同一应用任务跨轮复用 Session。Submit 的幂等键与不可变快照重试语义和服务端一致。服务身份与调用权限由 Forge middleware 校验；浏览器用户不得持有服务凭据。Run.Scope 记录提交时的业务上下文，不替代每次敏感操作的动态授权。
 
-## 持久实验
-
-`Client.Evaluations` 实现 `EvaluationAPI`，提供 Start、Get、List、Cancel、Compare。Start 输入 `&StartEvaluationRequest{Suite, Scope, IdempotencyKey}`；202 响应 `Created=true`，200 返回原实验并置 `Created=false`。List 要求 tenantID / projectID，Limit=0 使用服务端默认值。Compare 输入 `&CompareEvaluationsRequest{CandidateID, BaselineID}`。
-
-客户端通过返回的 Trials 查到原 Run 与会话。轮询 Get 到 Completed 或 Canceled 后读取 Report；NeedsAttention 需要查看原 Run 并提供澄清或人工确认。Completed 与 Report.Passed 分别表示已完成判分和门槛通过。服务重启后继续读取同一个实验，不再次创建新键。模型和工具配置仍通过不可变 AgentVersion 装配，suite 不接受内联定义。
-
-这些方法仅供受信任应用使用。网关必须从已验证身份构造 Scope，并核对项目权限及对象归属。SDK 不提供浏览器会话认证。字段、限制和失败语义见 [HTTP 契约](../../../docs/api.md#持久评测实验)。
-
-## Forge 项目客户端
-
-`NewProjectClient(baseURL, tenantID, projectID, session, csrf, httpClient)` 使用真实 Forge 会话，提供项目 Agent 草稿、候选、版本和实验操作。公开响应不含模型地址或凭据引用。它与使用 Bearer token 的 `NewClient` 分开；浏览器保持 Cookie/CSRF 流程，不能使用运行时密钥。详见 [HTTP 契约](../../../docs/api.md#forge-项目-agent-与评测入口)。
-
-项目客户端还提供 `EvaluationPlans`、`EvaluationPlan`、`SaveEvaluationPlan`。新方案使用客户端生成的稳定 ID 和 revision=0；后续保存使用返回的 revision，409 时重新读取并核对修改。保存方案不会执行 Agent。
-
-`StartTrial(ctx, &StartProjectTrialRequest{AgentID, IdempotencyKey, ...})`、`Trial`、`CancelTrial` 支持固定候选的独立试运行。创建响应包含试运行结果及 `Created` 标记；轮询同一个 Run 恢复输出，不通过重新提交来查询进度。试运行结果不代表评测通过。
-
-Coding scenarios use `CodingEvaluationScenario` in the same saved plans and experiment APIs. During environment preparation a Trial has no Run yet; use `Trial.Coding.Status`. Independent check logs, exit codes and patches are available as `CodingEvaluationEvidence`. Treat `Stopped` as the environment cleanup confirmation, including canceled experiments.
-
 ## 布局迁移
 
-旧导入路径 `github.com/FlyTOmeLight/agentic-kit-api/sdk` 已移除，改用 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`。可用 `sdk` 别名保留调用代码的类型前缀；业务路径和成功响应字段保持原契约；错误采用框架的平铺格式，详见上文错误处理。框架客户端的传输资源由 Client.Close／ProjectClient.Close 释放，调用方须在全部请求与事件流结束后关闭。
+旧导入路径 `github.com/FlyTOmeLight/agentic-kit-api/sdk` 已移除，改用 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`。可用 `sdk` 别名保留调用代码的类型前缀；业务路径和成功响应字段保持原契约；错误采用框架的平铺格式，详见上文错误处理。框架客户端的传输资源由 Client.Close 释放，调用方须在全部请求与事件流结束后关闭。

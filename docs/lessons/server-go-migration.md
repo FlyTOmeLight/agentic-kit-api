@@ -6,9 +6,9 @@
 
 本项目在联合验证之外，关闭 workspace、移除本地 `replace`，再执行集成测试与无 CGO 构建。容器构建排除 `go.work`，从公开依赖构建。若接口缺失，应先核对发布模块的源码和版本，再升级引用。
 
-Coding SDK 并入 `forge-coding-api` 根模块后，模块依赖改为根模块，源码继续导入其中的 `sdk/go/codingv1`。导入路径和模块版本并非同一层信息，升级时要同时检查 `go.mod` 和实际调用源码。
+历史上 Coding SDK 并入 `forge-coding-api` 根模块时，曾同时检查模块版本和 SDK 导入路径。当前通用边界清理已移除该业务客户端及依赖，这条经验保留为发布依赖检查的历史背景。
 
-证据：[模块依赖](../../go.mod)、[容器上下文排除项](../../.dockerignore)、[Coding 适配](../../internal/client/coding.go)；历史经过见 [验证记录](../verification.md) 中的“server-go v0.3.0 发布版核对”“server-go v0.3.1 发布与独立验证”和“server-go v0.9.0 重构与 Coding 根模块升级”。
+证据：[模块依赖](../../go.mod)、[容器上下文排除项](../../.dockerignore)；历史经过见 [验证记录](../verification.md) 中的“server-go v0.3.0 发布版核对”“server-go v0.3.1 发布与独立验证”和“server-go v0.9.0 重构与 Coding 根模块升级”。
 
 ## 请求绑定要保留字段来源
 

@@ -4,7 +4,7 @@
 
 设计基线：2026-10-14 的当前工作树，Go 1.27.1、server-go v0.9.0。本文依据当前方法实现、数据库模型、API/SDK 测试及相邻 worker 调用编写。实施时先核对工作树变化，不把本地框架 main 的接口当作发布版能力。
 
-阅读入口：[代码问题](#2-当前代码内容的主要问题)、[功能与类型](#3-功能模型与所有权)、[访问与入口](#4-身份权限与入口统一)、[执行事务](#6-对话提交与持久执行核心)、[文件地图](#10-文件级实施地图)、[方法清单](#11-原方法重写与删除清单)、[实施与验收](#12-实施顺序与验收)。
+阅读入口：[代码问题](#2-重构起点的代码问题)、[功能与类型](#3-功能模型与所有权)、[访问与入口](#4-身份权限与入口统一)、[执行事务](#6-对话提交与持久执行核心)、[文件地图](#10-文件级实施地图)、[方法清单](#11-原方法重写与删除清单)、[实施与验收](#12-实施顺序与验收)。
 
 [核心流程与接口HTML](core-flows.html)按本设计展示创建、对话与恢复；现有通用路径和待定新增HTTP入口分别标注。
 
@@ -18,17 +18,19 @@
 
 Memory首版实现人工读写/纠正/停用及恢复、版本、受控召回与Run内冻结；context_builder实现规范材料组合、完整消息组选择与预算。后台提炼、自主学习、自动晋升、LLM摘要调用后置。详细契约见 [Memory设计](memory-design.md)：artifact-go拥有不可变内容历史，Memory拥有生效指针与完整检索投影；远期能力不提前实现。
 
-当前审查只修改设计文档，不改范围外实现、不修改或发布其他仓库。范围外模块的工作由所属任务推进；本轮不承诺交付其功能，也不因从设计排除而删除未移交的代码或数据。
+本文描述后续目标，不将目标标为已实现。2026-10-18 已按明确指令删除平台、评测、dataset、场景客户端与 CLI；其余模块继续按本文设计实施，不修改或发布其他仓库，也不删除已有业务数据。
 
 本次采用全新目标结构，不考虑旧版本接口、数据库、请求摘要或checkpoint的兼容与迁移。目标不包含兼容别名、回退、历史回填、旧状态转换、升级或切换文件；数据库按新模型初始化，API、SDK与worker共同使用同一新版契约。本文不安排生产数据删除操作。
 
-## 2. 当前代码内容的主要问题
+## 2. 重构起点的代码问题
+
+2026-10-18 边界清理已删除 app/platform、评测、dataset、场景客户端和 eval/migrate CLI。下表保留设计起点的问题说明；已删除路径用代码名标识，当前实现以 README 为准。此清理不等于本文其余目标结构已完成。
 
 | 当前实现与证据 | 实际混合的职责 | 重构决策 |
 | --- | --- | --- |
-| [platform/service.go](../internal/app/platform/service.go)：`environmentAccess`、`CreateAgent`、`UpdateAgent` | 路由识别、身份、模板政策和资产操作 | 通用访问与资产规则进入所属模块；产品模板政策由外部场景拥有 |
-| [platform/controller.go](../internal/app/platform/controller.go)：`coding`、`writing`、`agentKind`、`publicAgent` | 配置有效性、产品分类、响应投影 | 通用配置校验归 Agent；Writing/Coding 识别及组合约束归场景；响应投影留 HTTP；不将其他合法配置默认为 Writing |
-| [platform/auth.go](../internal/app/platform/auth.go)与 [workspace.go](../internal/app/platform/workspace.go) | 当前权限、owner 派生、路径形态、隐式 Context key | 以经过校验的访问对象传递身份和范围；移除 `pid` 驱动的隐式业务规则 |
+| `platform/service.go`（已删除）：`environmentAccess`、`CreateAgent`、`UpdateAgent` | 路由识别、身份、模板政策和资产操作 | 通用访问与资产规则进入所属模块；产品模板政策由外部场景拥有 |
+| `platform/controller.go`（已删除）：`coding`、`writing`、`agentKind`、`publicAgent` | 配置有效性、产品分类、响应投影 | 通用配置校验归 Agent；Writing/Coding 识别及组合约束归场景；响应投影留 HTTP；不将其他合法配置默认为 Writing |
+| `platform/auth.go`（已删除）与 `workspace.go`（已删除） | 当前权限、owner 派生、路径形态、隐式 Context key | 以经过校验的访问对象传递身份和范围；移除 `pid` 驱动的隐式业务规则 |
 | [durable/agent_service.go](../pkg/durable/agent_service.go)：`ValidateAgentConfig`、`runSpec`、编辑与发布事务 | 资产政策、执行快照编译、数据库事务 | 校验和快照构建成为纯函数；资产事务归控制面；执行核心只接受受控解析后的快照 |
 | [session_service.go](../pkg/durable/session_service.go)与 [execution_service.go](../pkg/durable/execution_service.go) | 两条提交路径各维护幂等、活动任务、历史冻结、Run/消息/事件写入 | 统一事务内接受执行的算法，保留两种真实的会话寻址方式 |
 | [run_service.go](../pkg/durable/run_service.go)：`Save`、`save`、`SupplyResult` | 调用方指定状态与事件组合；存储解析 worker 私有状态中的 `waitingStep` | 采用有类型的执行命令；等待交互成为明确的执行元数据 |
@@ -48,7 +50,7 @@ Memory首版实现人工读写/纠正/停用及恢复、版本、受控召回与
 | 上下文构建（context_builder） | 模型输入组合、相关历史选取、消息配对、预算与渲染政策 | 使用已授权/冻结来源构建本轮模型输入；独立于记忆存储与Eino实现 |
 | Memory | 事实、偏好与经验的范围、来源、生效指针和完整检索投影；不可变内容历史委托artifact-go | 首版人工读写/纠正、停用、版本查询与受控召回；跨服务写入按持久回执恢复 |
 | 持久执行 | 冻结 Spec、Run、Lease、Step、等待交互、原子消息与事件 | 领取、续期、记录决策、记录工具、暂停、完成、重试、取消、人工恢复 |
-| Workspace 访问 | 认证结果、企业范围、owner、actor、项目权限、可信应用能力 | 校验读写范围、校验环境访问、校验管理员及服务身份 |
+| 通用访问边界 | middleware 提供的身份、owner、CallerID、操作和数据范围 | 提取可信身份并匹配对象范围；项目业务授权由调用方负责 |
 | 执行查询与通知 | 公开 Run/Trace 投影、游标、订阅循环、Outbox 投递 | 查询、回放、订阅、发布通知；不决定执行状态 |
 
 Agent资产及不可变版本支持Enterprise（企业共享）和Project（项目私有）作用域。AssetScope明确tenant、kind和项目作用域所需projectID；资产归属与执行环境分别表达。术语见 [领域术语](../CONTEXT.md)，取舍见 [ADR-0001](adr/0001-asset-scopes.md)。
@@ -110,60 +112,31 @@ flowchart LR
 
 ## 4. 身份、权限与入口统一
 
-### 4.1 显式访问对象
+### 4.1 身份由 Forge middleware 提供
 
-HTTP Controller与对应业务Service入口遵循server-go使用*core.Context。Service从access取得核验后的Grant，业务默认值、权限与事务范围由该Service决定；数据库/SDK调用取ctx.Request.Context()。同事务prepare、Memory受控召回、纯函数、共享执行及后台任务使用标准context.Context，不持有HTTP Context，不新增一套转发Service。
+AK/SK、API token、会话、Origin/CSRF 的校验由 forge-tenant-api middleware 或调用方网关负责。通用服务不维护凭据清单，不自写 Tenant Check 适配，不根据路径分派会话/项目/企业权限请求。
 
-`Grant` 仅由访问模块根据已认证身份创建，内部字段不可由请求绑定。它包含 principal 类型、actor、可信 owner、tenant、企业编辑权限以及项目读写/Admin 范围。项目范围明确表达为受限项目集合；空集合表示没有项目权限，不能用 nil 隐式表达无限访问。
+HTTP Controller 与对应业务 Service 使用 *core.Context，从 middleware 提供的已核验身份读取 owner、actor、tenant、CallerID 与本次允许的操作/数据范围。正文不能覆盖这些字段。数据库和外部调用取 ctx.Request.Context()；同事务 prepare、Memory 召回和后台任务使用标准 context.Context。
 
-应用Grant另绑定认证CallerID及被授予的操作能力；正文中的actor/业务Scope不扩大它们。普通聊天不能冒充Application，应用来源和任务关联由内部入口构造。
+设计中的 Grant 仅表示已经核验的通用身份、操作与精确数据范围，不保存企业成员、项目授权集合或 20/30/40 等业务权限等级。零值不能授权；Grant 不写入数据库、快照或调用方文件。重放、查询、取消和人工恢复每次使用当前身份，不能从旧请求恢复授权。
 
-Grant 包含本次操作明确请求并已核验的 AssetScope。Enterprise 资产按当前企业成员及企业编辑权限授权；Project 资产按所属项目的当前读写能力授权，企业成员身份本身不授予项目私有资产访问。owner 由服务端根据 AssetScope 派生，保留两类隔离命名空间；客户端只请求作用域，不直接指定 owner。执行环境授权另外检查：项目私有资产仅可用于所属项目环境，即使调用者同时拥有其他项目权限也不放宽；企业共享资产可用于调用者有权限的项目环境。该取舍见 [ADR-0002](adr/0002-project-private-execution.md)。
+### 4.2 通用数据隔离与调用方业务授权
 
-执行提交分别核验Agent SourceRef与Memory/上下文来源的读权限、ResultScope的创建/写权限和环境执行权限；使用共享Agent不要求其草稿编辑权限。ResultScope依据授权材料和环境推导，客户端不能声明更宽范围。查询、取消、SSE和Trace按运行结果范围重新授权，读取共享Agent本身不授予其他调用方运行记录的访问。
+服务对 Agent、Session、Run、Memory 执行可信 owner 及精确 scope 的匹配，跨范围对象不可读写；SourceRef、ResultScope 和 MemoryScope 是引用/隔离值，不触发项目业务查询。共享 Agent 的读取不授予其他调用方运行记录的访问。
 
-Grant 只在当前请求内有效，零值不能授权；不写入数据库、执行快照或调用方文件。人工恢复和重放幂等请求均重新认证并取得当前企业/项目权限，不能从已接受请求恢复一个旧 Grant。同 key 改 actor 或项目是不同意图，返回 Conflict。
+调用方应用负责项目成员、仓库资源、环境使用、管理员、产品发布门槛等业务授权。是否允许某个项目资产在另一个环境使用，也由调用方在提交前决定；ADR-0002 保留历史政策背景，不再作为通用执行内核的项目绑定规则。内部执行入口只接受已授权调用方的通用输入与资源绑定，正文中的 actor/project 不能扩大服务身份拥有的能力。
 
-```go
-// 通用服务的目标接口示意，省略无关字段；场景审批不在此处。
-func (s *Access) Workspace(ctx *core.Context, tenant string) (Grant, error)
-func (s *Agents) UpdateDraft(ctx *core.Context,
-    cmd UpdateDraft) (Agent, error)
-func (s *Execution) SubmitMessage(ctx *core.Context,
-    cmd SubmitMessage) (Submission, error)
-```
+projectID 可以为空。工具或 filesystem 绑定不自动要求项目；它们只接受通用协议与必需字段校验。框架不按 Writing/Coding 类型或 URL 的 pid 推断权限。
 
-当前 read/write/Admin 的等级 20/30/40 集中转为具名能力，只在 Tenant adapter 解码等级，不在各方法里重复写数字。业务模块仍检查资源所属 owner/tenant/project；入口已认证不等于任意 ID 都可操作。
+### 4.3 入口和资产范围
 
-### 4.2 三种入口保留真实差异
+保留通用 `/v1/agents|sessions|runs` 与 `/internal/v1/executions`，后续 Memory 使用同一身份接入。移除 Workspace/Project 专用路由、ProjectClient 和同一业务的重复平台实现；不为不同凭据来源维护两套资产业务。
 
-| 入口 | 授权来源 | 允许的操作与输入 |
-| --- | --- | --- |
-| Workspace 浏览器入口 | Forge Session、Origin/CSRF、实时企业与项目权限 | 企业共享或项目私有资产管理；明确区分资产作用域与执行环境 |
-| 管理/自动化 Bearer 入口 | 配置中的服务 owner 与写能力 | 受控Agent配置、固定版本及通用执行输入；操作限于自己的owner |
-| 内部应用能力入口 | 受信任场景服务身份及受限能力，必要时再次核验当前项目权限 | 执行提交、受控资源绑定及授权的派生资产创建；通用配置创建不代替场景业务授权 |
+AssetScope 和 ResultScope 显式表达数据隔离，已有对象操作必须与保存的范围一致。客户端只请求范围，可信 owner 和可访问范围由 middleware 的身份决定；不跨 scope 搜索或通过 owner fallback 找对象。
 
-SDK及外部调用方可以使用Bearer入口，但不能通过正文提供 owner 或项目权限集合。浏览器不能直接提交任意工具 URL、TokenEnv 或 filesystem binding。外部应用的 Scope 是受信任服务断言，须在内部入口授权后才能进入提交模块。
+### 4.4 错误和外部依赖
 
-### 4.3 显式资产作用域与统一入口规则
-
-新 Workspace 入口统一实现资产行为和授权规则，操作显式携带 AssetScope。资产集合与创建请求必须选择 Enterprise 或 Project；已有资产操作也指定预期作用域，服务端校验与持久记录一致。作用域缺失或非法返回参数错误，不默认提升为企业共享。
-
-保留项目 owner 的真实隔离职责；撤掉由 `pid` 是否存在隐式决定整组业务政策的分支，以及企业 owner 找不到后尝试项目 owner 的回退。旧重复路由不作兼容入口，新协议将作用域转换为明确业务值后调用同一实现。执行环境字段命名为 `environmentProjectID`，与 AssetScope.ProjectID 分开。
-
-通用服务按实际资源绑定决定是否需要项目环境：无项目资源执行允许不选择项目，需要项目资源时必须选择项目并通过权限检查。Writing/Coding场景再核验自己的工具组合，底层不以场景名称或URL是否带pid决定。
-
-有环境的执行必须满足 `AssetScope=Project(P) → environmentProjectID=P`；Scope 不匹配返回 Forbidden，不进入Run接受事务。无项目资源的执行未选择环境时，仍保留资产的项目私有归属和访问要求，不因环境字段为空成为企业共享内容。跨项目复用采用企业共享资产，不在本次重构增加私有资产跨项目授权机制。
-
-企业共享与项目私有资产从创建起就具有明确AssetScope、owner和可见范围，不在查询时跨作用域搜索。
-
-通用管理 `/v1/agents|sessions|runs` 和内部 `/internal/v1/executions` 提供框架能力，Workspace资产操作携带AssetScope；目标接口只处理授权资产、执行、Memory和查询。Query/正文作用域由HTTP适配核验，不通过路径形态推断授权。
-
-### 4.4 外部错误
-
-Tenant adapter提供AuthenticateSession、WorkspaceAccess、ProjectAccess等有类型的方法，替代Check(path, body, out) int。它返回领域结果与可检查错误，保留context取消/超时身份，区分认证失败、拒绝、资源不存在和依赖不可用；HTTP只映射一次。保留已有连接超时、禁止重定向、响应大小限制和关闭行为。
-
-通用框架不包含Coding adapter、其SDK依赖或专用endpoint/token；这些资源由使用者自己的应用拥有。通用工具协议按授权配置执行，不代理产品服务的业务流程。
+认证与授权错误沿用 middleware 契约，HTTP 层只做一次响应映射，不把 context 取消、拒绝访问和依赖不可用统一吞为 503。通用服务不包含 Tenant/Coding 业务客户端、专用 endpoint/token 或评测环境协调器。Memory 的 artifact 适配只处理存储契约，不能带入项目业务政策。
 
 ## 5. Agent 资产与版本发布
 
@@ -338,13 +311,13 @@ Controller只负责来源绑定、调用完整业务行为、响应投影和Swag
 
 ### 8.3 装配和资源生命周期
 
-公开service只保留build.go与service.go两个实现文件。build.go拥有类型化Config入口、app.Run资源初始化与交付：数据库解包、GORM独立Session和UTC/日志策略、Redis及Tenant HTTP连接初始化、schema初始化，都在这个装配文件内完成；不再为这些装配步骤单独建立database.go、notification_cache.go或clients.go。
+公开service只保留build.go与service.go两个实现文件。build.go拥有类型化Config入口、app.Run资源初始化与交付：数据库解包、GORM独立Session和UTC/日志策略、Redis连接初始化、schema初始化，都在这个装配文件内完成；不再为这些装配步骤单独建立database.go、notification_cache.go或clients.go。
 
 service.go拥有Dependencies、New及host.Service的RegisterRoutes/Start/Stop。New一次构造access、agent、execution、memory及通知relay，并保存Controller；RegisterRoutes只安装这些已有对象的路由，框架重建handler时不重新构造业务对象或后台任务，不另建routes.go。资产、Memory及执行规则仍属于internal/app，不进入公开service。
 
-service.Dependencies只表达实际借用的资源：logger、GORM数据库句柄、Redis客户端、TenantHTTP（标准*http.Client）及启用Memory维护时的artifact客户端。artifact依赖以Memory消费方定义的小接口注入，第三方SDK类型留在internal/client。Tenant endpoint/token来自Config；internal/client/tenant.go将配置与借用HTTP连接组成协议适配，并负责请求超时、禁止重定向、响应限制及有类型的错误转换。New不创建连接、不修改或关闭调用方传入的连接；移除只为一个Tenant客户端建立的Clients集合与NewClients/Close公开构造。SDK与Table不反向导入service。
+service.Dependencies只表达实际借用的资源：logger、GORM数据库句柄、Redis客户端及启用Memory维护时的artifact客户端。artifact依赖以Memory消费方定义的小接口注入，第三方SDK类型留在internal/client。认证通过Forge middleware接入，不构造Tenant/Coding业务客户端。New不创建连接、不修改或关闭调用方传入的资源；SDK与Table不反向导入service。
 
-Build通过runtime.Initialize初始化数据库、通知缓存及Tenant HTTP资源，并在启用Memory维护时构造artifact客户端，资源包装及关闭函数留在build.go；构造成功后通过runtime.AddService交付API，初始化成功的资源由Runtime在服务停止后关闭。失败时，已交付资源由Runtime清理，尚未交付的部分由构造者清理。组合调用方提供已初始化数据库和自己拥有的其他资源，只调用New，不调用独立Build重复创建连接；New借用资源，Stop只取消并等待后台任务。资源所有者在服务真正停止后关闭连接。
+Build通过runtime.Initialize初始化数据库和通知缓存，并在启用Memory维护时构造artifact客户端，资源包装及关闭函数留在build.go；构造成功后通过runtime.AddService交付API，初始化成功的资源由Runtime在服务停止后关闭。失败时，已交付资源由Runtime清理，尚未交付的部分由构造者清理。组合调用方提供已初始化数据库和自己拥有的其他资源，只调用New，不调用独立Build重复创建连接；New借用资源，Stop只取消并等待后台任务。资源所有者在服务真正停止后关闭连接。
 
 API后台只装配通用OutboxRelay。HTTP排空后取消并等待任务，再释放所属资源；不增加场景协调任务或通用调度框架。通知初始化不要求Redis在线，离线时仍可从数据库回放。durable.New借用传入GORM连接，durable.Open供独立worker拥有连接，Close不关闭借用池；执行存储不导入server-go/db。
 
@@ -402,7 +375,7 @@ agentic-kit-api/
 │   └── server/
 │       └── main.go                # 信号、app.Run、service.Build、退出码
 ├── service/
-│   ├── build.go                   # Config入口；DB/GORM、Redis、TenantHTTP、artifact客户端与schema初始化、Runtime交付/清理
+│   ├── build.go                   # Config入口；DB/GORM、Redis、artifact客户端与schema初始化、Runtime交付/清理
 │   ├── service.go                 # Dependencies/New；一次构造四域；RegisterRoutes/Start/Stop，借用资源
 │   ├── build_test.go              # 新库初始化、资源接管/部分失败清理、Redis离线启动
 │   └── service_test.go            # 路由/Swagger对应、重载不重建、停止等待及借用资源不关闭
@@ -448,13 +421,13 @@ agentic-kit-api/
 ├── internal/
 │   ├── app/                      # Controller与Service按业务域同包，只有四个域
 │   │   ├── access/
-│   │   │   ├── middleware.go     # 认证/Session/CSRF来源；构造稳定CallerID，不从正文授权
+│   │   │   ├── middleware.go     # 接入Forge middleware；读取可信身份与CallerID，不自写认证
 │   │   │   ├── grant.go          # 当前身份、操作能力、源/结果范围的已核验值
-│   │   │   ├── service.go        # Workspace/项目授权；供各业务Service调用
+│   │   │   ├── service.go        # 身份/操作/精确数据范围匹配，不查询项目业务
 │   │   │   └── service_test.go   # 认证/授权差异、撤权、空范围和身份伪造拒绝
 │   │   ├── agent/
 │   │   │   ├── controller.go     # 通用Agent/草稿/发布/派生的HTTP绑定、响应、Swagger
-│   │   │   ├── router.go         # Bearer及Session认证入口，共用同一Service
+│   │   │   ├── router.go         # 通用Agent路由，认证由Forge middleware负责
 │   │   │   ├── service.go        # *core.Context业务入口；授权、revision、发布指针及事务范围
 │   │   │   ├── derived.go        # 派生授权/请求锁/意图/四记录同事务；调用Agent Table
 │   │   │   ├── doc.go            # Swagger总说明与认证声明
@@ -497,7 +470,6 @@ agentic-kit-api/
 │   │       ├── query.go          # Run/消息/事件/快照一致读取、稳定分页与过滤
 │   │       └── outbox_query.go   # 按Run事件顺序锁待投递事件，提交已发标记
 │   ├── client/
-│   │   ├── tenant.go             # 借用TenantHTTP；认证/授权协议、超时/响应限制及错误转换
 │   │   ├── artifact.go           # artifactv1协议/身份/错误转换与幂等集合创建，不参与Run事务
 │   │   └── notification.go       # Redis stream/seq-0/Lua/TTL/等待协议，不定义投递事务
 │   ├── notification/
@@ -531,7 +503,6 @@ agentic-kit-api/
 │   ├── agentic_interface_session.go # 会话/消息消费行为
 │   ├── agentic_interface_run.go    # Run/Trace/SSE/取消/交互消费行为
 │   ├── agentic_interface_execution.go # 受信任提交/lease消费行为
-│   ├── agentic_interface_workspace.go # Workspace资产业务消费行为
 │   ├── agentic_interface_memory.go # Memory人工维护/读取消费行为
 │   ├── agentic_client_test.go      # 来源编码/缺省Off/Created/error code/Body关闭/真实传输
 │   ├── doc.go                     # 通用SDK包与资源说明
