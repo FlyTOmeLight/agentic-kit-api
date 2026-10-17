@@ -29,11 +29,20 @@ func TestTenantUsesPublishedSDK(t *testing.T) {
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`{"error":{"code":"DENIED","message":"denied"}}`))
 		case "/internal/v1/workspace/check":
-			_, _ = w.Write([]byte(`{"allowed":true,"canEdit":true,"projects":[{"id":"project","name":"Project","level":30}]}`))
+			_, _ = w.Write(
+				[]byte(
+					`{"allowed":true,"canEdit":true,"projects":[{"id":"project","name":"Project","level":30}]}`,
+				),
+			)
 		}
 	}))
 	defer server.Close()
-	tenant, err := NewTenant(framesdk.Config{Endpoint: server.URL, Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: token}})
+	tenant, err := NewTenant(
+		framesdk.Config{
+			Endpoint:    server.URL,
+			Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: token},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,18 +50,35 @@ func TestTenantUsesPublishedSDK(t *testing.T) {
 	var session struct {
 		ID string `json:"id"`
 	}
-	if status := tenant.Check(context.Background(), "/internal/v1/session/check", map[string]string{"session": "cookie"}, &session); status != 200 || session.ID != "user" {
+	if status := tenant.Check(
+		context.Background(),
+		"/internal/v1/session/check",
+		map[string]string{"session": "cookie"},
+		&session,
+	); status != 200 ||
+		session.ID != "user" {
 		t.Fatal(status, session)
 	}
 	var result any
-	if status := tenant.Check(context.Background(), "/internal/v1/access/check", map[string]string{}, &result); status != 403 {
+	if status := tenant.Check(
+		context.Background(),
+		"/internal/v1/access/check",
+		map[string]string{},
+		&result,
+	); status != 403 {
 		t.Fatal(status)
 	}
 	var workspace struct {
 		Allowed bool `json:"allowed"`
 		CanEdit bool `json:"canEdit"`
 	}
-	if status := tenant.Check(context.Background(), "/internal/v1/workspace/check", map[string]string{}, &workspace); status != 200 || !workspace.Allowed || !workspace.CanEdit {
+	if status := tenant.Check(
+		context.Background(),
+		"/internal/v1/workspace/check",
+		map[string]string{},
+		&workspace,
+	); status != 200 || !workspace.Allowed ||
+		!workspace.CanEdit {
 		t.Fatal(status, workspace)
 	}
 }

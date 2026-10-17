@@ -29,7 +29,13 @@ func TestCodingEnvironmentHonorsConfiguredTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	_, err = client.Advance(context.Background(), "trial", sdk.EvaluationScope{}, sdk.CodingEvaluationScenario{}, "stop")
+	_, err = client.Advance(
+		context.Background(),
+		"trial",
+		sdk.EvaluationScope{},
+		sdk.CodingEvaluationScenario{},
+		"stop",
+	)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("configured timeout was lost", err)
 	}
@@ -132,12 +138,25 @@ func TestCodingEnvironmentUsesConfiguredProxy(t *testing.T) {
 		_, _ = w.Write([]byte(`{"status":"Completed","stopped":true}`))
 	}))
 	defer proxy.Close()
-	client, err := NewCodingEnvironment(framesdk.Config{Endpoint: "http://coding.invalid", ProxyURL: proxy.URL, Timeout: 1, Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: "token"}})
+	client, err := NewCodingEnvironment(
+		framesdk.Config{
+			Endpoint:    "http://coding.invalid",
+			ProxyURL:    proxy.URL,
+			Timeout:     1,
+			Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: "token"},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	_, err = client.Advance(context.Background(), "trial", sdk.EvaluationScope{}, sdk.CodingEvaluationScenario{}, "stop")
+	_, err = client.Advance(
+		context.Background(),
+		"trial",
+		sdk.EvaluationScope{},
+		sdk.CodingEvaluationScenario{},
+		"stop",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

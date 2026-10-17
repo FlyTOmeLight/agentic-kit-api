@@ -86,7 +86,13 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 	}))
 	defer tenant.Close()
 	cfg := platform.Config{
-		Tenant: framesdk.Config{Endpoint: tenant.URL, Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: strings.Repeat("t", 32)}},
+		Tenant: framesdk.Config{
+			Endpoint: tenant.URL,
+			Credentials: &framesdk.Credentials{
+				AuthType: framesdk.AuthTypeAPIKey,
+				APIKey:   strings.Repeat("t", 32),
+			},
+		},
 	}
 	server := httptest.NewServer(
 		NewPlatformRouter(t, store, nil, []string{"templates"}, map[string]string{testToken: "templates"}, cfg),
@@ -456,7 +462,13 @@ func testCodingAgentAndScenario(t *testing.T, workspace bool) {
 	}))
 	defer tenant.Close()
 	cfg := platform.Config{
-		Tenant:    framesdk.Config{Endpoint: tenant.URL, Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: strings.Repeat("t", 32)}},
+		Tenant: framesdk.Config{
+			Endpoint: tenant.URL,
+			Credentials: &framesdk.Credentials{
+				AuthType: framesdk.AuthTypeAPIKey,
+				APIKey:   strings.Repeat("t", 32),
+			},
+		},
 		CodingURL: "http://coding",
 	}
 	server := httptest.NewServer(

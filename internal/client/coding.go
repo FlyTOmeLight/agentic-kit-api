@@ -38,7 +38,12 @@ func NewCodingEnvironment(config framesdk.Config) (*CodingEnvironment, error) {
 		_ = transport.Close()
 		return nil, err
 	}
-	return &CodingEnvironment{url: strings.TrimRight(config.Endpoint, "/"), client: client, transport: transport, timeout: time.Duration(config.Timeout) * time.Second}, nil
+	return &CodingEnvironment{
+		url:       strings.TrimRight(config.Endpoint, "/"),
+		client:    client,
+		transport: transport,
+		timeout:   time.Duration(config.Timeout) * time.Second,
+	}, nil
 }
 
 func (e *CodingEnvironment) Filesystem(trial string) *sdk.FilesystemBinding {

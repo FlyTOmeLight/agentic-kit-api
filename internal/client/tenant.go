@@ -21,7 +21,13 @@ func NewTenant(config framesdk.Config) (*Tenant, error) {
 	if err != nil {
 		return nil, err
 	}
-	c, err := tenantv1.New(tenantv1.Config{Endpoint: config.Endpoint, ServiceToken: token, Timeout: time.Duration(config.Timeout) * time.Second})
+	c, err := tenantv1.New(
+		tenantv1.Config{
+			Endpoint:     config.Endpoint,
+			ServiceToken: token,
+			Timeout:      time.Duration(config.Timeout) * time.Second,
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
