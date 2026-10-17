@@ -24,26 +24,9 @@ type ProjectAgentVersion struct {
 	Model    string `json:"model"`
 }
 
-type ProjectTemplate struct {
-	Kind     string   `json:"kind"`
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Model    string   `json:"model"`
-	Version  int64    `json:"version"`
-	Prompt   string   `json:"prompt"`
-	MaxTurns int      `json:"maxTurns"`
-	Tools    []string `json:"tools"`
-}
-
 type ProjectAgentList struct {
-	Items     []ProjectAgent    `json:"items"`
-	Templates []ProjectTemplate `json:"templates"`
-	CanEdit   bool              `json:"canEdit"`
-}
-
-type CreateProjectAgentRequest struct {
-	TemplateID string `json:"templateID" binding:"required"`
-	Name       string `json:"name" binding:"required,max=200"`
+	Items   []ProjectAgent `json:"items"`
+	CanEdit bool           `json:"canEdit"`
 }
 
 type UpdateProjectAgentRequest struct {

@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/FlyTOmeLight/server-go/auth"
 	"github.com/FlyTOmeLight/server-go/host"
 	"github.com/FlyTOmeLight/server-go/logger"
 	core "github.com/FlyTOmeLight/server-go/pkg"
@@ -26,7 +25,7 @@ type API struct {
 	stopped bool
 	coding  *client.CodingEnvironment
 	store   *durable.Store
-	redis   *redis.Client
+	redis   redis.UniversalClient
 	cancel  context.CancelFunc
 	done    chan struct{}
 }
@@ -34,7 +33,7 @@ type API struct {
 // New constructs an API using caller-owned resources. Stop joins background tasks;
 // the caller releases Store and Redis after Stop succeeds. The API owns its
 // platform clients and releases them after its tasks stop.
-func New(cfg Config, log *logger.Logger, store *durable.Store, cache *redis.Client) (*API, error) {
+func New(cfg Config, log *logger.Logger, store *durable.Store, cache redis.UniversalClient) (*API, error) {
 	if err := cfg.ValidateAPI(); err != nil {
 		return nil, err
 	}
@@ -45,17 +44,15 @@ func New(cfg Config, log *logger.Logger, store *durable.Store, cache *redis.Clie
 	if err != nil {
 		return nil, err
 	}
-	tokens, err := auth.ParseBearerTokens(cfg.Auth.TokensJSON)
-	if err != nil {
-		return nil, err
-	}
 	a := &API{log: log, store: store, redis: cache}
 	if platformConfig != nil {
-		a.tenant = client.NewTenant(platformConfig.TenantURL, platformConfig.TenantToken)
+		a.tenant, err = client.NewTenant(cfg.Tenant)
+		if err != nil {
+			return nil, err
+		}
 		if platformConfig.CodingURL != "" {
 			a.coding, err = client.NewCodingEnvironment(
-				platformConfig.CodingURL,
-				platformConfig.CodingToken,
+				cfg.Coding,
 			)
 			if err != nil {
 				a.tenant.Close()
@@ -63,7 +60,7 @@ func New(cfg Config, log *logger.Logger, store *durable.Store, cache *redis.Clie
 			}
 		}
 	}
-	a.routes = newRoutes(store, cache, cfg.Auth.ConfigOwners, tokens, platformConfig, a.tenant)
+	a.routes = newRoutes(store, cache, platformConfig, a.tenant)
 	return a, nil
 }
 

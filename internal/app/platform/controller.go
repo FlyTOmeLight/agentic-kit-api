@@ -75,7 +75,7 @@ func writing(c sdk.AgentConfig) bool { return len(c.Tools) == 0 && len(c.Toolset
 // @Failure 401 {object} serrors.Error "身份校验失败"
 // @Failure 403 {object} serrors.Error "权限不足"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/agents [get]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/agents [get]
 func (h *Controller) agents(c *core.Context) {
@@ -90,86 +90,14 @@ func (h *Controller) agents(c *core.Context) {
 		return
 	}
 	out := sdk.ProjectAgentList{
-		Items:     []sdk.ProjectAgent{},
-		Templates: []sdk.ProjectTemplate{},
-		CanEdit:   c.GetBool("projectCanEdit"),
+		Items:   []sdk.ProjectAgent{},
+		CanEdit: c.GetBool("projectCanEdit"),
 	}
 	for i := range items {
 		out.Items = append(out.Items, publicAgent(&items[i]))
 	}
-	if c.Param("pid") != "" { // Historical project clients retain their original contract.
-		var ok bool
-		out.Templates, ok = h.templateList(c)
-		if !ok {
-			return
-		}
-	}
 
 	c.JSON(200, out)
-}
-
-func (h *Controller) templateList(c *core.Context) ([]sdk.ProjectTemplate, bool) {
-	templates, err := h.business.Templates(c)
-	if err != nil {
-		apperror.Respond(c, err)
-		return nil, false
-	}
-	return templates, true
-}
-
-// templates 列出受信任 Agent 模板。
-// @Summary 列出受信任 Agent 模板
-// @Tags Platform
-// @Produce json
-// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
-// @Param tid path string true "tid"
-// @Success 200 {object} agenticv1.Page[agenticv1.ProjectTemplate] "成功"
-// @Failure 400 {object} serrors.Error "参数无效"
-// @Failure 401 {object} serrors.Error "身份校验失败"
-// @Failure 403 {object} serrors.Error "权限不足"
-// @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
-// @Router /api/v1/tenants/{tid}/agent-templates [get]
-func (h *Controller) templates(c *core.Context) {
-	if items, ok := h.templateList(c); ok {
-		c.JSON(200, sdk.Page[sdk.ProjectTemplate]{Items: items})
-	}
-}
-
-// createAgent 从模板创建 Agent。
-// @Summary 从模板创建 Agent
-// @Tags Platform
-// @Accept json
-// @Produce json
-// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
-// @Param X-CSRF-Token header string true "会话 CSRF 标识"
-// @Param tid path string true "tid"
-// @Param pid path string false "项目路径下的项目 ID"
-// @Param request body agenticv1.CreateProjectAgentRequest true "JSON 请求"
-// @Success 201 {object} agenticv1.ProjectAgent "成功"
-// @Failure 400 {object} serrors.Error "参数无效"
-// @Failure 401 {object} serrors.Error "身份校验失败"
-// @Failure 403 {object} serrors.Error "权限不足"
-// @Failure 404 {object} serrors.Error "资源不存在"
-// @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
-// @Failure 413 {object} serrors.Error "请求体超过限制"
-// @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
-// @Router /api/v1/tenants/{tid}/agents [post]
-// @Router /api/v1/tenants/{tid}/projects/{pid}/agents [post]
-func (h *Controller) createAgent(c *core.Context) {
-	var req sdk.CreateProjectAgentRequest
-	if err := binder.Bind(c, &req).All().Error(); err != nil {
-		serrors.AbortWithError(c, err)
-		return
-	}
-
-	out, err := h.business.CreateAgent(c, req)
-	if err != nil {
-		apperror.Respond(c, err)
-		return
-	}
-	c.JSON(201, out)
 }
 
 // agent 查询企业 Agent。
@@ -186,7 +114,7 @@ func (h *Controller) createAgent(c *core.Context) {
 // @Failure 403 {object} serrors.Error "权限不足"
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/agents/{agent} [get]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/agents/{agent} [get]
 func (h *Controller) agent(c *core.Context) {
@@ -222,7 +150,7 @@ func (h *Controller) agent(c *core.Context) {
 // @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
 // @Failure 413 {object} serrors.Error "请求体超过限制"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/agents/{agent} [put]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/agents/{agent} [put]
 func (h *Controller) updateAgent(c *core.Context) {
@@ -259,7 +187,7 @@ func (h *Controller) updateAgent(c *core.Context) {
 // @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
 // @Failure 413 {object} serrors.Error "请求体超过限制"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/agents/{agent}/candidates [post]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/agents/{agent}/candidates [post]
 func (h *Controller) candidate(c *core.Context) {
@@ -306,7 +234,7 @@ func publicVersion(v *sdk.AgentVersion) sdk.ProjectAgentVersion {
 // @Failure 403 {object} serrors.Error "权限不足"
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/agents/{agent}/versions/{version} [get]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/agents/{agent}/versions/{version} [get]
 func (h *Controller) version(c *core.Context) {
@@ -343,7 +271,7 @@ func (h *Controller) version(c *core.Context) {
 // @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
 // @Failure 413 {object} serrors.Error "请求体超过限制"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/evaluations [post]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations [post]
 func (h *Controller) start(c *core.Context) {
@@ -388,7 +316,7 @@ func (h *Controller) start(c *core.Context) {
 // @Failure 401 {object} serrors.Error "身份校验失败"
 // @Failure 403 {object} serrors.Error "权限不足"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/evaluations [get]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations [get]
 func (h *Controller) evaluations(c *core.Context) {
@@ -428,7 +356,7 @@ func (h *Controller) evaluations(c *core.Context) {
 // @Failure 403 {object} serrors.Error "权限不足"
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/evaluations/{experiment} [get]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations/{experiment} [get]
 func (h *Controller) experiment(c *core.Context) {
@@ -464,7 +392,7 @@ func (h *Controller) experiment(c *core.Context) {
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/evaluations/{experiment}/cancel [post]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations/{experiment}/cancel [post]
 func (h *Controller) cancel(c *core.Context) {
@@ -497,7 +425,7 @@ func (h *Controller) cancel(c *core.Context) {
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/evaluations/{experiment}/compare [get]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations/{experiment}/compare [get]
 func (h *Controller) compare(c *core.Context) {
@@ -531,7 +459,7 @@ func (h *Controller) compare(c *core.Context) {
 // @Failure 403 {object} serrors.Error "权限不足"
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/evaluations/{experiment}/trials/{trial}/trace [get]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations/{experiment}/trials/{trial}/trace [get]
 func (h *Controller) trace(c *core.Context) {
@@ -563,7 +491,7 @@ func (h *Controller) trace(c *core.Context) {
 // @Failure 401 {object} serrors.Error "身份校验失败"
 // @Failure 403 {object} serrors.Error "权限不足"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/evaluation-plans [get]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/evaluation-plans [get]
 func (h *Controller) plans(c *core.Context) {
@@ -600,7 +528,7 @@ func (h *Controller) plans(c *core.Context) {
 // @Failure 403 {object} serrors.Error "权限不足"
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/evaluation-plans/{plan} [get]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/evaluation-plans/{plan} [get]
 func (h *Controller) plan(c *core.Context) {
@@ -639,7 +567,7 @@ func (h *Controller) plan(c *core.Context) {
 // @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
 // @Failure 413 {object} serrors.Error "请求体超过限制"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /api/v1/tenants/{tid}/evaluation-plans/{plan} [put]
 // @Router /api/v1/tenants/{tid}/projects/{pid}/evaluation-plans/{plan} [put]
 func (h *Controller) savePlan(c *core.Context) {

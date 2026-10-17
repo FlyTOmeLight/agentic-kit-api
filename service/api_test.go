@@ -55,14 +55,16 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
 	t.Setenv("DATABASE_URL", u.String())
-	t.Setenv("REDIS_URL", redisURL)
+	redisAddress := redisURL
+	if parsed, parseErr := url.Parse(redisURL); parseErr == nil && parsed.Host != "" {
+		redisAddress = parsed.Host
+	}
+	t.Setenv("REDIS_ADDR", redisAddress)
 	t.Setenv("LISTEN_ADDR", "127.0.0.1:0")
 	t.Setenv("GIN_MODE", "test")
 	t.Setenv("SERVER_CONFIG_PATH", "../conf/server/config.toml")
-	t.Setenv("CONFIG_OWNERS", "owner")
 	token := "framework-lifecycle-test-token-32chars"
-	t.Setenv("API_TOKENS_JSON", `{"`+token+`":"owner"}`)
-	for _, key := range []string{"PLATFORM_TENANT_URL", "PLATFORM_TENANT_TOKEN", "PLATFORM_TEMPLATE_OWNER", "PLATFORM_TEMPLATES_JSON", "PLATFORM_CODING_URL", "PLATFORM_CODING_TOKEN"} {
+	for _, key := range []string{"TENANT_ENDPOINT", "TENANT_API_KEY", "CODING_ENDPOINT", "CODING_API_KEY"} {
 		t.Setenv(key, "")
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -124,7 +126,6 @@ ready:
 		status                     int
 	}{
 		{method: "GET", path: "/ping", body: "", bearer: "", status: 200},
-		{method: "GET", path: "/v1/agents", body: "", bearer: "", status: 401},
 		{method: "GET", path: "/missing", body: "", bearer: token, status: 404},
 		{method: "PUT", path: "/v1/runs/run", body: "", bearer: token, status: 405},
 		{method: "POST", path: "/v1/sessions/s/messages", body: `{"query":"q","unexpected":true}`, bearer: token, status: 400},

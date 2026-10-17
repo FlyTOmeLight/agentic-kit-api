@@ -7,22 +7,16 @@ import (
 
 type Controller struct {
 	service   Service
-	redis     *redis.Client
+	redis     redis.UniversalClient
 	execution ExecutionService
-	owners    map[string]bool
 }
 
 func NewController(
 	service Service,
 	execution ExecutionService,
-	redisClient *redis.Client,
-	owners []string,
+	redisClient redis.UniversalClient,
 ) *Controller {
-	allowed := make(map[string]bool, len(owners))
-	for _, owner := range owners {
-		allowed[owner] = true
-	}
-	return &Controller{service: service, execution: execution, redis: redisClient, owners: allowed}
+	return &Controller{service: service, execution: execution, redis: redisClient}
 }
 
 func (h *Controller) RegisterRoutes(v1 *core.RouterGroup) {

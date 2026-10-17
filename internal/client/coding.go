@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"time"
 
 	codingv1 "github.com/FlyTOmeLight/forge-coding-api/sdk/go/codingv1"
+	framesdk "github.com/FlyTOmeLight/server-go/sdk"
 
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
@@ -13,16 +15,30 @@ import (
 // CodingEnvironment converts platform scenarios into the Coding SDK contract.
 // Browser input never supplies the gateway service credential.
 type CodingEnvironment struct {
-	url    string
-	client *codingv1.Client
+	url       string
+	client    *codingv1.Client
+	transport *framesdk.Client
+	timeout   time.Duration
 }
 
-func NewCodingEnvironment(endpoint, token string) (*CodingEnvironment, error) {
-	client, err := codingv1.NewClient(endpoint, token, nil)
+func NewCodingEnvironment(config framesdk.Config) (*CodingEnvironment, error) {
+	token, err := serviceToken(config)
 	if err != nil {
 		return nil, err
 	}
-	return &CodingEnvironment{url: strings.TrimRight(endpoint, "/"), client: client}, nil
+	if config.Timeout == 0 {
+		config.Timeout = 20
+	}
+	transport, err := framesdk.NewClientWithConfig(&config)
+	if err != nil {
+		return nil, err
+	}
+	client, err := codingv1.NewClient(config.Endpoint, token, transport.Client.Client())
+	if err != nil {
+		_ = transport.Close()
+		return nil, err
+	}
+	return &CodingEnvironment{url: strings.TrimRight(config.Endpoint, "/"), client: client, transport: transport, timeout: time.Duration(config.Timeout) * time.Second}, nil
 }
 
 func (e *CodingEnvironment) Filesystem(trial string) *sdk.FilesystemBinding {
@@ -41,6 +57,8 @@ func (e *CodingEnvironment) Advance(
 	scenario sdk.CodingEvaluationScenario,
 	phase string,
 ) (*sdk.CodingEvaluationEvidence, error) {
+	ctx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
 	evidence, err := e.client.AdvanceEvaluation(
 		ctx,
 		trial,
@@ -70,4 +88,7 @@ func (e *CodingEnvironment) Advance(
 	return result, nil
 }
 
-func (e *CodingEnvironment) Close() { _ = e.client.Close() }
+func (e *CodingEnvironment) Close() {
+	_ = e.client.Close()
+	_ = e.transport.Close()
+}

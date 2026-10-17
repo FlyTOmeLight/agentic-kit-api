@@ -15,6 +15,7 @@ import (
 	"time"
 
 	serrors "github.com/FlyTOmeLight/server-go/errors"
+	framesdk "github.com/FlyTOmeLight/server-go/sdk"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/platform"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
@@ -85,10 +86,7 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 	}))
 	defer tenant.Close()
 	cfg := platform.Config{
-		TenantURL:     tenant.URL,
-		TenantToken:   strings.Repeat("t", 32),
-		TemplateOwner: "templates",
-		Templates:     []platform.Template{{ID: "writing", Name: "Writing", AgentID: template.ID, Version: 1}},
+		Tenant: framesdk.Config{Endpoint: tenant.URL, Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: strings.Repeat("t", 32)}},
 	}
 	server := httptest.NewServer(
 		NewPlatformRouter(t, store, nil, []string{"templates"}, map[string]string{testToken: "templates"}, cfg),
@@ -112,19 +110,16 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 		}
 	}
 	rows, err := dev.Agents(ctx, &sdk.ListProjectAgentsRequest{PageOptions: sdk.PageOptions{}})
-	if err != nil || len(rows.Templates) != 1 || len(rows.Items) != 0 || !rows.CanEdit {
+	if err != nil || len(rows.Items) != 0 || !rows.CanEdit {
 		t.Fatalf("list %+v %v", rows, err)
 	}
-	preview := rows.Templates[0]
-	if preview.Version != 1 || preview.Prompt != "original" || preview.MaxTurns != 4 || len(preview.Tools) != 0 {
-		t.Fatalf("writing template preview %+v", preview)
+	identity, _ := json.Marshal([]string{"tenant", "project"})
+	owner := fmt.Sprintf("forge-project:%x", sha256.Sum256(identity))
+	createdAgent, err := store.CreateAgent(ctx, owner, "Project writer", template.Draft)
+	if err != nil {
+		t.Fatal(err)
 	}
-	previewJSON, _ := json.Marshal(rows.Templates)
-	if strings.Contains(string(previewJSON), "private-model") ||
-		strings.Contains(string(previewJSON), "PRIVATE_CREDENTIAL") {
-		t.Fatal("template connection leaked")
-	}
-	a, err := dev.CreateAgent(ctx, &sdk.CreateProjectAgentRequest{TemplateID: "writing", Name: "Project writer"})
+	a, err := dev.Agent(ctx, &sdk.GetProjectAgentRequest{ID: createdAgent.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +127,7 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 	if strings.Contains(string(raw), "private-model") || strings.Contains(string(raw), "PRIVATE_CREDENTIAL") {
 		t.Fatal("connection leaked")
 	}
-	_, err = reader.CreateAgent(ctx, &sdk.CreateProjectAgentRequest{TemplateID: "writing", Name: "denied"})
+	_, err = reader.UpdateAgent(ctx, &sdk.UpdateProjectAgentRequest{ID: a.ID, Name: "denied", Revision: a.Revision})
 	assertCode(err, 403)
 	_, err = client(
 		"tenant",
@@ -401,11 +396,11 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 	}
 }
 
-func TestProjectCodingTemplateAndScenario(t *testing.T) { testCodingTemplateAndScenario(t, false) }
+func TestProjectCodingAgentAndScenario(t *testing.T) { testCodingAgentAndScenario(t, false) }
 
-func TestEnterpriseCodingTemplateAndScenario(t *testing.T) { testCodingTemplateAndScenario(t, true) }
+func TestEnterpriseCodingAgentAndScenario(t *testing.T) { testCodingAgentAndScenario(t, true) }
 
-func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
+func testCodingAgentAndScenario(t *testing.T, workspace bool) {
 	store := integrationStore(t)
 	ctx := t.Context()
 	template, err := store.CreateAgent(
@@ -461,12 +456,8 @@ func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
 	}))
 	defer tenant.Close()
 	cfg := platform.Config{
-		TenantURL:     tenant.URL,
-		TenantToken:   strings.Repeat("t", 32),
-		TemplateOwner: "templates",
-		CodingURL:     "http://coding",
-		CodingToken:   strings.Repeat("c", 32),
-		Templates:     []platform.Template{{ID: "coding", Name: "Coding", AgentID: template.ID, Version: 1}},
+		Tenant:    framesdk.Config{Endpoint: tenant.URL, Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: strings.Repeat("t", 32)}},
+		CodingURL: "http://coding",
 	}
 	server := httptest.NewServer(
 		NewPlatformRouter(t, store, nil, []string{"templates"}, map[string]string{testToken: "templates"}, cfg),
@@ -479,31 +470,31 @@ func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, err := client.Agents(ctx, &sdk.ListProjectAgentsRequest{PageOptions: sdk.PageOptions{}})
-	if workspace && err == nil {
-		var tpls *sdk.Page[sdk.ProjectTemplate]
-		tpls, err = client.Templates(ctx, &sdk.ListProjectTemplatesRequest{})
-		if err == nil {
-			list.Templates = tpls.Items
-		}
+	identity, _ := json.Marshal([]string{"tenant", "project"})
+	owner := fmt.Sprintf("forge-project:%x", sha256.Sum256(identity))
+	if workspace {
+		owner = fmt.Sprintf("forge-tenant:%x", sha256.Sum256([]byte("tenant")))
 	}
-	if err != nil || len(list.Templates) != 1 || list.Templates[0].Kind != "Coding" {
-		t.Fatal(list, err)
+	config := template.Draft
+	for i := range config.Tools {
+		config.Tools[i].URL = "http://coding/internal/v1/evaluation-tools/" + config.Tools[i].Name
+		config.Tools[i].TokenEnv = "CODING_TOOLS_TOKEN"
 	}
-	preview := list.Templates[0]
-	if preview.Version != 1 || preview.Prompt != "fix code" || preview.MaxTurns != 10 ||
-		strings.Join(preview.Tools, ",") != "filesystem,finish,run_checks" {
-		t.Fatalf("coding template preview %+v", preview)
+	createdAgent, err := store.CreateAgent(ctx, owner, "project coder", config)
+	if err != nil {
+		t.Fatal(err)
 	}
-	previewJSON, _ := json.Marshal(list.Templates)
-	if strings.Contains(string(previewJSON), "http://") || strings.Contains(string(previewJSON), "TokenEnv") {
-		t.Fatal("coding template connection leaked")
-	}
-	agent, err := client.CreateAgent(
-		ctx, &sdk.CreateProjectAgentRequest{TemplateID: "coding", Name: "project coder"},
-	)
+	agent, err := client.Agent(ctx, &sdk.GetProjectAgentRequest{ID: createdAgent.ID})
 	if err != nil || agent.Kind != "Coding" || len(agent.Tools) != 3 {
 		t.Fatal(agent, err)
+	}
+	list, err := client.Agents(ctx, &sdk.ListProjectAgentsRequest{PageOptions: sdk.PageOptions{}})
+	if err != nil || len(list.Items) != 1 || list.Items[0].Kind != "Coding" {
+		t.Fatal(list, err)
+	}
+	publicJSON, _ := json.Marshal(list.Items)
+	if strings.Contains(string(publicJSON), "http://") || strings.Contains(string(publicJSON), "TokenEnv") {
+		t.Fatal("coding agent connection leaked")
 	}
 	version, err := client.Candidate(ctx, &sdk.PublishProjectAgentRequest{ID: agent.ID, Revision: agent.Revision})
 	if err != nil {
@@ -588,12 +579,7 @@ func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
 		out.Trials[0].Coding.Status != "Preparing" {
 		t.Fatal(out, err)
 	}
-	// The project namespace owns the copied version and its rebound tools.
-	identity, _ := json.Marshal([]string{"tenant", "project"})
-	owner := fmt.Sprintf("forge-project:%x", sha256.Sum256(identity))
-	if workspace {
-		owner = fmt.Sprintf("forge-tenant:%x", sha256.Sum256([]byte("tenant")))
-	}
+	// The resource namespace owns the evaluation version.
 	versions, err := store.AgentVersion(ctx, owner, agent.ID, version.Number)
 	if err != nil {
 		t.Fatal(err)
@@ -644,7 +630,6 @@ func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
 		}
 		return result
 	}
-	callApproval(approvalReq, "missing", 401)
 	callApproval(approvalReq, testToken, 403)
 	releaseLevel.Store(40)
 	callApproval(approvalReq, testToken, 409)

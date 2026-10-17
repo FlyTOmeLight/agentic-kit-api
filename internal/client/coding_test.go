@@ -7,11 +7,33 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	serrors "github.com/FlyTOmeLight/server-go/errors"
+	framesdk "github.com/FlyTOmeLight/server-go/sdk"
 
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
+
+func TestCodingEnvironmentHonorsConfiguredTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(3 * time.Second):
+			w.WriteHeader(http.StatusGatewayTimeout)
+		}
+	}))
+	defer server.Close()
+	client, err := NewCodingEnvironment(framesdk.Config{Endpoint: server.URL, Timeout: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	_, err = client.Advance(context.Background(), "trial", sdk.EvaluationScope{}, sdk.CodingEvaluationScenario{}, "stop")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("configured timeout was lost", err)
+	}
+}
 
 func TestCodingEnvironmentUsesPublishedSDKContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +59,10 @@ func TestCodingEnvironmentUsesPublishedSDKContract(t *testing.T) {
 		)
 	}))
 	defer server.Close()
-	client, err := NewCodingEnvironment(server.URL, "service-token")
+	client, err := NewCodingEnvironment(framesdk.Config{
+		Endpoint:    server.URL,
+		Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: "service-token"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +102,10 @@ func TestCodingEnvironmentUsesPublishedSDKContract(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"code":"EVALUATION_CONFLICT","message":"changed input"}}`))
 	}))
 	defer failed.Close()
-	other, err := NewCodingEnvironment(failed.URL, "service-token")
+	other, err := NewCodingEnvironment(framesdk.Config{
+		Endpoint:    failed.URL,
+		Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: "service-token"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,5 +120,25 @@ func TestCodingEnvironmentUsesPublishedSDKContract(t *testing.T) {
 	var detail *serrors.Error
 	if !errors.As(err, &detail) || detail.Status != 409 || detail.Code != "EVALUATION_CONFLICT" {
 		t.Fatal("Coding error contract lost", err)
+	}
+}
+
+func TestCodingEnvironmentUsesConfiguredProxy(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Host != "coding.invalid" || r.Header.Get("Authorization") != "Bearer token" {
+			t.Error("proxy or credentials configuration was lost")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"Completed","stopped":true}`))
+	}))
+	defer proxy.Close()
+	client, err := NewCodingEnvironment(framesdk.Config{Endpoint: "http://coding.invalid", ProxyURL: proxy.URL, Timeout: 1, Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: "token"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	_, err = client.Advance(context.Background(), "trial", sdk.EvaluationScope{}, sdk.CodingEvaluationScenario{}, "stop")
+	if err != nil {
+		t.Fatal(err)
 	}
 }

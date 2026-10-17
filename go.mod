@@ -4,6 +4,7 @@ go 1.27.1
 
 require (
 	github.com/FlyTOmeLight/forge-coding-api v0.17.0
+	github.com/FlyTOmeLight/forge-tenant-api v0.9.1
 	github.com/FlyTOmeLight/server-go v0.9.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/jackc/pgx/v5 v5.11.0

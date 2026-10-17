@@ -1,8 +1,10 @@
 package service
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"testing"
 
 	serrors "github.com/FlyTOmeLight/server-go/errors"
+	framesdk "github.com/FlyTOmeLight/server-go/sdk"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/platform"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
@@ -64,10 +67,7 @@ func TestEnterpriseAssetsWithoutProjectAndDatasetSnapshots(t *testing.T) {
 	}))
 	defer tenant.Close()
 	cfg := platform.Config{
-		TenantURL:     tenant.URL,
-		TenantToken:   strings.Repeat("t", 32),
-		TemplateOwner: "templates",
-		Templates:     []platform.Template{{ID: "writing", Name: "Writing", AgentID: a.ID, Version: 1}},
+		Tenant: framesdk.Config{Endpoint: tenant.URL, Credentials: &framesdk.Credentials{AuthType: framesdk.AuthTypeAPIKey, APIKey: strings.Repeat("t", 32)}},
 	}
 	server := httptest.NewServer(
 		NewPlatformRouter(t, store, nil, []string{"templates"}, map[string]string{testToken: "templates"}, cfg),
@@ -84,13 +84,12 @@ func TestEnterpriseAssetsWithoutProjectAndDatasetSnapshots(t *testing.T) {
 			t.Fatalf("want %d got %v", want, err)
 		}
 	}
-	templates, err := c.Templates(ctx, &sdk.ListProjectTemplatesRequest{})
-	if err != nil || len(templates.Items) != 1 {
-		t.Fatal(templates, err)
+	owner := fmt.Sprintf("forge-tenant:%x", sha256.Sum256([]byte("tenant")))
+	createdAgent, err := store.CreateAgent(ctx, owner, "Enterprise writer", a.Draft)
+	if err != nil {
+		t.Fatal(err)
 	}
-	agent, err := c.CreateAgent(
-		ctx, &sdk.CreateProjectAgentRequest{TemplateID: "writing", Name: "Enterprise writer"},
-	)
+	agent, err := c.Agent(ctx, &sdk.GetProjectAgentRequest{ID: createdAgent.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

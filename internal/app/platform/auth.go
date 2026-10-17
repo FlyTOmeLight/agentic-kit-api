@@ -4,61 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/url"
-	"strings"
 
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 	core "github.com/FlyTOmeLight/server-go/pkg"
+	framesdk "github.com/FlyTOmeLight/server-go/sdk"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 )
 
-type Template struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	AgentID string `json:"agentID"`
-	Version int64  `json:"version"`
-}
-
 type Config struct {
-	CodingURL     string
-	CodingToken   string
-	TenantURL     string
-	TenantToken   string
-	TemplateOwner string
-	Templates     []Template
-}
-
-func (cfg Config) Validate() error {
-	u, err := url.Parse(cfg.TenantURL)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil ||
-		u.RawQuery != "" ||
-		u.Fragment != "" ||
-		len(cfg.TenantToken) < 32 ||
-		strings.ContainsAny(cfg.TenantToken, "\r\n") ||
-		cfg.TemplateOwner == "" {
-		return errors.New("invalid platform tenant connection or template owner")
-	}
-	if cfg.CodingURL != "" || cfg.CodingToken != "" {
-		cu, e := url.Parse(cfg.CodingURL)
-		if e != nil || cu.Host == "" || (cu.Scheme != "http" && cu.Scheme != "https") || cu.User != nil ||
-			cu.RawQuery != "" ||
-			cu.Fragment != "" ||
-			len(cfg.CodingToken) < 32 ||
-			strings.ContainsAny(cfg.CodingToken, "\r\n") {
-			return errors.New("invalid Coding environment connection")
-		}
-	}
-	seen := map[string]bool{}
-	for _, t := range cfg.Templates {
-		if t.ID == "" || seen[t.ID] || t.Name == "" || t.AgentID == "" || t.Version < 1 {
-			return errors.New("invalid platform template")
-		}
-		seen[t.ID] = true
-	}
-	return nil
+	Tenant    framesdk.Config
+	CodingURL string
 }
 
 type Controller struct {
@@ -174,7 +131,6 @@ func NewController(store Store, business *Service, cfg Config, tenant *client.Te
 func (h *Controller) RegisterRoutes(r core.Router) {
 	register := func(g *core.RouterGroup) {
 		g.GET("/agents", h.agents)
-		g.POST("/agents", h.createAgent)
 		g.GET("/agents/:agent", h.agent)
 		g.PUT("/agents/:agent", h.updateAgent)
 		g.POST("/agents/:agent/candidates", h.candidate)
@@ -201,7 +157,6 @@ func (h *Controller) RegisterRoutes(r core.Router) {
 	register(r.Group("/api/v1/tenants/:tid/projects/:pid", h.authorized))
 	g := r.Group("/api/v1/tenants/:tid", h.authorized)
 	register(g)
-	g.GET("/agent-templates", h.templates)
 	g.GET("/agent-workspace", h.workspace)
 }
 

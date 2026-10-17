@@ -1,7 +1,6 @@
 package service
 
 import (
-	"github.com/FlyTOmeLight/server-go/auth"
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	"github.com/redis/go-redis/v9"
 
@@ -15,7 +14,6 @@ import (
 )
 
 type routes struct {
-	tokens     map[string]string
 	agent      *agent.Controller
 	evaluation *evaluation.Controller
 	session    *session.Controller
@@ -25,18 +23,15 @@ type routes struct {
 
 func newRoutes(
 	store *durable.Store,
-	cache *redis.Client,
-	owners []string,
-	tokens map[string]string,
+	cache redis.UniversalClient,
 	cfg *platform.Config,
 	tenant *client.Tenant,
 ) *routes {
 	r := &routes{
-		tokens:     tokens,
-		agent:      agent.NewController(store, owners),
-		evaluation: evaluation.NewController(store, owners),
+		agent:      agent.NewController(store),
+		evaluation: evaluation.NewController(store),
 		session:    session.NewController(store),
-		run:        run.NewController(store, store, cache, owners),
+		run:        run.NewController(store, store, cache),
 	}
 	if cfg != nil {
 		r.platform = platform.NewController(store, platform.NewService(store, *cfg, tenant), *cfg, tenant)
@@ -48,7 +43,9 @@ func (r *routes) register(router *core.RouterGroup) {
 	if r.platform != nil {
 		r.platform.RegisterRoutes(router)
 	}
-	authenticated := router.Group("", auth.BearerTokens(r.tokens))
+	// Identity and authorization will be supplied by the Forge tenant middleware.
+	// Until it is installed, these routes have no authentication or owner context.
+	authenticated := router.Group("")
 	if r.platform != nil {
 		r.platform.RegisterReleaseRoutes(authenticated)
 	}

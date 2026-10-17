@@ -15,11 +15,10 @@ import (
 
 type Controller struct {
 	service Service
-	owners  []string
 }
 
-func NewController(service Service, owners []string) *Controller {
-	return &Controller{service: service, owners: append([]string(nil), owners...)}
+func NewController(service Service) *Controller {
+	return &Controller{service: service}
 }
 
 // start 启动评测实验。

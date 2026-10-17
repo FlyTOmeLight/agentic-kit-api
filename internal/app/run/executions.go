@@ -24,13 +24,7 @@ type ExecutionService interface {
 var _ ExecutionService = (*durable.Store)(nil)
 
 func (h *Controller) RegisterExecutionRoutes(router core.Router) {
-	group := router.Group("/internal/v1", func(c *core.Context) {
-		if !h.owners[auth.UserID(c)] {
-			serrors.Abort(c, 403, "Forbidden", "trusted application required")
-			return
-		}
-		c.Next()
-	})
+	group := router.Group("/internal/v1")
 	group.GET("/evaluation-trials/:trial/lease", h.codingLease)
 	group.GET("/healthz", h.health)
 	group.POST("/executions", h.submitExecution)

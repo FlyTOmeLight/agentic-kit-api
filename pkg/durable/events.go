@@ -25,7 +25,7 @@ return 1`
 
 func StreamKey(id string) string { return "durable:run:" + id + ":events" }
 
-func (s *Store) PublishOne(ctx context.Context, rdb *redis.Client) (bool, error) {
+func (s *Store) PublishOne(ctx context.Context, rdb redis.UniversalClient) (bool, error) {
 	tx := s.db.WithContext(ctx).Begin()
 	err := tx.Error
 	if err != nil {
@@ -67,7 +67,7 @@ func (s *Store) PublishOne(ctx context.Context, rdb *redis.Client) (bool, error)
 	return true, tx.Commit().Error
 }
 
-func (s *Store) Relay(ctx context.Context, rdb *redis.Client, onError func(error)) {
+func (s *Store) Relay(ctx context.Context, rdb redis.UniversalClient, onError func(error)) {
 	for ctx.Err() == nil {
 		publishCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		sent, err := s.PublishOne(publishCtx, rdb)

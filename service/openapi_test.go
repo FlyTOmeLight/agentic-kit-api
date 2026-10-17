@@ -34,7 +34,7 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := gin.New()
-	newRoutes(nil, nil, nil, map[string]string{}, &platform.Config{}, nil).register(router.Group(""))
+	newRoutes(nil, nil, &platform.Config{}, nil).register(router.Group(""))
 	colon := regexp.MustCompile(`:([A-Za-z0-9_]+)`)
 	documented := map[string]bool{}
 	for _, route := range router.Routes() {

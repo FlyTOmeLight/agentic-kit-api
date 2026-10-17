@@ -108,13 +108,7 @@ func TestSDKEvaluationLifecycleAndAuthorization(t *testing.T) {
 	if err != nil || len(rows.Items) != 1 {
 		t.Fatal(err)
 	}
-	ordinary, _ := sdk.NewClient(server.URL, "ordinary-token-with-24-characters", server.Client())
-	req.IdempotencyKey = "other"
-	_, err = ordinary.Evaluations.Start(ctx, &req)
 	var apiErr *serrors.Error
-	if !errors.As(err, &apiErr) || apiErr.Status != 403 {
-		t.Fatal("ordinary submit", err)
-	}
 	other, _ := sdk.NewClient(server.URL, "other-token-with-24-characters", server.Client())
 	_, err = other.Evaluations.Get(ctx, &sdk.GetEvaluationRequest{ID: out.ID})
 	if !errors.As(err, &apiErr) || apiErr.Status != 404 {

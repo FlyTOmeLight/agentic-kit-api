@@ -226,7 +226,6 @@ gh repo clone FlyTOmeLight/agentic-kit-worker
 ```bash
 docker compose -f deploy/compose.yaml up -d
 cp conf/server/config.toml conf/server/config.local.toml
-export API_TOKENS_JSON='{"replace-with-your-local-token-32chars":"local-user"}'
 go run ./cmd/cli migrate --config conf/server/config.local.toml
 go run ./cmd/server -config conf/server/config.local.toml
 ```
@@ -245,13 +244,15 @@ worker 的配置与工具能力以其 README 为准。它默认使用自己的 g
 
 通过 `-config`、`CONFIG_FILE`、`SERVER_CONFIG_PATH` 依次选择配置路径，未指定时读取 `conf/server/config.toml`。环境变量只通过文件中的 `${env:NAME:default}` 占位符映射；写成普通常量的字段不会被同名环境变量覆盖。默认文件也支持框架的文件和密文占位符。
 
-常用环境变量为 `DATABASE_URL`、`REDIS_URL`、`API_TOKENS_JSON`、`CONFIG_OWNERS` 和 `LISTEN_ADDR`。默认配置只将 `local-user` 列为配置编辑者；变更 token 的 owner 时，同步设置 `CONFIG_OWNERS`。模型和工具凭据属于 worker 环境。
+常用环境变量为 `DATABASE_URL`、`REDIS_ADDR` 和 `LISTEN_ADDR`。模型和工具凭据属于 worker 环境。API 不再维护静态 token 或 config owner 白名单；AK/SK 或 API token 鉴权计划由 forge-tenant-api 提供的 middleware 统一处理。在该 middleware 接入前，本服务不会建立请求身份，不能作为已完成鉴权的服务部署。
+
+Redis 使用 `[Redis]`，类型为 server-go `redis.Config`（即 go-redis `UniversalOptions`），默认 `Addrs` 来自 `REDIS_ADDR`，`DB=0`。连接通过 server-go `redis.NewRedis` 创建；与强制在线的 `redis.Module` 不同，本项目在 Ping 失败时保留客户端重连，允许离线启动并继续从数据库回放事件。
 
 数据库使用 `[DB] Driver="PostgreSQL"` 和 `DSN`；`DB.AutoMigrate` 必须为 false，迁移通过 CLI 显式执行。HTTP 的 `APIBasePath` 保持为空，`WriteTimeout` 为负数以支持长时间 SSE。完整字段和默认值直接查看 [配置文件](conf/server/config.toml)。
 
 `app.Run` 先装配连接和业务对象，再启动 HTTP 与 Outbox/评测后台任务；退出时先排空 HTTP，再停止任务和释放资源。Redis 不可用时仍可启动并回放数据库事件。配置监听支持框架的可动态更新 HTTP 项；连接、业务配置、监听与超时变更需要重启。
 
-`/ping`、`/healthz`、`/version` 无需鉴权；`/healthz` 表示后台任务已启动，不持续探测外部连接。开启 `HTTPServer.SwaggerEnable` 可查看 `/swagger/`。
+`/ping`、`/healthz`、`/version` 无需鉴权；`/healthz` 表示后台任务已启动，不持续探测外部连接。开启 `HTTPServer.SwaggerEnable` 可查看 `/swagger/`。业务接口的身份与权限由未来的 Forge middleware 提供。
 
 ## 调用接口
 
@@ -308,7 +309,7 @@ go run ./cmd/cli eval --suite examples/evaluation/evaluation-writing.example.jso
 
 同一 state 文件由单个进程写入；重跑复用已记录 Trial/Run，套件变化使用新文件。退出码 0 表示门槛通过，2 表示未通过，1 表示配置或执行错误。CLI 处理 single_turn 场景；Coding 场景通过平台持久评测接口使用独立环境。持久实验通过 `Client.Evaluations` 或平台入口提交，评分可在 API 重启后继续，原 Run 不重建。
 
-Forge 入口使用 Tenant 会话、CSRF 和实时项目/企业权限。默认配置的 `PLATFORM_TENANT_*`、`PLATFORM_TEMPLATE_*` 启用受信任模板；Coding 再配置 `PLATFORM_CODING_*`。模板与模型连接由部署管理员维护，项目候选不会自动替换业务执行版本。完整接口见 [Forge 契约](docs/api.md#forge-项目-agent-与评测入口)。
+Forge 入口使用 Tenant 会话、CSRF 和实时项目/企业权限。出站客户端分别配置在 `[Tenant]`、`[Coding]`，字段沿用 server-go `sdk.Config`：`Endpoint`、`ProxyURL`、`Retry`、`Timeout`（秒）和 `Credentials`。Tenant Endpoint 为空时不启用平台入口；Coding 为可选评测依赖。配置文件不再维护模板清单或模板 owner，模板存储与接口后续单独实现。当前正式 SDK 的限制：Tenant 不支持 `ProxyURL`，两个客户端均要求 `Retry=0`，不支持的配置会在启动时返回错误；凭据目前只支持 `api_key`。Tenant.Timeout=0 使用 SDK 默认 15 秒，Coding.Timeout=0 使用 20 秒；Coding 评测调用会按配置的 Timeout 创建请求 context；如果调用方已有更早的截止时间，则以更早的时间为准，SDK 内部的 200 秒上限仍保留。项目候选不会自动替换业务执行版本。完整接口见 [Forge 契约](docs/api.md#forge-项目-agent-与评测入口)。
 
 ## 验证与部署
 

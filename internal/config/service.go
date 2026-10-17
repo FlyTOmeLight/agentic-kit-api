@@ -1,18 +1,16 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"strconv"
 	"strings"
 
-	"github.com/FlyTOmeLight/server-go/auth"
 	"github.com/FlyTOmeLight/server-go/conf"
 	"github.com/FlyTOmeLight/server-go/db"
+	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
+	framesdk "github.com/FlyTOmeLight/server-go/sdk"
 	"github.com/jackc/pgx/v5"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/platform"
 )
@@ -22,22 +20,10 @@ type Service struct {
 	AppCode    int
 	RunMode    string
 	HTTPServer conf.HTTPServerConfig
-	Platform   struct {
-		CodingURL     string `mapstructure:"coding_url"`
-		CodingToken   string `mapstructure:"coding_token"`
-		TenantURL     string `mapstructure:"tenant_url"`
-		TenantToken   string `mapstructure:"tenant_token"`
-		TemplateOwner string `mapstructure:"template_owner"`
-		TemplatesJSON string `mapstructure:"templates_json"`
-	} `mapstructure:"platform"`
-	DB    db.Config
-	Redis struct {
-		URL string `mapstructure:"url"`
-	} `mapstructure:"redis"`
-	Auth struct {
-		ConfigOwners []string `mapstructure:"config_owners"`
-		TokensJSON   string   `mapstructure:"tokens_json"`
-	} `mapstructure:"auth"`
+	Tenant     framesdk.Config
+	Coding     framesdk.Config
+	DB         db.Config
+	Redis      frameworkredis.Config
 }
 
 // Load decodes the framework snapshot used by the server and migration command.
@@ -70,26 +56,23 @@ func (cfg Service) ValidateDatabase() error {
 }
 
 func (cfg Service) ProjectPlatform() (*platform.Config, error) {
-	p := cfg.Platform
-	if p.TenantURL == "" && p.TenantToken == "" && p.TemplateOwner == "" && p.TemplatesJSON == "" &&
-		p.CodingURL == "" &&
-		p.CodingToken == "" {
+	if cfg.Tenant.Endpoint == "" && cfg.Coding.Endpoint == "" {
 		return nil, nil
 	}
-	out := platform.Config{
-		CodingURL:     p.CodingURL,
-		CodingToken:   p.CodingToken,
-		TenantURL:     p.TenantURL,
-		TenantToken:   p.TenantToken,
-		TemplateOwner: p.TemplateOwner,
+	if cfg.Tenant.Endpoint == "" {
+		return nil, errors.New("Tenant.Endpoint is required when Coding is configured")
 	}
-	if err := json.Unmarshal([]byte(p.TemplatesJSON), &out.Templates); err != nil {
-		return nil, errors.New("invalid platform.templates_json")
+	for _, clientConfig := range []framesdk.Config{cfg.Tenant, cfg.Coding} {
+		if clientConfig.Endpoint == "" {
+			continue
+		}
+		c, err := framesdk.NewClientWithConfig(&clientConfig)
+		if err != nil {
+			return nil, err
+		}
+		_ = c.Close()
 	}
-	if err := out.Validate(); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return &platform.Config{Tenant: cfg.Tenant, CodingURL: cfg.Coding.Endpoint}, nil
 }
 
 // ValidateAPI checks settings that the migration command does not need.
@@ -110,14 +93,13 @@ func (cfg Service) ValidateAPI() error {
 	if err != nil || portErr != nil || number < 0 || number > 65535 {
 		return errors.New("invalid HTTPServer.Listen")
 	}
-	if cfg.Redis.URL == "" {
-		return errors.New("redis.url is required")
+	if len(cfg.Redis.Addrs) == 0 {
+		return errors.New("Redis.Addrs is required")
 	}
-	if _, err := redis.ParseURL(cfg.Redis.URL); err != nil {
-		return errors.New("invalid redis.url")
-	}
-	if _, err := auth.ParseBearerTokens(cfg.Auth.TokensJSON); err != nil {
-		return fmt.Errorf("invalid auth.tokens_json: %w", err)
+	for _, addr := range cfg.Redis.Addrs {
+		if strings.TrimSpace(addr) == "" {
+			return errors.New("Redis.Addrs must not contain empty addresses")
+		}
 	}
 	return nil
 }

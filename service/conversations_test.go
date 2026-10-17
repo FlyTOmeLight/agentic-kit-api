@@ -121,7 +121,7 @@ func TestAgentEditingAndPersistentSessions(t *testing.T) {
 	)
 }
 
-func TestConfigurationPermissionAndInputValidation(t *testing.T) {
+func TestConfigurationInputValidation(t *testing.T) {
 	store := integrationStore(t)
 	router := NewRouter(
 		t,
@@ -129,12 +129,6 @@ func TestConfigurationPermissionAndInputValidation(t *testing.T) {
 		nil,
 		[]string{"owner"},
 		map[string]string{testToken: "owner", "reader-token-with-24-characters": "reader"},
-	)
-	assertError(
-		t,
-		request(router, "POST", "/v1/agents", `{}`, "reader-token-with-24-characters", ""),
-		403,
-		"Forbidden",
 	)
 	for _, tc := range []struct{ method, path, body, code string }{
 		{method: "POST", path: "/v1/agents", body: `{"name":"agent","config":{"maxTurns":5}}`, code: "InvalidParameter"},

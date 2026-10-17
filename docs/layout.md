@@ -10,7 +10,7 @@
 - Start 使用框架提供的运行 context，Stop 取消并等待所属任务退出。初始化 context 只用于装配；未交给 Runtime 的部分资源在构造失败时清理。
 - HTTP 先排空，再停止任务，最后关闭资源。Stop 失败或超时后，在任务真正退出前保留依赖。
 - 框架 db.Module 拥有独立应用的数据库连接。durable.New 借用数据库句柄，Store.Close 不关闭借用的池；durable.Open 为独立 worker 创建并拥有连接。
-- API 拥有 Tenant/Coding 客户端，在任务停止后关闭。通知缓存由 Runtime 接管，允许 Redis 不可用时启动和从数据库回放事件；原因及验证见 [资源经验](lessons/resource-and-recovery.md)。
+- API 拥有 Tenant/Coding 客户端，在任务停止后关闭。通知缓存由 Runtime 接管，使用 server-go `redis.Config` 和 `redis.NewRedis`；Ping 失败时保留客户端重连，允许 Redis 不可用时启动和从数据库回放事件；原因及验证见 [资源经验](lessons/resource-and-recovery.md)。
 
 类型化配置与业务校验在 `internal/config`，运行时配置加载由框架完成。HTTP 路径和 SSE 超时限制属于项目契约；配置字段和启动方式以 [默认配置](../conf/server/config.toml) 及 [README](../README.md#配置与启动行为) 为准。
 
@@ -18,7 +18,7 @@
 
 Controller 负责请求绑定、校验、响应和 Swagger，复用 SDK 请求/响应类型。JSON、URI、Query 在同一请求中绑定；Header 使用独立对象再赋值，避免覆盖路径或正文。不要把包含正文、URI 的整个对象再次传给 Header 绑定，见 [来源隔离经验](lessons/server-go-migration.md)。
 
-平台 Service 封装模板副本、权限、数据集冻结、评测及发布门槛，使用 `core.Context` 获取身份和请求信息。其 Store 接口与 Agent、Session、Run、Evaluation 的消费方接口用标准 context 调用共享事务；已有单次事务直接调用，不增加纯转发 Service。领域包不调用其他领域的 Controller。
+平台 Service 封装权限、数据集冻结、评测及发布门槛，使用 `core.Context` 获取身份和请求信息。其 Store 接口与 Agent、Session、Run、Evaluation 的消费方接口用标准 context 调用共享事务；已有单次事务直接调用，不增加纯转发 Service。领域包不调用其他领域的 Controller。
 
 数据库与 SDK 调用使用 `ctx.Request.Context()`；长期任务、durable 和公开 SDK 使用标准 context，不持有会被 HTTP 框架复用的 Context。外部协议和连接适配属于 `internal/client`，不依赖 Controller。
 

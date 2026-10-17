@@ -2,14 +2,11 @@ package service
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	serrors "github.com/FlyTOmeLight/server-go/errors"
 
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
@@ -100,13 +97,6 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 	}
 	lease, e := client.Executions.CheckLease(ctx, &sdk.CheckExecutionLeaseRequest{ID: run.ID, Epoch: claimed.Epoch})
 	if e != nil || !lease.Allowed {
-		t.Fatal(e)
-	}
-	ordinary, _ := sdk.NewClient(server.URL, "ordinary-token-with-24-characters", server.Client())
-	request.IdempotencyKey = "other"
-	_, e = ordinary.Executions.Submit(ctx, &request)
-	var apiErr *serrors.Error
-	if !errors.As(e, &apiErr) || apiErr.Status != 403 {
 		t.Fatal(e)
 	}
 	if e = client.Runs.Cancel(ctx, &sdk.CancelRunRequest{ID: run.ID}); e != nil {

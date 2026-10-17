@@ -16,7 +16,7 @@ import (
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
-// Service owns platform template preparation, evaluation snapshots and release gates.
+// Service owns platform evaluation snapshots and release gates.
 // Store keeps the shared durable contract independent of HTTP requests.
 type Service struct {
 	store  Store
@@ -97,39 +97,6 @@ func (h *Service) validSuite(c *core.Context, s sdk.EvaluationSuite) error {
 		return serrors.NewError(400, "InvalidSuite", err.Error())
 	}
 	return nil
-}
-
-func (h *Service) CreateAgent(c *core.Context, req sdk.CreateProjectAgentRequest) (sdk.ProjectAgent, error) {
-	for _, t := range h.cfg.Templates {
-		if t.ID != req.TemplateID {
-			continue
-		}
-		v, err := h.store.AgentVersion(c.Request.Context(), h.cfg.TemplateOwner, t.AgentID, t.Version)
-		if err != nil {
-			return sdk.ProjectAgent{}, err
-		}
-		if !writing(v.Config) && !(h.cfg.CodingURL != "" && coding(v.Config)) {
-			return sdk.ProjectAgent{}, serrors.NewError(409, "ScenarioUnavailable", "该模板需要独立工具环境，暂未开放项目评测")
-		}
-		if coding(v.Config) {
-			for i := range v.Config.Tools {
-				v.Config.Tools[i].URL = strings.TrimRight(
-					h.cfg.CodingURL,
-					"/",
-				) + "/internal/v1/evaluation-tools/" + v.Config.Tools[i].Name
-				v.Config.Tools[i].TokenEnv = "CODING_TOOLS_TOKEN"
-				if v.Config.Tools[i].Name == "finish" {
-					v.Config.Tools[i].Description = "Submit the candidate summary and end this evaluation run. The platform captures the patch and independently verifies the frozen checks. No branch or merge request is published."
-				}
-			}
-		}
-		a, err := h.store.CreateAgent(c.Request.Context(), c.GetString("projectOwner"), req.Name, v.Config)
-		if err != nil {
-			return sdk.ProjectAgent{}, err
-		}
-		return publicAgent(a), nil
-	}
-	return sdk.ProjectAgent{}, serrors.NewError(400, "InvalidTemplate", "请选择已授权模板")
 }
 
 func (h *Service) UpdateAgent(c *core.Context, req sdk.UpdateProjectAgentRequest) (sdk.ProjectAgent, error) {
@@ -219,11 +186,11 @@ func (h *Service) ApproveCodingRelease(
 	c *core.Context,
 	req sdk.CodingReleaseRequest,
 ) (sdk.CodingReleaseApproval, error) {
-	if auth.UserID(c) != h.cfg.TemplateOwner || h.cfg.CodingURL == "" {
+	if h.cfg.CodingURL == "" {
 		return sdk.CodingReleaseApproval{}, serrors.NewError(
-			403,
-			"Forbidden",
-			"trusted Coding application required",
+			503,
+			"CodingUnavailable",
+			"Coding service is not configured",
 		)
 	}
 	var grant struct {
@@ -371,32 +338,6 @@ func (h *Service) ReadTrial(c *core.Context, req sdk.GetProjectTrialRequest) (*d
 		return nil, durable.ErrNotFound
 	}
 	return run, nil
-}
-
-func (h *Service) Templates(c *core.Context) ([]sdk.ProjectTemplate, error) {
-	out := []sdk.ProjectTemplate{}
-	for _, t := range h.cfg.Templates {
-		v, err := h.store.AgentVersion(c.Request.Context(), h.cfg.TemplateOwner, t.AgentID, t.Version)
-		if err != nil {
-			return nil, serrors.NewError(503, "TemplateUnavailable", "受信任模板暂不可用")
-		}
-		if writing(v.Config) || (h.cfg.CodingURL != "" && coding(v.Config)) {
-			out = append(
-				out,
-				sdk.ProjectTemplate{
-					Kind:     agentKind(v.Config),
-					ID:       t.ID,
-					Name:     t.Name,
-					Model:    v.Config.Model.Name,
-					Version:  t.Version,
-					Prompt:   v.Config.SystemPrompt,
-					MaxTurns: v.Config.MaxTurns,
-					Tools:    configuredTools(v.Config),
-				},
-			)
-		}
-	}
-	return out, nil
 }
 
 func (h *Service) CompareEvaluations(

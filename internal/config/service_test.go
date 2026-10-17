@@ -43,7 +43,7 @@ func writeConfig(t *testing.T, text string) string {
 }
 
 func TestServiceFileAndEnv(t *testing.T) {
-	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "CONFIG_OWNERS", "API_TOKENS_JSON")
+	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_ADDR")
 	path := writeConfig(t, `[DB]
 Driver = "PostgreSQL"
 DSN = "${env:DATABASE_URL:postgres://file:password@localhost/db}"
@@ -51,18 +51,15 @@ DSN = "${env:DATABASE_URL:postgres://file:password@localhost/db}"
 ReadTimeout = 10000
 WriteTimeout = -1
 Listen = "${env:LISTEN_ADDR:127.0.0.1:9000}"
-[redis]
-url = "redis://localhost:6379/0"
-[auth]
-tokens_json = '{"123456789012345678901234":"owner"}'
-config_owners = "${env:CONFIG_OWNERS:owner}"
+[Redis]
+Addrs = ["localhost:6379"]
+DB = 0
 `)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.HTTPServer.Listen != "127.0.0.1:9000" || len(cfg.Auth.ConfigOwners) != 1 ||
-		cfg.Auth.ConfigOwners[0] != "owner" {
+	if cfg.HTTPServer.Listen != "127.0.0.1:9000" {
 		t.Fatalf("file settings not loaded")
 	}
 	if err := cfg.ValidateAPI(); err != nil {
@@ -70,13 +67,9 @@ config_owners = "${env:CONFIG_OWNERS:owner}"
 	}
 	t.Setenv("DATABASE_URL", "postgres://env:password@localhost/db")
 	t.Setenv("LISTEN_ADDR", "127.0.0.1:9100")
-	t.Setenv("CONFIG_OWNERS", "owner,another")
 	cfg, err = Load(path)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(cfg.Auth.ConfigOwners) != 2 || cfg.Auth.ConfigOwners[1] != "another" {
-		t.Fatal("CONFIG_OWNERS not decoded")
 	}
 	if cfg.DB.DSN != os.Getenv("DATABASE_URL") || cfg.HTTPServer.Listen != "127.0.0.1:9100" {
 		t.Fatal("environment did not override file")
@@ -89,7 +82,7 @@ func TestServiceConfigFailures(t *testing.T) {
 		{name: "missing database", content: "[HTTPServer]\nListen='localhost:8000'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "CONFIG_OWNERS", "API_TOKENS_JSON")
+			clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_ADDR")
 			if _, err := Load(writeConfig(t, tc.content)); err == nil {
 				t.Fatal("expected configuration error")
 			}
@@ -98,7 +91,7 @@ func TestServiceConfigFailures(t *testing.T) {
 }
 
 func TestMigrationEnvironmentOnly(t *testing.T) {
-	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "CONFIG_OWNERS", "API_TOKENS_JSON")
+	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_ADDR")
 	t.Setenv("DATABASE_URL", "postgres://localhost/db")
 	t.Setenv(
 		"SERVER_CONFIG_PATH",
@@ -125,22 +118,20 @@ func TestMigrationEnvironmentOnly(t *testing.T) {
 func TestProjectPlatformConfiguration(t *testing.T) {
 	var cfg Service
 	if got, err := cfg.ProjectPlatform(); err != nil || got != nil {
-		t.Fatal("disabled platform", got, err)
-	}
-	cfg.Platform.TenantURL = "http://tenant"
-	if _, err := cfg.ProjectPlatform(); err == nil {
-		t.Fatal("partial platform config accepted")
-	}
-	cfg.Platform.TenantToken = "01234567890123456789012345678901"
-	cfg.Platform.TemplateOwner = "templates"
-	cfg.Platform.TemplatesJSON = `[{"id":"writing","name":"Writing","agentID":"template","version":1}]`
-	got, err := cfg.ProjectPlatform()
-	if err != nil || len(got.Templates) != 1 {
 		t.Fatal(got, err)
 	}
-	cfg.Platform.TenantURL = "https://user:password@tenant"
+	cfg.Coding.Endpoint = "http://coding"
 	if _, err := cfg.ProjectPlatform(); err == nil {
-		t.Fatal("URL credentials accepted")
+		t.Fatal("Coding without Tenant accepted")
+	}
+	cfg.Tenant.Endpoint = "http://tenant"
+	got, err := cfg.ProjectPlatform()
+	if err != nil || got.CodingURL != cfg.Coding.Endpoint {
+		t.Fatal(got, err)
+	}
+	cfg.Tenant.Endpoint = ":bad"
+	if _, err := cfg.ProjectPlatform(); err == nil {
+		t.Fatal("invalid endpoint accepted")
 	}
 }
 
@@ -151,14 +142,10 @@ func TestFrameworkSnapshot(t *testing.T) {
 		"GIN_MODE",
 		"DATABASE_URL",
 		"LISTEN_ADDR",
-		"REDIS_URL",
-		"CONFIG_OWNERS",
-		"API_TOKENS_JSON",
+		"REDIS_ADDR",
 	)
-	t.Setenv("CONFIG_OWNERS", "owner,another")
 	t.Setenv("LISTEN_ADDR", "127.0.0.1:9100")
 	t.Setenv("DATABASE_URL", "postgres://localhost/db")
-	t.Setenv("API_TOKENS_JSON", `{"123456789012345678901234":"owner"}`)
 	path := writeConfig(t, `[HTTPServer]
 ReadTimeout = 10000
 WriteTimeout = -1
@@ -166,13 +153,11 @@ Listen = "${env:LISTEN_ADDR:127.0.0.1:9000}"
 [DB]
 Driver = "PostgreSQL"
 DSN = "${env:DATABASE_URL}"
-[auth]
-config_owners = "${env:CONFIG_OWNERS:}"
-tokens_json = "${env:API_TOKENS_JSON:}"
-[redis]
-url = "${env:TEST_CONFIG_REDIS}"
+[Redis]
+Addrs = ["${env:TEST_CONFIG_REDIS_ADDR}"]
+DB = 0
 `)
-	t.Setenv("TEST_CONFIG_REDIS", "redis://localhost:6379/0")
+	t.Setenv("TEST_CONFIG_REDIS_ADDR", "localhost:6379")
 	t.Setenv("SERVER_CONFIG_PATH", path)
 	cfg, err := Load("")
 	if err != nil {
@@ -192,7 +177,7 @@ url = "${env:TEST_CONFIG_REDIS}"
 		t.Fatalf("application and framework configurations differ")
 	}
 	if snapshot.HTTPServer.Listen != "127.0.0.1:9100" || snapshot.AppName != "agentic-kit-api" ||
-		cfg.Redis.URL != "redis://localhost:6379/0" {
+		len(cfg.Redis.Addrs) != 1 || cfg.Redis.Addrs[0] != "localhost:6379" {
 		t.Fatal("effective configuration was not preserved")
 	}
 	if err := cfg.ValidateAPI(); err != nil {

@@ -2,7 +2,7 @@
 
 Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方式见 [SDK 用法](../sdk/go/agenticv1/README.md)。SDK 不依赖 Gin；服务端负责校验。
 
-下表业务接口要求 `Authorization: Bearer <token>`。身份来自部署配置，不接受客户端指定 owner。所有对象按 owner 隔离；访问其他 owner 的对象返回 404。创建、编辑和发布 Agent 还要求 owner 在 `auth.config_owners` 中，否则返回 403。当前不支持跨 owner 共享 Agent。
+业务接口的身份与权限计划由 forge-tenant-api 提供的 middleware 统一处理。本服务不再维护静态 Bearer token 或 config owner 白名单。middleware 接入后，所有对象按它写入的 owner 隔离；访问其他 owner 的对象返回 404。当前不支持跨 owner 共享 Agent。在 middleware 接入前，本服务没有请求身份，不能视为已完成鉴权。
 
 | 方法和路径 | 用途 | 请求 |
 | --- | --- | --- |
@@ -58,11 +58,11 @@ server-go HTTPHost 提供无需鉴权的 `GET /ping`（200，正文 `pong`）、
 
 错误码包括 Unauthorized、Forbidden、InvalidParameter、PayloadTooLarge、InvalidCursor、APINotFound、NotFound、MethodNotAllowed、Conflict、InternalError。请求体超过 1 MiB 返回 413，未知字段或连续多个 JSON 文档返回 400；URI、Query、Header 与 JSON 在同一请求对象中完成绑定和校验，参数错误统一返回 InvalidParameter（包含消息 after 为负数）；SSE 的复合事件游标格式错误仍返回 InvalidCursor。绑定错误返回框架校验信息，未分类的内部错误不向客户端暴露数据库详情。`statusCode` 是框架错误编号，实际 HTTP 状态以响应状态行为准；`requestId` 用于关联日志。
 
-请求日志只记录方法、路由模板、状态与耗时，不记录 token 或请求体。Recovery 在响应未提交时返回 JSON 500；SSE 已开始后只结束处理，不向事件流追加 JSON 错误。这些行为由 server-go HTTPHost 统一管理；服务凭据采用框架 Bearer 鉴权，Forge 项目权限保留在业务层。SSE 不设整段响应的写入超时，调用方取消与进程退出会结束订阅。SSE 响应头、事件编码、心跳和逐次写入期限由 server-go stream 管理，底层使用 gin-contrib/sse 编码，字段冒号后是否有空格不影响标准 SSE 消费端。
+请求日志只记录方法、路由模板、状态与耗时，不记录 token 或请求体。Recovery 在响应未提交时返回 JSON 500；SSE 已开始后只结束处理，不向事件流追加 JSON 错误。这些行为由 server-go HTTPHost 统一管理；身份鉴权由 Forge middleware 负责，项目权限保留在业务层。SSE 不设整段响应的写入超时，调用方取消与进程退出会结束订阅。SSE 响应头、事件编码、心跳和逐次写入期限由 server-go stream 管理，底层使用 gin-contrib/sse 编码，字段冒号后是否有空格不影响标准 SSE 消费端。
 
 ## 受信任应用执行
 
-`POST /internal/v1/executions` 仅允许 config_owners 身份。请求为：
+`POST /internal/v1/executions` 的服务身份与调用权限由 Forge middleware 校验。请求为：
 
 ```json
 {"spec":{"agentID":"已发布 Agent ID","agentVersion":1,"scope":{"tenantID":"t","projectID":"p","actorID":"u","taskID":"task","roundID":"round"},"query":"本轮要求"},"timeoutSeconds":1800}
@@ -86,7 +86,7 @@ AgentConfig 可设置 `toolsets:["filesystem"]`，并将平台结束工具设为
 
 ## 持久评测实验
 
-以下接口仅供 `config_owners` 中的受信任应用调用。普通 owner 返回 403。浏览器身份、企业和项目授权由应用网关校验；本接口记录 scope，不把 scope 当作授权证明。网关不能向浏览器下发服务令牌，并须核对查询对象的企业、项目与当前用户权限。跨 owner 对象返回 404。
+以下接口的服务身份与调用权限由 Forge middleware 校验。浏览器身份、企业和项目授权由应用网关校验；本接口记录 scope，不把 scope 当作授权证明。网关不能向浏览器下发服务令牌，并须核对查询对象的企业、项目与当前用户权限。跨 owner 对象返回 404。
 
 | 方法和路径 | 用途 | 请求 |
 | --- | --- | --- |
@@ -113,12 +113,11 @@ API 每秒按数据库中的待完成实验重算并保存报告；可运行多�
 
 ## Forge 项目 Agent 与评测入口
 
-配置 `PLATFORM_TENANT_URL`、`PLATFORM_TENANT_TOKEN`、`PLATFORM_TEMPLATE_OWNER`、`PLATFORM_TEMPLATES_JSON` 后，在同一个 API 进程启用 `/api/v1/tenants/:tid/projects/:pid` 路由。浏览器通过同源反向代理访问，使用 `forge_session` Cookie；写请求透传 Origin 和 X-CSRF-Token 到 Tenant `/internal/v1/session/check` 校验。每次请求向 `/internal/v1/access/check` 查询当前项目授权：读至少 20，写至少 30。运行时 Bearer token 不能代替用户会话。
+配置 `[Tenant]` 的 SDK 连接后，在同一个 API 进程启用 `/api/v1/tenants/:tid/projects/:pid` 路由。浏览器通过同源反向代理访问，使用 `forge_session` Cookie；写请求透传 Origin 和 X-CSRF-Token 到 Tenant `/internal/v1/session/check` 校验。每次请求向 `/internal/v1/access/check` 查询当前项目授权：读至少 20，写至少 30。运行时 Bearer token 不能代替用户会话。
 
 | 方法与项目内路径 | 行为 |
 | --- | --- |
-| GET /agents?after=&limit= | 返回项目 Agent、可用受信任模板与 canEdit；稳定 ID 分页 |
-| POST /agents | `{templateID,name}`，复制已批准的不可变模板为项目独立草稿 |
+| GET /agents?after=&limit= | 返回项目 Agent 与 canEdit；稳定 ID 分页 |
 | GET /agents/:id | 读取草稿；仅返回 Prompt、模型名称、轮数、revision、candidateVersion |
 | PUT /agents/:id | `{name,revision,prompt,maxTurns}`；revision 冲突返回 409 |
 | POST /agents/:id/candidates | `{revision}`；冻结当前草稿，重复调用返回同一候选 |
@@ -130,7 +129,7 @@ API 每秒按数据库中的待完成实验重算并保存报告；可运行多�
 | GET /evaluations/:id/compare?baselineID= | 同项目、同套件的配对比较 |
 | GET /evaluations/:id/trials/:trial/trace?after= | 该实验内 Trial 的公开 RunTrace 页 |
 
-模板列表是部署管理员批准的 `{id,name,agentID,version}` 数组，版本固定。用户不能通过这些接口设置连接地址、凭据引用、工具、scope 或 actor。项目 owner 由服务器按 tenantID/projectID 派生，所有查询和变更沿用数据库 owner 隔离。跨项目对象返回 404。项目副本不会出现在模板 owner 的普通会话入口，因此生成候选不会切换已有调用；原独立 `/v1/sessions` 的最新发布版本语义保持原契约。
+配置式模板清单、模板 owner 和按模板创建入口已移除，模板将由独立接口存储和管理，本次不实现。用户不能通过现有项目编辑接口设置连接地址、凭据引用、工具、scope 或 actor。项目 owner 由服务器按 tenantID/projectID 派生，所有查询和变更沿用数据库 owner 隔离。跨项目对象返回 404。
 
 项目入口支持 Writing `single_turn` 与 Coding `coding` 场景。浏览器不能提交 filesystem 连接或凭据。输出检查支持 contains_all、exact、json_valid；Coding 支持 checks_passed。指标聚合为 pass_rate，门槛可配置。案例和规则随实验冻结，可从历史实验复用。Skill/MCP 编辑尚未开放，评测通过不自动启用业务版本。
 
@@ -183,7 +182,6 @@ Coding 试运行使用单条案例的持久评测方案。`/agents/:agent/trials
 The browser workspace is rooted at `/api/v1/tenants/:tid`. It uses the existing Forge session, Origin and CSRF checks, and Tenant's trusted `/internal/v1/workspace/check` endpoint. Active enterprise members can read and edit shared assets without repository grants. Platform operator status alone does not grant membership. Agent data is stored under a server-derived enterprise owner.
 
 - `GET /agent-workspace`: editing permission and currently readable projects (effective level, using the minimum of desired, observed and effective grants).
-- `GET /agent-templates`: trusted, fixed-version template previews; no project required and no connection credentials returned.
 - Agent, candidate, trial, evaluation-plan and evaluation routes have the same suffixes as the historical project API. `sdk.NewWorkspaceClient` addresses this enterprise root.
 - Writing trials and experiments require no project. Execution without a project is restricted to configurations without tools or filesystem bindings.
 - Coding plan save and experiment submission take `projectID` separately from the Agent identity. Writes require project level 30; reads require level 20. List queries filter inaccessible project-bound plans and reports before pagination. Read, cancel, compare and trace recheck access. Overwriting a plan checks its previous environment as well as the new one.

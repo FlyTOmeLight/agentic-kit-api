@@ -23,7 +23,6 @@ type Store interface {
 	SaveEvaluationPlan(context.Context, string, string, sdk.SaveEvaluationPlanRequest) (*sdk.EvaluationPlan, error)
 	EvaluationPlan(context.Context, string, string) (*sdk.EvaluationPlan, error)
 	EvaluationPlans(context.Context, string, string, int) ([]sdk.EvaluationPlan, error)
-	CreateAgent(context.Context, string, string, sdk.AgentConfig) (*sdk.Agent, error)
 	Agent(context.Context, string, string) (*sdk.Agent, error)
 	Agents(context.Context, string, string, int) ([]sdk.Agent, error)
 	UpdateAgent(context.Context, string, string, string, int64, sdk.AgentConfig) (*sdk.Agent, error)

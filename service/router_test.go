@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/FlyTOmeLight/server-go/conf"
+	"github.com/FlyTOmeLight/server-go/constants"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 	"github.com/FlyTOmeLight/server-go/host"
 	"github.com/FlyTOmeLight/server-go/logger"
@@ -38,7 +39,7 @@ func (testRoutes) Stop(context.Context) error { return nil }
 func NewRouter(
 	t *testing.T,
 	store *durable.Store,
-	redisClient *redis.Client,
+	redisClient redis.UniversalClient,
 	configOwners []string,
 	tokens map[string]string,
 ) http.Handler {
@@ -48,7 +49,7 @@ func NewRouter(
 func NewPlatformRouter(
 	t *testing.T,
 	store *durable.Store,
-	redisClient *redis.Client,
+	redisClient redis.UniversalClient,
 	configOwners []string,
 	tokens map[string]string,
 	cfg platform.Config,
@@ -59,8 +60,8 @@ func NewPlatformRouter(
 func newRouter(
 	t *testing.T,
 	store *durable.Store,
-	redisClient *redis.Client,
-	configOwners []string,
+	redisClient redis.UniversalClient,
+	_ []string,
 	tokens map[string]string,
 	cfg *platform.Config,
 	extra func(*gin.RouterGroup),
@@ -82,11 +83,23 @@ func newRouter(
 	t.Cleanup(log.Close)
 	var tenant *client.Tenant
 	if cfg != nil {
-		tenant = client.NewTenant(cfg.TenantURL, cfg.TenantToken)
+		tenant, err = client.NewTenant(cfg.Tenant)
+		if err != nil {
+			t.Fatal(err)
+		}
 		t.Cleanup(tenant.Close)
 	}
-	routes := newRoutes(store, redisClient, configOwners, tokens, cfg, tenant)
+	routes := newRoutes(store, redisClient, cfg, tenant)
 	h, err := host.NewHTTPHost(manager, log, nil, testRoutes{register: func(g *gin.RouterGroup) {
+		// Test double for the future Forge middleware: it only establishes the
+		// identity context and does not authenticate or authorize requests.
+		g.Use(func(c *gin.Context) {
+			token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			if owner := tokens[token]; owner != "" {
+				c.Set(constants.KeyUserID, owner)
+			}
+			c.Next()
+		})
 		routes.register(g)
 		if extra != nil {
 			extra(g)
@@ -129,33 +142,13 @@ func assertError(t *testing.T, w *httptest.ResponseRecorder, status int, code st
 	}
 }
 
-func TestGinAuthenticationAndValidation(t *testing.T) {
+func TestGinValidation(t *testing.T) {
 	router := NewRouter(t, nil, nil, nil, map[string]string{testToken: "owner"})
 	tests := []struct {
 		name, method, path, body, token, key string
 		status                               int
 		code                                 string
 	}{
-		{
-			name:   "no auth",
-			method: "POST",
-			path:   "/v1/sessions/s/messages",
-			body:   `{}`,
-			token:  "",
-			key:    "",
-			status: 401,
-			code:   "Unauthorized",
-		},
-		{
-			name:   "wrong token",
-			method: "GET",
-			path:   "/v1/runs/run",
-			body:   ``,
-			token:  "wrong",
-			key:    "",
-			status: 401,
-			code:   "Unauthorized",
-		},
 		{
 			name:   "required fields",
 			method: "POST",

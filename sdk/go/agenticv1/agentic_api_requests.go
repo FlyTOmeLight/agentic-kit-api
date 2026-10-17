@@ -130,8 +130,6 @@ type CancelProjectTrialRequest struct {
 	ID      string `json:"-" uri:"run" binding:"required,max=128"`
 }
 
-type ListProjectTemplatesRequest struct{}
-
 type ListDatasetsRequest struct {
 	PageOptions
 }

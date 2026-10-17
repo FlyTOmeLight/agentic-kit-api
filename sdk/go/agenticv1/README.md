@@ -95,7 +95,7 @@ func NewConversation(sessions sdk.SessionAPI) *Conversation {
 
 ## 受信任应用执行
 
-`Client.Executions` 提供 Submit 与 CheckLease，使用 SubmitExecutionRequest / ExecutionSpec / Scope。ExecutionSpec 仅包含 agentID、agentVersion、scope 和 query。先通过 Agents 创建并发布定义，再调用 Executions.Submit；同一应用任务跨轮复用 Session。Submit 的幂等键与不可变快照重试语义和服务端一致。仅配置为 config_owners 的服务身份可调用；浏览器用户不得持有此令牌。Run.Scope 记录提交时的业务上下文，不替代每次敏感操作的动态授权。
+`Client.Executions` 提供 Submit 与 CheckLease，使用 SubmitExecutionRequest / ExecutionSpec / Scope。ExecutionSpec 仅包含 agentID、agentVersion、scope 和 query。先通过 Agents 创建并发布定义，再调用 Executions.Submit；同一应用任务跨轮复用 Session。Submit 的幂等键与不可变快照重试语义和服务端一致。服务身份与调用权限由 Forge middleware 校验；浏览器用户不得持有服务凭据。Run.Scope 记录提交时的业务上下文，不替代每次敏感操作的动态授权。
 
 ## 持久实验
 

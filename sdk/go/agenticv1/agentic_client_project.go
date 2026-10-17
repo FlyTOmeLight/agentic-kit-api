@@ -74,10 +74,6 @@ func (c *ProjectClient) Agent(ctx context.Context, req *GetProjectAgentRequest) 
 	return jsonResult[ProjectAgent](ctx, c.transport, "GET", c.path+"/agents/"+url.PathEscape(req.ID), nil, 200)
 }
 
-func (c *ProjectClient) CreateAgent(ctx context.Context, req *CreateProjectAgentRequest) (*ProjectAgent, error) {
-	return jsonResult[ProjectAgent](ctx, c.transport, "POST", c.path+"/agents", req, 201)
-}
-
 func (c *ProjectClient) UpdateAgent(ctx context.Context, req *UpdateProjectAgentRequest) (*ProjectAgent, error) {
 	return jsonResult[ProjectAgent](ctx, c.transport, "PUT", c.path+"/agents/"+url.PathEscape(req.ID), req, 200)
 }
@@ -282,13 +278,6 @@ func (c *ProjectClient) CancelTrial(ctx context.Context, req *CancelProjectTrial
 		204,
 	)
 	return err
-}
-
-func (c *ProjectClient) Templates(
-	ctx context.Context,
-	req *ListProjectTemplatesRequest,
-) (*Page[ProjectTemplate], error) {
-	return jsonResult[Page[ProjectTemplate]](ctx, c.transport, "GET", c.path+"/agent-templates", nil, 200)
 }
 
 func (c *ProjectClient) Datasets(ctx context.Context, req *ListDatasetsRequest) (*Page[Dataset], error) {

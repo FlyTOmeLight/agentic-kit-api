@@ -10,6 +10,8 @@ github.com/ClickHouse/clickhouse-go/v2 v2.49.0 h1:HgiLTraLGgMe8kYivQ6RzMHDUkU/uF
 github.com/ClickHouse/clickhouse-go/v2 v2.49.0/go.mod h1:o8dSgGJGxY7CeWFNiKusF9a5RnLpgzuo7OaNyH0NQPE=
 github.com/FlyTOmeLight/forge-coding-api v0.17.0 h1:VtE1Z/Tx5f2WJ8EmIoces6XBWjIqp7rbiN/d5LMTIeg=
 github.com/FlyTOmeLight/forge-coding-api v0.17.0/go.mod h1:m8OwpH2Wd/jAAzVBwRnXFZxUGliq8ZRJJ5G/ozr650I=
+github.com/FlyTOmeLight/forge-tenant-api v0.9.1 h1:Xh5M8MummaRYDcoXW7/TAZFXF/Zjt2OavwSRpYKFpY4=
+github.com/FlyTOmeLight/forge-tenant-api v0.9.1/go.mod h1:xHOWoU3hjVl6ObCZVGtECpEPw4WxO4ibA21DllWsq3k=
 github.com/FlyTOmeLight/server-go v0.9.0 h1:2MbCqCVfAsI9/9CJM1kwncYXPd8RGKLY4/NUklbThPY=
 github.com/FlyTOmeLight/server-go v0.9.0/go.mod h1:hDKnT8vYvKQ9R8VYiIL7VCG55QIvUmJRWLVCzxDPNi0=
 github.com/HuaweiCloudDeveloper/gaussdb-go v1.0.0-rc1 h1:OIZ83SgbK0ImF/vKFSfNoCAQWQySx5sYhj0RgsWbMbA=

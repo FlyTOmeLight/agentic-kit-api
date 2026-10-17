@@ -1,7 +1,6 @@
 package platform
 
 import (
-	"github.com/FlyTOmeLight/server-go/auth"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
@@ -32,13 +31,9 @@ func (h *Controller) RegisterReleaseRoutes(r core.Router) {
 // @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
 // @Failure 413 {object} serrors.Error "请求体超过限制"
 // @Failure 500 {object} serrors.Error "内部错误"
-// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Failure 503 {object} serrors.Error "身份或权限依赖暂不可用"
 // @Router /internal/v1/coding-release-approval [post]
 func (h *Controller) approveCodingRelease(c *core.Context) {
-	if auth.UserID(c) != h.cfg.TemplateOwner || h.cfg.CodingURL == "" {
-		serrors.Abort(c, 403, "Forbidden", "trusted Coding application required")
-		return
-	}
 	var req sdk.CodingReleaseRequest
 	if err := binder.Bind(c, &req).All().Error(); err != nil {
 		serrors.AbortWithError(c, err)

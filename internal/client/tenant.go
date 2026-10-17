@@ -1,63 +1,72 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
-	"net/http"
-	"strings"
+	"errors"
 	"time"
+
+	"github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1"
+	framesdk "github.com/FlyTOmeLight/server-go/sdk"
 )
 
-// Tenant owns the transport for Forge session and authorization checks.
-type Tenant struct {
-	endpoint, token string
-	http            *http.Client
-}
+// Tenant adapts platform authorization checks to the published Tenant SDK.
+type Tenant struct{ client *tenantv1.Client }
 
-func NewTenant(endpoint, token string) *Tenant {
-	return &Tenant{
-		endpoint: strings.TrimRight(endpoint, "/"),
-		token:    token,
-		http: &http.Client{
-			Transport:     http.DefaultTransport.(*http.Transport).Clone(),
-			Timeout:       10 * time.Second,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
+func NewTenant(config framesdk.Config) (*Tenant, error) {
+	if config.ProxyURL != "" {
+		return nil, errors.New("published Tenant SDK does not support ProxyURL configuration")
 	}
+	token, err := serviceToken(config)
+	if err != nil {
+		return nil, err
+	}
+	c, err := tenantv1.New(tenantv1.Config{Endpoint: config.Endpoint, ServiceToken: token, Timeout: time.Duration(config.Timeout) * time.Second})
+	if err != nil {
+		return nil, err
+	}
+	return &Tenant{client: c}, nil
 }
 
-func (t *Tenant) Close() { t.http.CloseIdleConnections() }
+func (t *Tenant) Close() { _ = t.client.Close() }
 
 func (t *Tenant) Check(ctx context.Context, path string, body, out any) int {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return 503
 	}
-	req, err := http.NewRequestWithContext(
-		ctx,
-		"POST",
-		strings.TrimRight(t.endpoint, "/")+path,
-		bytes.NewReader(raw),
-	)
-	if err != nil {
+	var result any
+	switch path {
+	case "/internal/v1/session/check":
+		var request tenantv1.CheckSessionRequest
+		if json.Unmarshal(raw, &request) != nil {
+			return 503
+		}
+		result, err = t.client.CheckSession(ctx, &request)
+	case "/internal/v1/access/check":
+		var request tenantv1.CheckAccessRequest
+		if json.Unmarshal(raw, &request) != nil {
+			return 503
+		}
+		result, err = t.client.CheckAccess(ctx, &request)
+	case "/internal/v1/workspace/check":
+		var request tenantv1.CheckWorkspaceRequest
+		if json.Unmarshal(raw, &request) != nil {
+			return 503
+		}
+		result, err = t.client.CheckWorkspace(ctx, &request)
+	default:
 		return 503
 	}
-	req.Header.Set("Authorization", "Bearer "+t.token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := t.http.Do(req)
 	if err != nil {
-		return 503
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 404 {
-			return resp.StatusCode
+		var detail *tenantv1.Error
+		if errors.As(err, &detail) && (detail.Status == 401 || detail.Status == 403 || detail.Status == 404) {
+			return detail.Status
 		}
 		return 503
 	}
-	if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(out) != nil {
+	raw, err = json.Marshal(result)
+	if err != nil || json.Unmarshal(raw, out) != nil {
 		return 503
 	}
 	return 200
