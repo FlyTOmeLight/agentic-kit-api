@@ -24,6 +24,9 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: [/server]
           envFrom: [{secretRef: {name: {{ required "existingSecret required" .Values.existingSecret }}}}]
+          env:
+            - name: LISTEN_ADDR
+              value: ":8080"
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
           resources:
             requests: {cpu: 50m, memory: 96Mi}

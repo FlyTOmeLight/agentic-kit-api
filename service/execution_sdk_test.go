@@ -50,8 +50,7 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 		t.Fatalf("inline Agent definition accepted: %d", legacyResponse.StatusCode)
 	}
 	agent, e := client.Agents.Create(
-		ctx,
-		sdk.CreateAgentRequest{
+		ctx, &sdk.CreateAgentRequest{
 			Name: "Coding",
 			Config: sdk.AgentConfig{
 				Model:    sdk.ModelSpec{Name: "model", BaseURL: "http://model.test/v1"},
@@ -62,7 +61,7 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	version, e := client.Agents.Publish(ctx, agent.ID, sdk.PublishAgentRequest{Revision: agent.Revision})
+	version, e := client.Agents.Publish(ctx, &sdk.PublishAgentRequest{ID: agent.ID, Revision: agent.Revision})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -81,11 +80,17 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 		},
 		TimeoutSeconds: 60,
 	}
-	run, created, e := client.Executions.Submit(ctx, "round", request)
+	request.IdempotencyKey = "round"
+	run, e := client.Executions.Submit(ctx, &request)
+	created := run != nil && run.Created
+
 	if e != nil || !created || run.Scope.TenantID != "tenant" {
 		t.Fatal(e)
 	}
-	again, created, e := client.Executions.Submit(ctx, "round", request)
+	request.IdempotencyKey = "round"
+	again, e := client.Executions.Submit(ctx, &request)
+	created = again != nil && again.Created
+
 	if e != nil || created || again.ID != run.ID {
 		t.Fatal(e)
 	}
@@ -93,20 +98,21 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	lease, e := client.Executions.CheckLease(ctx, run.ID, claimed.Epoch)
+	lease, e := client.Executions.CheckLease(ctx, &sdk.CheckExecutionLeaseRequest{ID: run.ID, Epoch: claimed.Epoch})
 	if e != nil || !lease.Allowed {
 		t.Fatal(e)
 	}
 	ordinary, _ := sdk.NewClient(server.URL, "ordinary-token-with-24-characters", server.Client())
-	_, _, e = ordinary.Executions.Submit(ctx, "other", request)
+	request.IdempotencyKey = "other"
+	_, e = ordinary.Executions.Submit(ctx, &request)
 	var apiErr *serrors.Error
 	if !errors.As(e, &apiErr) || apiErr.Status != 403 {
 		t.Fatal(e)
 	}
-	if e = client.Runs.Cancel(ctx, run.ID); e != nil {
+	if e = client.Runs.Cancel(ctx, &sdk.CancelRunRequest{ID: run.ID}); e != nil {
 		t.Fatal(e)
 	}
-	lease, e = client.Executions.CheckLease(ctx, run.ID, claimed.Epoch)
+	lease, e = client.Executions.CheckLease(ctx, &sdk.CheckExecutionLeaseRequest{ID: run.ID, Epoch: claimed.Epoch})
 	if e != nil || lease.Allowed {
 		t.Fatal(e)
 	}

@@ -21,20 +21,23 @@ type SessionMessage struct {
 }
 
 type CreateSessionRequest struct {
-	AgentID string `json:"agentID"`
-	Title   string `json:"title,omitempty"`
+	AgentID string `json:"agentID" binding:"required,max=128"`
+	Title   string `json:"title,omitempty" binding:"max=200"`
 }
 
 type SendMessageRequest struct {
-	Query string `json:"query"`
+	SessionID      string `json:"-" uri:"id" binding:"required,max=128"`
+	IdempotencyKey string `json:"-" form:"-" uri:"-" header:"Idempotency-Key" binding:"omitempty,max=128"`
+
+	Query string `json:"query" binding:"required"`
 }
 
 type ListSessionsOptions struct {
 	PageOptions
-	AgentID string
+	AgentID string `json:"-" form:"agentID"`
 }
 
 type ListMessagesOptions struct {
-	After int64
-	Limit int
+	After int64 `json:"-" form:"after,default=0" binding:"min=0"`
+	Limit int   `json:"-" form:"limit,default=50" binding:"min=1,max=200"`
 }

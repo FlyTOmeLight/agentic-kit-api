@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	frameworkdb "github.com/FlyTOmeLight/server-go/db"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -12,8 +13,12 @@ import (
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
-// Store owns one GORM database handle and its database/sql connection pool.
-type Store struct{ db *gorm.DB }
+// Store executes durable transactions. Open owns its pool; New borrows a
+// database whose lifetime is managed by the caller.
+type Store struct {
+	db    *gorm.DB
+	owned bool
+}
 
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
@@ -37,10 +42,35 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		_ = pool.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, owned: true}, nil
 }
 
-func (s *Store) Close() { pool, _ := s.db.DB(); _ = pool.Close() }
+// New uses an injected framework database; the caller owns its connection pool.
+func New(database *frameworkdb.DB) (*Store, error) {
+	if database == nil {
+		return nil, errors.New("durable store requires a database")
+	}
+	handle := database.Session(
+		&gorm.Session{
+			Logger:  database.Logger.LogMode(logger.Silent),
+			NowFunc: func() time.Time { return time.Now().UTC() },
+		},
+	)
+	// Durable transactions use PostgreSQL error translation for uniqueness conflicts.
+	// The framework's cross-database dialector does not expose ErrorTranslator.
+	if dialect, ok := handle.Dialector.(*frameworkdb.AIBaseDialector); ok {
+		handle.Config.Dialector = dialect.GetDialector()
+	}
+	handle.Config.TranslateError = true
+	return &Store{db: handle}, nil
+}
+
+func (s *Store) Close() {
+	if s.owned {
+		pool, _ := s.db.DB()
+		_ = pool.Close()
+	}
+}
 
 func (s *Store) Migrate(ctx context.Context) error {
 	// Serialize schema changes across concurrently started migration commands.

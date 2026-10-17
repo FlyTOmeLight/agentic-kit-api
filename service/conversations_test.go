@@ -142,7 +142,7 @@ func TestConfigurationPermissionAndInputValidation(t *testing.T) {
 		{method: "POST", path: "/v1/sessions/s/messages", body: `{"query":"hello","agentID":"other"}`, code: "InvalidParameter"},
 		{method: "GET", path: "/v1/agents?limit=0", body: "", code: "InvalidParameter"},
 		{method: "GET", path: "/v1/sessions?limit=101", body: "", code: "InvalidParameter"},
-		{method: "GET", path: "/v1/sessions/s/messages?after=-1", body: "", code: "InvalidCursor"},
+		{method: "GET", path: "/v1/sessions/s/messages?after=-1", body: "", code: "InvalidParameter"},
 		{method: "GET", path: "/v1/agents/a/versions/bad", body: "", code: "InvalidParameter"},
 	} {
 		t.Run(tc.path+tc.body, func(t *testing.T) {

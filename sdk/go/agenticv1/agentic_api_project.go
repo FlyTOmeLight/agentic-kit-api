@@ -42,18 +42,22 @@ type ProjectAgentList struct {
 }
 
 type CreateProjectAgentRequest struct {
-	TemplateID string `json:"templateID"`
-	Name       string `json:"name"`
+	TemplateID string `json:"templateID" binding:"required"`
+	Name       string `json:"name" binding:"required,max=200"`
 }
 
 type UpdateProjectAgentRequest struct {
-	Name     string `json:"name"`
-	Revision int64  `json:"revision"`
+	ID string `json:"-" uri:"agent" binding:"required,max=128"`
+
+	Name     string `json:"name" binding:"required,max=200"`
+	Revision int64  `json:"revision" binding:"min=1"`
 	Prompt   string `json:"prompt"`
 	MaxTurns int    `json:"maxTurns"`
 }
 
 type StartProjectEvaluationRequest struct {
+	IdempotencyKey string `json:"-" form:"-" uri:"-" header:"Idempotency-Key" binding:"omitempty,max=128"`
+
 	ProjectID string          `json:"projectID,omitempty"`
 	Suite     EvaluationSuite `json:"suite"`
 }
@@ -68,15 +72,20 @@ type EvaluationPlan struct {
 }
 
 type SaveEvaluationPlanRequest struct {
+	ID string `json:"-" uri:"plan" binding:"required,max=128"`
+
 	ProjectID string          `json:"projectID,omitempty"`
-	Revision  int64           `json:"revision"`
+	Revision  int64           `json:"revision" binding:"min=0"`
 	Suite     EvaluationSuite `json:"suite"`
 }
 
 type StartProjectTrialRequest struct {
-	AgentVersion   int64  `json:"agentVersion"`
-	Input          string `json:"input"`
-	TimeoutSeconds int    `json:"timeoutSeconds"`
+	AgentID        string `json:"-" uri:"agent" binding:"required,max=128"`
+	IdempotencyKey string `json:"-" form:"-" uri:"-" header:"Idempotency-Key" binding:"omitempty,max=100"`
+
+	AgentVersion   int64  `json:"agentVersion" binding:"min=1"`
+	Input          string `json:"input" binding:"required"`
+	TimeoutSeconds int    `json:"timeoutSeconds" binding:"min=1,max=3600"`
 }
 
 type ProjectTrial struct {
@@ -86,12 +95,12 @@ type ProjectTrial struct {
 
 // CodingReleaseRequest is sent only by the trusted Coding service.
 type CodingReleaseRequest struct {
-	TenantID     string `json:"tenantID"`
-	ProjectID    string `json:"projectID"`
-	ActorID      string `json:"actorID"`
-	ExperimentID string `json:"experimentID"`
-	AgentID      string `json:"agentID"`
-	AgentVersion int64  `json:"agentVersion"`
+	TenantID     string `json:"tenantID" binding:"required"`
+	ProjectID    string `json:"projectID" binding:"required"`
+	ActorID      string `json:"actorID" binding:"required"`
+	ExperimentID string `json:"experimentID" binding:"required"`
+	AgentID      string `json:"agentID" binding:"required"`
+	AgentVersion int64  `json:"agentVersion" binding:"min=1"`
 }
 
 type CodingReleaseApproval struct {

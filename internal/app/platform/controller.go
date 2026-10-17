@@ -1,18 +1,13 @@
 package platform
 
 import (
-	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 
 	serrors "github.com/FlyTOmeLight/server-go/errors"
+	core "github.com/FlyTOmeLight/server-go/pkg"
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
-	"github.com/gin-gonic/gin"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
-	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
-	"github.com/FlyTOmeLight/agentic-kit-api/pkg/evaluation"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -66,13 +61,30 @@ func coding(c sdk.AgentConfig) bool {
 
 func writing(c sdk.AgentConfig) bool { return len(c.Tools) == 0 && len(c.Toolsets) == 0 }
 
-func (h *controller) agents(c *gin.Context) {
-	limit, ok := binder.QueryLimit(c, 50, 100)
-	after := c.Query("after")
-	if !ok {
+// agents 列出企业 Agent。
+// @Summary 列出企业 Agent
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Param limit query int false "每页数量" default(50) minimum(1) maximum(100)
+// @Param after query string false "上一页末项游标"
+// @Success 200 {object} agenticv1.ProjectAgentList "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/agents [get]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/agents [get]
+func (h *Controller) agents(c *core.Context) {
+	var page sdk.PageOptions
+	if err := binder.Bind(c, &page).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	items, err := h.service.Agents(c.Request.Context(), c.GetString("projectOwner"), after, limit)
+	items, err := h.store.Agents(c.Request.Context(), c.GetString("projectOwner"), page.After, page.Limit)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
@@ -96,82 +108,94 @@ func (h *controller) agents(c *gin.Context) {
 	c.JSON(200, out)
 }
 
-func (h *controller) templateList(c *gin.Context) ([]sdk.ProjectTemplate, bool) {
-	out := sdk.ProjectAgentList{Templates: []sdk.ProjectTemplate{}}
-	for _, t := range h.cfg.Templates {
-		v, err := h.service.AgentVersion(c.Request.Context(), h.cfg.TemplateOwner, t.AgentID, t.Version)
-		if err != nil {
-			serrors.Abort(c, 503, "TemplateUnavailable", "受信任模板暂不可用")
-			return nil, false
-		}
-		if writing(v.Config) || (h.cfg.CodingURL != "" && coding(v.Config)) {
-			out.Templates = append(
-				out.Templates,
-				sdk.ProjectTemplate{
-					Kind:     agentKind(v.Config),
-					ID:       t.ID,
-					Name:     t.Name,
-					Model:    v.Config.Model.Name,
-					Version:  t.Version,
-					Prompt:   v.Config.SystemPrompt,
-					MaxTurns: v.Config.MaxTurns,
-					Tools:    configuredTools(v.Config),
-				},
-			)
-		}
+func (h *Controller) templateList(c *core.Context) ([]sdk.ProjectTemplate, bool) {
+	templates, err := h.business.Templates(c)
+	if err != nil {
+		apperror.Respond(c, err)
+		return nil, false
 	}
-	return out.Templates, true
+	return templates, true
 }
 
-func (h *controller) templates(c *gin.Context) {
+// templates 列出受信任 Agent 模板。
+// @Summary 列出受信任 Agent 模板
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Success 200 {object} agenticv1.Page[agenticv1.ProjectTemplate] "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/agent-templates [get]
+func (h *Controller) templates(c *core.Context) {
 	if items, ok := h.templateList(c); ok {
 		c.JSON(200, sdk.Page[sdk.ProjectTemplate]{Items: items})
 	}
 }
 
-func (h *controller) createAgent(c *gin.Context) {
+// createAgent 从模板创建 Agent。
+// @Summary 从模板创建 Agent
+// @Tags Platform
+// @Accept json
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param X-CSRF-Token header string true "会话 CSRF 标识"
+// @Param tid path string true "tid"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Param request body agenticv1.CreateProjectAgentRequest true "JSON 请求"
+// @Success 201 {object} agenticv1.ProjectAgent "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
+// @Failure 413 {object} serrors.Error "请求体超过限制"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/agents [post]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/agents [post]
+func (h *Controller) createAgent(c *core.Context) {
 	var req sdk.CreateProjectAgentRequest
-	if !binder.BindJSON(c, &req) {
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	for _, t := range h.cfg.Templates {
-		if t.ID != req.TemplateID {
-			continue
-		}
-		v, err := h.service.AgentVersion(c.Request.Context(), h.cfg.TemplateOwner, t.AgentID, t.Version)
-		if err != nil {
-			apperror.Respond(c, err)
-			return
-		}
-		if !writing(v.Config) && !(h.cfg.CodingURL != "" && coding(v.Config)) {
-			serrors.Abort(c, 409, "ScenarioUnavailable", "该模板需要独立工具环境，暂未开放项目评测")
-			return
-		}
-		if coding(v.Config) {
-			for i := range v.Config.Tools {
-				v.Config.Tools[i].URL = strings.TrimRight(
-					h.cfg.CodingURL,
-					"/",
-				) + "/internal/v1/evaluation-tools/" + v.Config.Tools[i].Name
-				v.Config.Tools[i].TokenEnv = "CODING_TOOLS_TOKEN"
-				if v.Config.Tools[i].Name == "finish" {
-					v.Config.Tools[i].Description = "Submit the candidate summary and end this evaluation run. The platform captures the patch and independently verifies the frozen checks. No branch or merge request is published."
-				}
-			}
-		}
-		a, err := h.service.CreateAgent(c.Request.Context(), c.GetString("projectOwner"), req.Name, v.Config)
-		if err != nil {
-			apperror.Respond(c, err)
-			return
-		}
-		c.JSON(201, publicAgent(a))
+
+	out, err := h.business.CreateAgent(c, req)
+	if err != nil {
+		apperror.Respond(c, err)
 		return
 	}
-	serrors.Abort(c, 400, "InvalidTemplate", "请选择已授权模板")
+	c.JSON(201, out)
 }
 
-func (h *controller) agent(c *gin.Context) {
-	a, err := h.service.Agent(c.Request.Context(), c.GetString("projectOwner"), c.Param("agent"))
+// agent 查询企业 Agent。
+// @Summary 查询企业 Agent
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Param agent path string true "agent"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Success 200 {object} agenticv1.ProjectAgent "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/agents/{agent} [get]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/agents/{agent} [get]
+func (h *Controller) agent(c *core.Context) {
+	var req sdk.GetProjectAgentRequest
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
+		return
+	}
+	a, err := h.store.Agent(c.Request.Context(), c.GetString("projectOwner"), req.ID)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
@@ -179,42 +203,75 @@ func (h *controller) agent(c *gin.Context) {
 	c.JSON(200, publicAgent(a))
 }
 
-func (h *controller) updateAgent(c *gin.Context) {
+// updateAgent 更新企业 Agent 草稿。
+// @Summary 更新企业 Agent 草稿
+// @Tags Platform
+// @Accept json
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param X-CSRF-Token header string true "会话 CSRF 标识"
+// @Param tid path string true "tid"
+// @Param agent path string true "agent"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Param request body agenticv1.UpdateProjectAgentRequest true "JSON 请求"
+// @Success 200 {object} agenticv1.ProjectAgent "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
+// @Failure 413 {object} serrors.Error "请求体超过限制"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/agents/{agent} [put]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/agents/{agent} [put]
+func (h *Controller) updateAgent(c *core.Context) {
 	var req sdk.UpdateProjectAgentRequest
-	if !binder.BindJSON(c, &req) {
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	a, err := h.service.Agent(c.Request.Context(), c.GetString("projectOwner"), c.Param("agent"))
+
+	out, err := h.business.UpdateAgent(c, req)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
 	}
-	a.Draft.SystemPrompt = req.Prompt
-	a.Draft.MaxTurns = req.MaxTurns
-	updated, err := h.service.UpdateAgent(
-		c.Request.Context(),
-		c.GetString("projectOwner"),
-		a.ID,
-		req.Name,
-		req.Revision,
-		a.Draft,
-	)
-	if err != nil {
-		apperror.Respond(c, err)
-		return
-	}
-	c.JSON(200, publicAgent(updated))
+	c.JSON(200, out)
 }
 
-func (h *controller) candidate(c *gin.Context) {
-	var req sdk.PublishAgentRequest
-	if !binder.BindJSON(c, &req) {
+// candidate 发布候选版本。
+// @Summary 发布候选版本
+// @Tags Platform
+// @Accept json
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param X-CSRF-Token header string true "会话 CSRF 标识"
+// @Param tid path string true "tid"
+// @Param agent path string true "agent"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Param request body agenticv1.PublishAgentRequest true "JSON 请求"
+// @Success 200 {object} agenticv1.ProjectAgentVersion "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
+// @Failure 413 {object} serrors.Error "请求体超过限制"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/agents/{agent}/candidates [post]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/agents/{agent}/candidates [post]
+func (h *Controller) candidate(c *core.Context) {
+	var req sdk.PublishProjectAgentRequest
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	v, err := h.service.PublishAgent(
+	v, err := h.store.PublishAgent(
 		c.Request.Context(),
 		c.GetString("projectOwner"),
-		c.Param("agent"),
+		req.ID,
 		req.Revision,
 	)
 	if err != nil {
@@ -234,13 +291,31 @@ func publicVersion(v *sdk.AgentVersion) sdk.ProjectAgentVersion {
 	}
 }
 
-func (h *controller) version(c *gin.Context) {
-	n, err := strconv.ParseInt(c.Param("version"), 10, 64)
-	if err != nil || n < 1 {
-		apperror.Respond(c, durable.ErrInvalid)
+// version 查询候选版本。
+// @Summary 查询候选版本
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Param agent path string true "agent"
+// @Param version path int true "version" minimum(1)
+// @Param pid path string false "项目路径下的项目 ID"
+// @Success 200 {object} agenticv1.ProjectAgentVersion "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/agents/{agent}/versions/{version} [get]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/agents/{agent}/versions/{version} [get]
+func (h *Controller) version(c *core.Context) {
+	var req sdk.GetProjectAgentVersionRequest
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	v, err := h.service.AgentVersion(c.Request.Context(), c.GetString("projectOwner"), c.Param("agent"), n)
+	v, err := h.store.AgentVersion(c.Request.Context(), c.GetString("projectOwner"), req.ID, req.Number)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
@@ -248,29 +323,46 @@ func (h *controller) version(c *gin.Context) {
 	c.JSON(200, publicVersion(v))
 }
 
-func (h *controller) start(c *gin.Context) {
+// start 启动企业评测。
+// @Summary 启动企业评测
+// @Tags Platform
+// @Accept json
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param X-CSRF-Token header string true "会话 CSRF 标识"
+// @Param tid path string true "tid"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Param Idempotency-Key header string true "幂等标识；相同请求重放返回已有任务" maxlength(128)
+// @Param request body agenticv1.StartProjectEvaluationRequest true "JSON 请求"
+// @Success 202 {object} agenticv1.EvaluationExperiment "成功"
+// @Success 200 {object} agenticv1.EvaluationExperiment "幂等重放"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
+// @Failure 413 {object} serrors.Error "请求体超过限制"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/evaluations [post]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations [post]
+func (h *Controller) start(c *core.Context) {
 	var req sdk.StartProjectEvaluationRequest
-	if !binder.BindJSON(c, &req) {
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	s := req.Suite
-	if !h.freezeDataset(c, &s) || !h.environmentAccess(c, req.ProjectID, s.Scenario.Kind, true) {
+
+	var headers struct {
+		IdempotencyKey string `header:"Idempotency-Key" binding:"required,max=128"`
+	}
+	if err := binder.Bind(c, &headers).Header().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	if !h.validSuite(c, s) {
-		return
-	}
-	scope := sdk.EvaluationScope{
-		TenantID:  c.Param("tid"),
-		ProjectID: h.environmentProject(c, req.ProjectID),
-		ActorID:   c.GetString("projectActor"),
-	}
-	out, created, err := h.service.StartEvaluation(
-		c.Request.Context(),
-		c.GetString("projectOwner"),
-		c.GetHeader("Idempotency-Key"),
-		sdk.StartEvaluationRequest{Suite: s, Scope: scope},
-	)
+	req.IdempotencyKey = headers.IdempotencyKey
+
+	out, created, err := h.business.StartEvaluation(c, req)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
@@ -282,17 +374,34 @@ func (h *controller) start(c *gin.Context) {
 	c.JSON(status, out)
 }
 
-func (h *controller) evaluations(c *gin.Context) {
-	limit, ok := binder.QueryLimit(c, 50, 100)
-	after := c.Query("after")
-	if !ok {
+// evaluations 列出企业评测。
+// @Summary 列出企业评测
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Param limit query int false "每页数量" default(50) minimum(1) maximum(100)
+// @Param after query string false "上一页末项游标"
+// @Success 200 {object} agenticv1.Page[agenticv1.EvaluationExperiment] "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/evaluations [get]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations [get]
+func (h *Controller) evaluations(c *core.Context) {
+	var page sdk.PageOptions
+	if err := binder.Bind(c, &page).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	items, err := h.service.Evaluations(
+	items, err := h.store.Evaluations(
 		c.Request.Context(),
 		c.GetString("projectOwner"),
 		sdk.ListEvaluationsOptions{
-			PageOptions:       sdk.PageOptions{After: after, Limit: limit},
+			PageOptions:       sdk.PageOptions{After: page.After, Limit: page.Limit},
 			TenantID:          c.Param("tid"),
 			ProjectID:         c.Param("pid"),
 			AllowedProjectIDs: allowedProjects(c),
@@ -305,8 +414,30 @@ func (h *controller) evaluations(c *gin.Context) {
 	c.JSON(200, sdk.Page[sdk.EvaluationExperiment]{Items: items})
 }
 
-func (h *controller) experiment(c *gin.Context) {
-	out, err := h.service.Evaluation(c.Request.Context(), c.GetString("projectOwner"), c.Param("experiment"))
+// experiment 查询企业评测。
+// @Summary 查询企业评测
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Param experiment path string true "experiment"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Success 200 {object} agenticv1.EvaluationExperiment "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/evaluations/{experiment} [get]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations/{experiment} [get]
+func (h *Controller) experiment(c *core.Context) {
+	var req sdk.GetProjectEvaluationRequest
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
+		return
+	}
+	out, err := h.store.Evaluation(c.Request.Context(), c.GetString("projectOwner"), req.ID)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
@@ -317,122 +448,135 @@ func (h *controller) experiment(c *gin.Context) {
 	c.JSON(200, out)
 }
 
-func (h *controller) cancel(c *gin.Context) {
-	e, err := h.service.Evaluation(c.Request.Context(), c.GetString("projectOwner"), c.Param("experiment"))
-	if err != nil {
-		apperror.Respond(c, err)
+// cancel 取消企业评测。
+// @Summary 取消企业评测
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param X-CSRF-Token header string true "会话 CSRF 标识"
+// @Param tid path string true "tid"
+// @Param experiment path string true "experiment"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Success 204 "成功，无响应体"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/evaluations/{experiment}/cancel [post]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations/{experiment}/cancel [post]
+func (h *Controller) cancel(c *core.Context) {
+	var req sdk.CancelProjectEvaluationRequest
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	if !h.environmentAccess(c, e.Scope.ProjectID, e.Suite.Scenario.Kind, true) {
-		return
-	}
-	if err := h.service.CancelEvaluation(
-		c.Request.Context(),
-		c.GetString("projectOwner"),
-		c.Param("experiment"),
-	); err != nil {
+
+	if err := h.business.CancelEvaluation(c, req); err != nil {
 		apperror.Respond(c, err)
 		return
 	}
 	c.Status(204)
 }
 
-func (h *controller) compare(c *gin.Context) {
-	candidate, err := h.service.Evaluation(c.Request.Context(), c.GetString("projectOwner"), c.Param("experiment"))
+// compare 比较企业评测。
+// @Summary 比较企业评测
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Param experiment path string true "experiment"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Param baselineID query string true "基线实验 ID"
+// @Success 200 {object} agenticv1.EvaluationComparison "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/evaluations/{experiment}/compare [get]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations/{experiment}/compare [get]
+func (h *Controller) compare(c *core.Context) {
+	var req sdk.CompareProjectEvaluationsRequest
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
+		return
+	}
+
+	out, err := h.business.CompareEvaluations(c, req)
 	if err != nil {
 		apperror.Respond(c, err)
-		return
-	}
-	baseline, err := h.service.Evaluation(c.Request.Context(), c.GetString("projectOwner"), c.Query("baselineID"))
-	if err != nil {
-		apperror.Respond(c, err)
-		return
-	}
-	if !h.environmentAccess(c, candidate.Scope.ProjectID, candidate.Suite.Scenario.Kind, false) ||
-		!h.environmentAccess(c, baseline.Scope.ProjectID, baseline.Suite.Scenario.Kind, false) {
-		return
-	}
-	out, err := evaluation.Compare(*baseline, *candidate)
-	if err != nil {
-		serrors.Abort(c, 409, "IncompatibleExperiments", err.Error())
 		return
 	}
 	c.JSON(200, out)
 }
 
-func (h *controller) trace(c *gin.Context) {
-	experiment, err := h.service.Evaluation(c.Request.Context(), c.GetString("projectOwner"), c.Param("experiment"))
+// trace 查询评测试验轨迹。
+// @Summary 查询评测试验轨迹
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Param experiment path string true "experiment"
+// @Param trial path string true "trial"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Param after query int false "事件序号游标" default(0) minimum(0)
+// @Success 200 {object} agenticv1.RunTrace "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/evaluations/{experiment}/trials/{trial}/trace [get]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/evaluations/{experiment}/trials/{trial}/trace [get]
+func (h *Controller) trace(c *core.Context) {
+	var req sdk.GetProjectTrialTraceRequest
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
+		return
+	}
+
+	out, err := h.business.TrialTrace(c, req)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
 	}
-	after := int64(0)
-	if raw := c.Query("after"); raw != "" {
-		after, err = strconv.ParseInt(raw, 10, 64)
-		if err != nil || after < 0 {
-			apperror.Respond(c, durable.ErrInvalid)
-			return
-		}
-	}
-	if !h.environmentAccess(c, experiment.Scope.ProjectID, experiment.Suite.Scenario.Kind, false) {
-		return
-	}
-	for _, trial := range experiment.Trials {
-		if trial.ID == c.Param("trial") {
-			out, err := h.service.Trace(
-				c.Request.Context(),
-				c.GetString("projectOwner"),
-				trial.RunID,
-				after,
-			)
-			if err != nil {
-				apperror.Respond(c, err)
-				return
-			}
-			c.JSON(200, out)
-			return
-		}
-	}
-	apperror.Respond(c, durable.ErrNotFound)
+	c.JSON(200, out)
 }
 
-func (h *controller) validSuite(c *gin.Context, s sdk.EvaluationSuite) bool {
-	if s.Scenario.Filesystem != nil {
-		serrors.Abort(c, 400, "ScenarioUnavailable", "当前项目入口支持无工具的单轮输出评测")
-		return false
-	}
-	v, err := h.service.AgentVersion(
-		c.Request.Context(),
-		c.GetString("projectOwner"),
-		s.Target.AgentID,
-		s.Target.AgentVersion,
-	)
-	if err != nil {
-		apperror.Respond(c, err)
-		return false
-	}
-	if (writing(v.Config) && s.Scenario.Kind != "single_turn") ||
-		(!writing(v.Config) && (!coding(v.Config) || h.cfg.CodingURL == "" || s.Scenario.Kind != "coding")) {
-		serrors.Abort(c, 409, "ScenarioUnavailable", "评测场景与 Agent 工具能力不匹配")
-		return false
-	}
-	if err := evaluation.Validate(s); err != nil {
-		serrors.Abort(c, 400, "InvalidSuite", err.Error())
-		return false
-	}
-	return true
-}
-
-func (h *controller) plans(c *gin.Context) {
-	limit, ok := binder.QueryLimit(c, 50, 100)
-	if !ok {
+// plans 列出评测计划。
+// @Summary 列出评测计划
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Param limit query int false "每页数量" default(50) minimum(1) maximum(100)
+// @Param after query string false "上一页末项游标"
+// @Success 200 {object} agenticv1.Page[agenticv1.EvaluationPlan] "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/evaluation-plans [get]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/evaluation-plans [get]
+func (h *Controller) plans(c *core.Context) {
+	var page sdk.PageOptions
+	if err := binder.Bind(c, &page).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	rows, err := h.service.WorkspaceEvaluationPlans(
+	rows, err := h.store.WorkspaceEvaluationPlans(
 		c.Request.Context(),
 		c.GetString("projectOwner"),
-		c.Query("after"),
-		limit,
+		page.After,
+		page.Limit,
 		allowedProjects(c),
 	)
 	if err != nil {
@@ -442,8 +586,30 @@ func (h *controller) plans(c *gin.Context) {
 	c.JSON(200, sdk.Page[sdk.EvaluationPlan]{Items: rows})
 }
 
-func (h *controller) plan(c *gin.Context) {
-	row, err := h.service.EvaluationPlan(c.Request.Context(), c.GetString("projectOwner"), c.Param("plan"))
+// plan 查询评测计划。
+// @Summary 查询评测计划
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Param plan path string true "plan"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Success 200 {object} agenticv1.EvaluationPlan "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/evaluation-plans/{plan} [get]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/evaluation-plans/{plan} [get]
+func (h *Controller) plan(c *core.Context) {
+	var req sdk.GetEvaluationPlanRequest
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
+		return
+	}
+	row, err := h.store.EvaluationPlan(c.Request.Context(), c.GetString("projectOwner"), req.ID)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
@@ -454,31 +620,39 @@ func (h *controller) plan(c *gin.Context) {
 	c.JSON(200, row)
 }
 
-func (h *controller) savePlan(c *gin.Context) {
+// savePlan 保存评测计划。
+// @Summary 保存评测计划
+// @Tags Platform
+// @Accept json
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param X-CSRF-Token header string true "会话 CSRF 标识"
+// @Param tid path string true "tid"
+// @Param plan path string true "plan"
+// @Param pid path string false "项目路径下的项目 ID"
+// @Param request body agenticv1.SaveEvaluationPlanRequest true "JSON 请求"
+// @Success 200 {object} agenticv1.EvaluationPlan "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
+// @Failure 413 {object} serrors.Error "请求体超过限制"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/evaluation-plans/{plan} [put]
+// @Router /api/v1/tenants/{tid}/projects/{pid}/evaluation-plans/{plan} [put]
+func (h *Controller) savePlan(c *core.Context) {
 	var req sdk.SaveEvaluationPlanRequest
-	if !binder.BindJSON(c, &req) || !h.freezeDataset(c, &req.Suite) || !h.validSuite(c, req.Suite) ||
-		!h.environmentAccess(c, req.ProjectID, req.Suite.Scenario.Kind, true) {
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
 		return
 	}
-	if old, err := h.service.EvaluationPlan(
-		c.Request.Context(),
-		c.GetString("projectOwner"),
-		c.Param("plan"),
-	); err == nil {
-		if !h.environmentAccess(c, old.ProjectID, old.Suite.Scenario.Kind, true) {
-			return
-		}
-	} else if !errors.Is(
-		err,
-		durable.ErrNotFound,
-	) {
-		apperror.Respond(c, err)
-		return
-	}
-	row, err := h.service.SaveEvaluationPlan(c.Request.Context(), c.GetString("projectOwner"), c.Param("plan"), req)
+
+	out, err := h.business.SaveEvaluationPlan(c, req)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
 	}
-	c.JSON(200, row)
+	c.JSON(200, out)
 }

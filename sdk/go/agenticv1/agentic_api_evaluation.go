@@ -100,6 +100,8 @@ type EvaluationReport struct {
 // StartEvaluationRequest carries a complete frozen suite. Scope identity is
 // supplied by a trusted application, never inferred from an Agent prompt.
 type StartEvaluationRequest struct {
+	IdempotencyKey string `json:"-" form:"-" uri:"-" header:"Idempotency-Key" binding:"omitempty,max=128"`
+
 	Suite EvaluationSuite `json:"suite"`
 	Scope EvaluationScope `json:"scope"`
 }
@@ -135,8 +137,8 @@ type ListEvaluationsOptions struct {
 	AllowedProjectIDs []string
 
 	PageOptions
-	TenantID  string
-	ProjectID string
+	TenantID  string `json:"-" form:"tenantID"`
+	ProjectID string `json:"-" form:"projectID"`
 }
 
 type EvaluationMetricComparison struct {

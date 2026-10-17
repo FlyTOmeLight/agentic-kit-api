@@ -13,6 +13,8 @@ type Dataset struct {
 }
 
 type SaveDatasetRequest struct {
+	ID string `json:"-" uri:"dataset" binding:"required,max=128"`
+
 	Name     string           `json:"name"`
 	Revision int64            `json:"revision"`
 	Cases    []EvaluationCase `json:"cases"`

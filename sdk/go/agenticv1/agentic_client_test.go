@@ -40,19 +40,25 @@ func TestSendMessageProtocol(t *testing.T) {
 					r.Header.Get("Content-Type") != "application/json" {
 					t.Errorf("unexpected request: %s %s %v", r.Method, r.URL, r.Header)
 				}
-				var req sdk.SendMessageRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Query != "你好" {
+				var req map[string]any
+				if err := json.NewDecoder(r.Body).
+					Decode(&req); err != nil || req["query"] != "你好" ||
+					len(req) != 1 {
 					t.Errorf("body=%+v err=%v", req, err)
 				}
 				w.WriteHeader(status)
 				io.WriteString(w, `{"id":"run","status":"Queued"}`)
 			})
-			run, created, err := client.Sessions.SendMessage(
+			run, err := client.Sessions.SendMessage(
 				t.Context(),
-				"session",
-				"question-1",
-				sdk.SendMessageRequest{Query: "你好"},
+				&sdk.SendMessageRequest{
+					SessionID:      "session",
+					IdempotencyKey: "question-1",
+					Query:          "你好",
+				},
 			)
+			created := run != nil && run.Created
+
 			if err != nil || run.ID != "run" || created != (status == 202) || calls != 1 {
 				t.Fatalf("run=%+v created=%v calls=%d err=%v", run, created, calls, err)
 			}
@@ -73,7 +79,7 @@ func TestErrors(t *testing.T) {
 				t,
 				func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status); io.WriteString(w, tc.body) },
 			)
-			_, err := client.Runs.Get(t.Context(), "run")
+			_, err := client.Runs.Get(t.Context(), &sdk.GetRunRequest{ID: "run"})
 			var apiErr *serrors.Error
 			if !errors.As(err, &apiErr) || apiErr.Status != tc.status || apiErr.Code != tc.code ||
 				strings.Contains(apiErr.Message, "<html>") {
@@ -82,7 +88,7 @@ func TestErrors(t *testing.T) {
 		})
 	}
 	client := newClient(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"id":`) })
-	if _, err := client.Runs.Get(t.Context(), "run"); err == nil {
+	if _, err := client.Runs.Get(t.Context(), &sdk.GetRunRequest{ID: "run"}); err == nil {
 		t.Fatal("accepted malformed JSON")
 	}
 }
@@ -97,7 +103,12 @@ func TestPaginationAndCancellation(t *testing.T) {
 	})
 	if _, err := client.Sessions.List(
 		t.Context(),
-		sdk.ListSessionsOptions{PageOptions: sdk.PageOptions{After: "a+b", Limit: 3}, AgentID: "agent & one"},
+		&sdk.ListSessionsRequest{
+			ListSessionsOptions: sdk.ListSessionsOptions{
+				PageOptions: sdk.PageOptions{After: "a+b", Limit: 3},
+				AgentID:     "agent & one",
+			},
+		},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +117,7 @@ func TestPaginationAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	result := make(chan error, 1)
-	go func() { _, err := client.Runs.Get(ctx, "run"); result <- err }()
+	go func() { _, err := client.Runs.Get(ctx, &sdk.GetRunRequest{ID: "run"}); result <- err }()
 	select {
 	case <-entered:
 		cancel()
@@ -131,7 +142,7 @@ func TestEventStream(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 		io.WriteString(w, "id: run:3\nevent: Completed\ndata: {}\n\n")
 	})
-	body, err := client.Runs.OpenEvents(t.Context(), "run", "run:2")
+	body, err := client.Runs.OpenEvents(t.Context(), &sdk.OpenRunEventsRequest{ID: "run", LastEventID: "run:2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +155,10 @@ func TestEventStream(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{}`)
 	})
-	if body, err := client.Runs.OpenEvents(t.Context(), "run", ""); err == nil {
+	if body, err := client.Runs.OpenEvents(
+		t.Context(),
+		&sdk.OpenRunEventsRequest{ID: "run", LastEventID: ""},
+	); err == nil {
 		body.Close()
 		t.Fatal("accepted non-SSE response")
 	}
@@ -159,7 +173,7 @@ func TestRedirectNotFollowed(t *testing.T) {
 		}
 		http.Redirect(w, r, "/unexpected", http.StatusTemporaryRedirect)
 	})
-	_, err := client.Runs.Get(t.Context(), "run")
+	_, err := client.Runs.Get(t.Context(), &sdk.GetRunRequest{ID: "run"})
 	var apiErr *serrors.Error
 	if !errors.As(err, &apiErr) || apiErr.Status != 307 {
 		t.Fatalf("err=%v", err)
@@ -215,7 +229,10 @@ func TestResponseBodyOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.stream {
-				stream, e := client.Runs.OpenEvents(t.Context(), "run", "")
+				stream, e := client.Runs.OpenEvents(
+					t.Context(),
+					&sdk.OpenRunEventsRequest{ID: "run", LastEventID: ""},
+				)
 				err = e
 				if stream != nil {
 					if body.closed {
@@ -224,7 +241,7 @@ func TestResponseBodyOwnership(t *testing.T) {
 					stream.Close()
 				}
 			} else {
-				_, err = client.Runs.Get(t.Context(), "run")
+				_, err = client.Runs.Get(t.Context(), &sdk.GetRunRequest{ID: "run"})
 			}
 			if (err != nil) != tc.wantError || !body.closed {
 				t.Fatalf("err=%v closed=%v", err, body.closed)
@@ -244,7 +261,7 @@ func TestEventStreamReturnsBeforeCompletion(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	body, err := client.Runs.OpenEvents(ctx, "run", "")
+	body, err := client.Runs.OpenEvents(ctx, &sdk.OpenRunEventsRequest{ID: "run", LastEventID: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,11 +300,17 @@ func TestRunCommands(t *testing.T) {
 			var err error
 			switch command {
 			case "answer":
-				err = api.Answer(t.Context(), "run", req)
+				err = api.Answer(
+					t.Context(),
+					&sdk.AnswerRunRequest{ID: "run", SupplyResultRequest: req},
+				)
 			case "resolve":
-				err = api.Resolve(t.Context(), "run", req)
+				err = api.Resolve(
+					t.Context(),
+					&sdk.ResolveRunRequest{ID: "run", SupplyResultRequest: req},
+				)
 			case "cancel":
-				err = api.Cancel(t.Context(), "run")
+				err = api.Cancel(t.Context(), &sdk.CancelRunRequest{ID: "run"})
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -305,11 +328,11 @@ func TestConcurrentServices(t *testing.T) {
 	for _, id := range []string{"first", "second", "third", "fourth"} {
 		t.Run(id, func(t *testing.T) {
 			t.Parallel()
-			agent, err := client.Agents.Get(t.Context(), id)
+			agent, err := client.Agents.Get(t.Context(), &sdk.GetAgentRequest{ID: id})
 			if err != nil || agent.ID != id {
 				t.Fatalf("agent=%+v err=%v", agent, err)
 			}
-			session, err := client.Sessions.Get(t.Context(), id)
+			session, err := client.Sessions.Get(t.Context(), &sdk.GetSessionRequest{ID: id})
 			if err != nil || session.ID != id {
 				t.Fatalf("session=%+v err=%v", session, err)
 			}

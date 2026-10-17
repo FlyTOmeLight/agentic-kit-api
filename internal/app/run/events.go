@@ -10,21 +10,43 @@ import (
 
 	"github.com/FlyTOmeLight/server-go/auth"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
+	core "github.com/FlyTOmeLight/server-go/pkg"
+	"github.com/FlyTOmeLight/server-go/pkg/binder"
 	"github.com/FlyTOmeLight/server-go/stream"
-	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
+	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
-func (h *controller) events(c *gin.Context) {
+// events 订阅任务事件。
+// @Summary 订阅任务事件
+// @Tags Run
+// @Description SSE id 为 runID:seq，event 为事件 kind，data 为 JSON Event；空闲时发送心跳。输出开始后的读取或写入错误关闭连接，客户端使用最后收到的 id 重连；终态事件回放完成后关闭连接。
+// @Produce text/event-stream
+// @Security BearerAuth
+// @Param id path string true "id"
+// @Param Last-Event-ID header string false "断点游标 runID:seq，优先于 after"
+// @Param after query string false "断点游标 runID:seq"
+// @Success 200 {string} string "SSE 事件流"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Router /v1/runs/{id}/events [get]
+func (h *Controller) events(c *core.Context) {
+	var req sdk.OpenRunEventsRequest
+	if err := binder.Bind(c, &req).All().Error(); err != nil {
+		serrors.AbortWithError(c, err)
+		return
+	}
 	r, w := c.Request, c.Writer
-	id := c.Param("id")
+	id := req.ID
 	after := int64(0)
 	cursor := r.Header.Get("Last-Event-ID")
 	if cursor == "" {
-		cursor = r.URL.Query().Get("after")
+		cursor = req.After
 	}
 	if cursor != "" {
 		parts := strings.Split(cursor, ":")

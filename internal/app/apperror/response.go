@@ -5,12 +5,12 @@ import (
 	"net/http"
 
 	serrors "github.com/FlyTOmeLight/server-go/errors"
-	"github.com/gin-gonic/gin"
+	core "github.com/FlyTOmeLight/server-go/pkg"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
-func Respond(c *gin.Context, err error) {
+func Respond(c *core.Context, err error) {
 	switch {
 	case errors.Is(err, durable.ErrInvalid):
 		serrors.Abort(c, 400, "InvalidParameter", "invalid input")

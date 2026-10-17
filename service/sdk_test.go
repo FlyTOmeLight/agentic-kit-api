@@ -34,8 +34,7 @@ func TestSDKConversation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	agent, err := client.Agents.Create(
-		ctx,
-		sdk.CreateAgentRequest{
+		ctx, &sdk.CreateAgentRequest{
 			Name: "SDK agent",
 			Config: sdk.AgentConfig{
 				Model:    sdk.ModelSpec{Name: "test", BaseURL: "http://localhost:11434/v1"},
@@ -48,65 +47,69 @@ func TestSDKConversation(t *testing.T) {
 	}
 	agent, err = client.Agents.Update(
 		ctx,
-		agent.ID,
-		sdk.UpdateAgentRequest{Name: "updated", Revision: agent.Revision, Config: agent.Draft},
+		&sdk.UpdateAgentRequest{ID: agent.ID, Name: "updated", Revision: agent.Revision, Config: agent.Draft},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	version, err := client.Agents.Publish(ctx, agent.ID, sdk.PublishAgentRequest{Revision: agent.Revision})
+	version, err := client.Agents.Publish(ctx, &sdk.PublishAgentRequest{ID: agent.ID, Revision: agent.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fetched, err := client.Agents.GetVersion(ctx, agent.ID, version.Number)
+	fetched, err := client.Agents.GetVersion(ctx, &sdk.GetAgentVersionRequest{ID: agent.ID, Number: version.Number})
 	if err != nil || fetched.Number != version.Number {
 		t.Fatalf("version=%+v err=%v", fetched, err)
 	}
-	gotAgent, err := client.Agents.Get(ctx, agent.ID)
+	gotAgent, err := client.Agents.Get(ctx, &sdk.GetAgentRequest{ID: agent.ID})
 	if err != nil || gotAgent.Name != "updated" {
 		t.Fatalf("agent=%+v err=%v", gotAgent, err)
 	}
-	agents, err := client.Agents.List(ctx, sdk.PageOptions{Limit: 1})
+	agents, err := client.Agents.List(ctx, &sdk.ListAgentsRequest{PageOptions: sdk.PageOptions{Limit: 1}})
 	if err != nil || len(agents.Items) != 1 {
 		t.Fatalf("agents=%+v err=%v", agents, err)
 	}
 	session, err := client.Sessions.Create(
-		ctx,
-		sdk.CreateSessionRequest{AgentID: agent.ID, Title: "SDK conversation"},
+		ctx, &sdk.CreateSessionRequest{AgentID: agent.ID, Title: "SDK conversation"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = client.Sessions.Get(ctx, session.ID); err != nil {
+	if _, err = client.Sessions.Get(ctx, &sdk.GetSessionRequest{ID: session.ID}); err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := client.Sessions.List(ctx, sdk.ListSessionsOptions{AgentID: agent.ID})
+	sessions, err := client.Sessions.List(
+		ctx,
+		&sdk.ListSessionsRequest{ListSessionsOptions: sdk.ListSessionsOptions{AgentID: agent.ID}},
+	)
 	if err != nil || len(sessions.Items) != 1 {
 		t.Fatalf("sessions=%+v err=%v", sessions, err)
 	}
-	run, created, err := client.Sessions.SendMessage(
-		ctx,
-		session.ID,
-		"question-1",
-		sdk.SendMessageRequest{Query: "hello"},
+	submitted, err := client.Sessions.SendMessage(
+		ctx, &sdk.SendMessageRequest{SessionID: session.ID, IdempotencyKey: "question-1", Query: "hello"},
 	)
+	var run *sdk.Run
+	if submitted != nil {
+		run = &submitted.Run
+	}
+	created := submitted != nil && submitted.Created
+
 	if err != nil || !created {
 		t.Fatalf("created=%v err=%v", created, err)
 	}
-	replay, created, err := client.Sessions.SendMessage(
-		ctx,
-		session.ID,
-		"question-1",
-		sdk.SendMessageRequest{Query: "hello"},
+	replayResult, err := client.Sessions.SendMessage(
+		ctx, &sdk.SendMessageRequest{SessionID: session.ID, IdempotencyKey: "question-1", Query: "hello"},
 	)
+	var replay *sdk.Run
+	if replayResult != nil {
+		replay = &replayResult.Run
+	}
+	created = replayResult != nil && replayResult.Created
+
 	if err != nil || created || replay.ID != run.ID {
 		t.Fatalf("replay=%+v created=%v err=%v", replay, created, err)
 	}
-	_, _, err = client.Sessions.SendMessage(
-		ctx,
-		session.ID,
-		"question-1",
-		sdk.SendMessageRequest{Query: "different"},
+	_, err = client.Sessions.SendMessage(
+		ctx, &sdk.SendMessageRequest{SessionID: session.ID, IdempotencyKey: "question-1", Query: "different"},
 	)
 	var apiErr *serrors.Error
 	if !errors.As(err, &apiErr) || apiErr.Status != 409 {
@@ -127,19 +130,25 @@ func TestSDKConversation(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	run, err = client.Runs.Get(ctx, run.ID)
+	run, err = client.Runs.Get(ctx, &sdk.GetRunRequest{ID: run.ID})
 	if err != nil || run.Status != sdk.Completed || run.Output != "hello back" {
 		t.Fatalf("run=%+v err=%v", run, err)
 	}
-	messages, err := client.Sessions.ListMessages(ctx, session.ID, sdk.ListMessagesOptions{After: 1})
+	messages, err := client.Sessions.ListMessages(
+		ctx,
+		&sdk.ListMessagesRequest{SessionID: session.ID, ListMessagesOptions: sdk.ListMessagesOptions{After: 1}},
+	)
 	if err != nil || len(messages.Items) != 1 || messages.Items[0].Message.Content != "hello back" {
 		t.Fatalf("messages=%+v err=%v", messages, err)
 	}
-	runs, err := client.Sessions.ListRuns(ctx, session.ID, sdk.PageOptions{})
+	runs, err := client.Sessions.ListRuns(
+		ctx,
+		&sdk.ListSessionRunsRequest{SessionID: session.ID, PageOptions: sdk.PageOptions{}},
+	)
 	if err != nil || len(runs.Items) != 1 || runs.Items[0].ID != run.ID {
 		t.Fatalf("runs=%+v err=%v", runs, err)
 	}
-	stream, err := client.Runs.OpenEvents(ctx, run.ID, run.ID+":1")
+	stream, err := client.Runs.OpenEvents(ctx, &sdk.OpenRunEventsRequest{ID: run.ID, LastEventID: run.ID + ":1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,23 +161,25 @@ func TestSDKConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = other.Runs.Get(ctx, run.ID)
+	_, err = other.Runs.Get(ctx, &sdk.GetRunRequest{ID: run.ID})
 	if !errors.As(err, &apiErr) || apiErr.Status != 404 {
 		t.Fatalf("owner isolation=%v", err)
 	}
-	next, _, err := client.Sessions.SendMessage(
-		ctx,
-		session.ID,
-		"question-2",
-		sdk.SendMessageRequest{Query: "next"},
+	nextResult, err := client.Sessions.SendMessage(
+		ctx, &sdk.SendMessageRequest{SessionID: session.ID, IdempotencyKey: "question-2", Query: "next"},
 	)
+	var next *sdk.Run
+	if nextResult != nil {
+		next = &nextResult.Run
+	}
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = client.Runs.Cancel(ctx, next.ID); err != nil {
+	if err = client.Runs.Cancel(ctx, &sdk.CancelRunRequest{ID: next.ID}); err != nil {
 		t.Fatal(err)
 	}
-	next, err = client.Runs.Get(ctx, next.ID)
+	next, err = client.Runs.Get(ctx, &sdk.GetRunRequest{ID: next.ID})
 	if err != nil || next.Status != sdk.Canceled {
 		t.Fatalf("cancel=%+v err=%v", next, err)
 	}
@@ -176,12 +187,14 @@ func TestSDKConversation(t *testing.T) {
 		name string
 		call func() error
 	}{
-		{name: "empty agent", call: func() error { _, e := client.Agents.Create(ctx, sdk.CreateAgentRequest{}); return e }},
-		{name: "empty session", call: func() error { _, e := client.Sessions.Create(ctx, sdk.CreateSessionRequest{}); return e }},
-		{name: "invalid revision", call: func() error { _, e := client.Agents.Publish(ctx, agent.ID, sdk.PublishAgentRequest{}); return e }},
-		{name: "empty answer", call: func() error { return client.Runs.Answer(ctx, run.ID, sdk.SupplyResultRequest{}) }},
+		{name: "empty agent", call: func() error { _, e := client.Agents.Create(ctx, &sdk.CreateAgentRequest{}); return e }},
+		{name: "empty session", call: func() error { _, e := client.Sessions.Create(ctx, &sdk.CreateSessionRequest{}); return e }},
+		{name: "invalid revision", call: func() error { _, e := client.Agents.Publish(ctx, &sdk.PublishAgentRequest{ID: agent.ID}); return e }},
+		{name: "empty answer", call: func() error {
+			return client.Runs.Answer(ctx, &sdk.AnswerRunRequest{ID: run.ID, SupplyResultRequest: sdk.SupplyResultRequest{}})
+		}},
 		{name: "oversized step", call: func() error {
-			return client.Runs.Resolve(ctx, run.ID, sdk.SupplyResultRequest{StepID: strings.Repeat("x", 129), Result: "done"})
+			return client.Runs.Resolve(ctx, &sdk.ResolveRunRequest{ID: run.ID, SupplyResultRequest: sdk.SupplyResultRequest{StepID: strings.Repeat("x", 129), Result: "done"}})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
