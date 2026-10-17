@@ -111,7 +111,7 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 			t.Fatalf("wanted %d, got %v", code, err)
 		}
 	}
-	rows, err := dev.Agents(ctx, sdk.PageOptions{})
+	rows, err := dev.Agents(ctx, &sdk.ListProjectAgentsRequest{PageOptions: sdk.PageOptions{}})
 	if err != nil || len(rows.Templates) != 1 || len(rows.Items) != 0 || !rows.CanEdit {
 		t.Fatalf("list %+v %v", rows, err)
 	}
@@ -124,7 +124,7 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 		strings.Contains(string(previewJSON), "PRIVATE_CREDENTIAL") {
 		t.Fatal("template connection leaked")
 	}
-	a, err := dev.CreateAgent(ctx, sdk.CreateProjectAgentRequest{TemplateID: "writing", Name: "Project writer"})
+	a, err := dev.CreateAgent(ctx, &sdk.CreateProjectAgentRequest{TemplateID: "writing", Name: "Project writer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,45 +132,52 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 	if strings.Contains(string(raw), "private-model") || strings.Contains(string(raw), "PRIVATE_CREDENTIAL") {
 		t.Fatal("connection leaked")
 	}
-	_, err = reader.CreateAgent(ctx, sdk.CreateProjectAgentRequest{TemplateID: "writing", Name: "denied"})
+	_, err = reader.CreateAgent(ctx, &sdk.CreateProjectAgentRequest{TemplateID: "writing", Name: "denied"})
 	assertCode(err, 403)
-	_, err = client("tenant", "project", "developer", "wrong").Candidate(ctx, a.ID, a.Revision)
+	_, err = client(
+		"tenant",
+		"project",
+		"developer",
+		"wrong",
+	).Candidate(ctx, &sdk.PublishProjectAgentRequest{ID: a.ID, Revision: a.Revision})
 	assertCode(err, 403)
-	_, err = client("denied", "project", "developer", "csrf").Agent(ctx, a.ID)
+	_, err = client("denied", "project", "developer", "csrf").Agent(ctx, &sdk.GetProjectAgentRequest{ID: a.ID})
 	assertCode(err, 403)
-	_, err = foreign.Agent(ctx, a.ID)
+	_, err = foreign.Agent(ctx, &sdk.GetProjectAgentRequest{ID: a.ID})
 	assertCode(err, 404)
-	_, err = client("other-tenant", "project", "developer", "csrf").Agent(ctx, a.ID)
+	_, err = client(
+		"other-tenant",
+		"project",
+		"developer",
+		"csrf",
+	).Agent(ctx, &sdk.GetProjectAgentRequest{ID: a.ID})
 	assertCode(err, 404)
-	v, err := dev.Candidate(ctx, a.ID, 1)
+	v, err := dev.Candidate(ctx, &sdk.PublishProjectAgentRequest{ID: a.ID, Revision: 1})
 	if err != nil || v.Number != 1 {
 		t.Fatal(v, err)
 	}
 	a, err = dev.UpdateAgent(
 		ctx,
-		a.ID,
-		sdk.UpdateProjectAgentRequest{Name: a.Name, Revision: 1, Prompt: "new prompt", MaxTurns: 4},
+		&sdk.UpdateProjectAgentRequest{ID: a.ID, Name: a.Name, Revision: 1, Prompt: "new prompt", MaxTurns: 4},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = dev.UpdateAgent(
-		ctx,
-		a.ID,
-		sdk.UpdateProjectAgentRequest{Name: a.Name, Revision: 1, Prompt: "stale", MaxTurns: 4},
+		ctx, &sdk.UpdateProjectAgentRequest{ID: a.ID, Name: a.Name, Revision: 1, Prompt: "stale", MaxTurns: 4},
 	)
 	assertCode(err, 409)
-	old, err := reader.Version(ctx, a.ID, 1)
+	old, err := reader.Version(ctx, &sdk.GetProjectAgentVersionRequest{ID: a.ID, Number: 1})
 	if err != nil || old.Prompt != "original" {
 		t.Fatalf("candidate mutated %+v %v", old, err)
 	}
-	v, err = dev.Candidate(ctx, a.ID, a.Revision)
+	v, err = dev.Candidate(ctx, &sdk.PublishProjectAgentRequest{ID: a.ID, Revision: a.Revision})
 	if err != nil || v.Number != 2 {
 		t.Fatal(v, err)
 	}
 	// The existing runtime owner cannot see this project clone or submit chat against it.
 	runtime, _ := sdk.NewClient(server.URL, testToken, server.Client())
-	_, err = runtime.Agents.Get(ctx, a.ID)
+	_, err = runtime.Agents.Get(ctx, &sdk.GetAgentRequest{ID: a.ID})
 	assertCode(err, 404)
 	suite := sdk.EvaluationSuite{
 		SchemaVersion: 1,
@@ -197,94 +204,110 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 	}
 
 	trialReq := sdk.StartProjectTrialRequest{AgentVersion: 1, Input: "Try original prompt", TimeoutSeconds: 60}
-	trial, created, err := dev.StartTrial(ctx, a.ID, "try-one", trialReq)
+	trialReq.AgentID = a.ID
+	trialReq.IdempotencyKey = "try-one"
+	trial, err := dev.StartTrial(ctx, &trialReq)
+	created := trial != nil && trial.Created
+
 	if err != nil || !created || trial.Input != trialReq.Input || trial.Run.ConfigVersion != "1" {
 		t.Fatal(trial, err)
 	}
-	retriedTrial, created, err := dev.StartTrial(ctx, a.ID, "try-one", trialReq)
+	trialReq.AgentID = a.ID
+	trialReq.IdempotencyKey = "try-one"
+	retriedTrial, err := dev.StartTrial(ctx, &trialReq)
+	created = retriedTrial != nil && retriedTrial.Created
+
 	if err != nil || created || retriedTrial.Run.ID != trial.Run.ID {
 		t.Fatal("trial retry", err)
 	}
-	readTrial, err := reader.Trial(ctx, a.ID, trial.Run.ID)
+	readTrial, err := reader.Trial(ctx, &sdk.GetProjectTrialRequest{AgentID: a.ID, ID: trial.Run.ID})
 	if err != nil || readTrial.Run.ID != trial.Run.ID {
 		t.Fatal(readTrial, err)
 	}
-	_, err = foreign.Trial(ctx, a.ID, trial.Run.ID)
+	_, err = foreign.Trial(ctx, &sdk.GetProjectTrialRequest{AgentID: a.ID, ID: trial.Run.ID})
 	assertCode(err, 404)
-	_, err = reader.Trial(ctx, template.ID, trial.Run.ID)
+	_, err = reader.Trial(ctx, &sdk.GetProjectTrialRequest{AgentID: template.ID, ID: trial.Run.ID})
 	assertCode(err, 404)
-	_, _, err = reader.StartTrial(ctx, a.ID, "denied-trial", trialReq)
+	trialReq.AgentID = a.ID
+	trialReq.IdempotencyKey = "denied-trial"
+	_, err = reader.StartTrial(ctx, &trialReq)
 	assertCode(err, 403)
-	_, _, err = dev.StartTrial(ctx, template.ID, "unowned-trial", trialReq)
+	trialReq.AgentID = template.ID
+	trialReq.IdempotencyKey = "unowned-trial"
+	_, err = dev.StartTrial(ctx, &trialReq)
 	assertCode(err, 404)
-	err = reader.CancelTrial(ctx, a.ID, trial.Run.ID)
+	err = reader.CancelTrial(ctx, &sdk.CancelProjectTrialRequest{AgentID: a.ID, ID: trial.Run.ID})
 	assertCode(err, 403)
-	if err = dev.CancelTrial(ctx, a.ID, trial.Run.ID); err != nil {
+	if err = dev.CancelTrial(ctx, &sdk.CancelProjectTrialRequest{AgentID: a.ID, ID: trial.Run.ID}); err != nil {
 		t.Fatal(err)
 	}
-	readTrial, err = dev.Trial(ctx, a.ID, trial.Run.ID)
+	readTrial, err = dev.Trial(ctx, &sdk.GetProjectTrialRequest{AgentID: a.ID, ID: trial.Run.ID})
 	if err != nil || readTrial.Run.Status != sdk.Canceled {
 		t.Fatal(readTrial, err)
 	}
 	// Plans survive a new client and repeated migrations without creating Runs.
-	plan, err := dev.SaveEvaluationPlan(ctx, "regression-plan", sdk.SaveEvaluationPlanRequest{Suite: suite})
+	plan, err := dev.SaveEvaluationPlan(ctx, &sdk.SaveEvaluationPlanRequest{ID: "regression-plan", Suite: suite})
 	if err != nil || plan.Revision != 1 {
 		t.Fatalf("save plan: %+v %v", plan, err)
 	}
-	replayPlan, err := dev.SaveEvaluationPlan(ctx, plan.ID, sdk.SaveEvaluationPlanRequest{Suite: suite})
+	replayPlan, err := dev.SaveEvaluationPlan(ctx, &sdk.SaveEvaluationPlanRequest{ID: plan.ID, Suite: suite})
 	if err != nil || replayPlan.Revision != 1 {
 		t.Fatal("plan retry duplicated", err)
 	}
-	plans, err := reader.EvaluationPlans(ctx, sdk.PageOptions{})
+	plans, err := reader.EvaluationPlans(ctx, &sdk.ListEvaluationPlansRequest{PageOptions: sdk.PageOptions{}})
 	if err != nil || len(plans.Items) != 1 {
 		t.Fatal(plans, err)
 	}
-	beforeRuns, err := dev.Evaluations(ctx, sdk.PageOptions{})
+	beforeRuns, err := dev.Evaluations(ctx, &sdk.ListProjectEvaluationsRequest{PageOptions: sdk.PageOptions{}})
 	if err != nil || len(beforeRuns.Items) != 0 {
 		t.Fatal("saving a plan executed it", err)
 	}
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := client("tenant", "project", "developer", "csrf").EvaluationPlan(ctx, plan.ID)
+	restored, err := client(
+		"tenant",
+		"project",
+		"developer",
+		"csrf",
+	).EvaluationPlan(ctx, &sdk.GetEvaluationPlanRequest{ID: plan.ID})
 	if err != nil || restored.Suite.Dataset.Cases[0].Input != "write" {
 		t.Fatal(restored, err)
 	}
 	changed := suite
 	changed.Name = "Updated plan"
 	updatedPlan, err := dev.SaveEvaluationPlan(
-		ctx,
-		plan.ID,
-		sdk.SaveEvaluationPlanRequest{Revision: 1, Suite: changed},
+		ctx, &sdk.SaveEvaluationPlanRequest{ID: plan.ID, Revision: 1, Suite: changed},
 	)
 	if err != nil || updatedPlan.Revision != 2 {
 		t.Fatal(updatedPlan, err)
 	}
-	_, err = dev.SaveEvaluationPlan(ctx, plan.ID, sdk.SaveEvaluationPlanRequest{Revision: 1, Suite: suite})
+	_, err = dev.SaveEvaluationPlan(ctx, &sdk.SaveEvaluationPlanRequest{ID: plan.ID, Revision: 1, Suite: suite})
 	assertCode(err, 409)
-	_, err = foreign.EvaluationPlan(ctx, plan.ID)
+	_, err = foreign.EvaluationPlan(ctx, &sdk.GetEvaluationPlanRequest{ID: plan.ID})
 	assertCode(err, 404)
-	_, err = foreign.SaveEvaluationPlan(ctx, plan.ID, sdk.SaveEvaluationPlanRequest{Revision: 2, Suite: suite})
+	_, err = foreign.SaveEvaluationPlan(ctx, &sdk.SaveEvaluationPlanRequest{ID: plan.ID, Revision: 2, Suite: suite})
 	assertCode(err, 404)
-	_, err = reader.SaveEvaluationPlan(ctx, plan.ID, sdk.SaveEvaluationPlanRequest{Revision: 2, Suite: suite})
+	_, err = reader.SaveEvaluationPlan(ctx, &sdk.SaveEvaluationPlanRequest{ID: plan.ID, Revision: 2, Suite: suite})
 	assertCode(err, 403)
 	_, err = client(
 		"tenant",
 		"project",
 		"developer",
 		"wrong",
-	).SaveEvaluationPlan(ctx, plan.ID, sdk.SaveEvaluationPlanRequest{Revision: 2, Suite: suite})
+	).SaveEvaluationPlan(ctx, &sdk.SaveEvaluationPlanRequest{ID: plan.ID, Revision: 2, Suite: suite})
 	assertCode(err, 403)
 	invalidPlan := suite
 	invalidPlan.Target.AgentID = template.ID
-	_, err = dev.SaveEvaluationPlan(ctx, "injected", sdk.SaveEvaluationPlanRequest{Suite: invalidPlan})
+	_, err = dev.SaveEvaluationPlan(ctx, &sdk.SaveEvaluationPlanRequest{ID: "injected", Suite: invalidPlan})
 	assertCode(err, 404)
-	e, created, err := dev.Start(ctx, "stable", sdk.StartProjectEvaluationRequest{Suite: suite})
+	e, err := dev.Start(ctx, &sdk.StartProjectEvaluationRequest{IdempotencyKey: "stable", Suite: suite})
+	created = e != nil && e.Created
 	if err != nil || !created {
 		t.Fatal(err)
 	}
 
-	_, err = dev.Trial(ctx, a.ID, e.Trials[0].RunID)
+	_, err = dev.Trial(ctx, &sdk.GetProjectTrialRequest{AgentID: a.ID, ID: e.Trials[0].RunID})
 	assertCode(err, 404)
 	rawTrial, _ := json.Marshal(trial)
 	if strings.Contains(string(rawTrial), "private-model") ||
@@ -294,49 +317,53 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 	if e.Scope.ActorID != "developer" || e.Scope.TenantID != "tenant" || e.Scope.ProjectID != "project" {
 		t.Fatal("untrusted scope", e.Scope)
 	}
-	replay, created, err := dev.Start(ctx, "stable", sdk.StartProjectEvaluationRequest{Suite: suite})
+	replay, err := dev.Start(ctx, &sdk.StartProjectEvaluationRequest{IdempotencyKey: "stable", Suite: suite})
+	created = replay != nil && replay.Created
 	if err != nil || created || replay.ID != e.ID {
 		t.Fatal("not idempotent", err)
 	}
 
 	changed.Name = "Edited after experiment"
-	_, err = dev.SaveEvaluationPlan(ctx, plan.ID, sdk.SaveEvaluationPlanRequest{Revision: 2, Suite: changed})
+	_, err = dev.SaveEvaluationPlan(ctx, &sdk.SaveEvaluationPlanRequest{ID: plan.ID, Revision: 2, Suite: changed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	frozenExperiment, err := dev.Evaluation(ctx, e.ID)
+	frozenExperiment, err := dev.Evaluation(ctx, &sdk.GetProjectEvaluationRequest{ID: e.ID})
 	if err != nil || frozenExperiment.Suite.Name != suite.Name {
 		t.Fatal("plan edit changed experiment", err)
 	}
 	suite.Target.AgentVersion = 2
-	next, _, err := dev.Start(ctx, "candidate", sdk.StartProjectEvaluationRequest{Suite: suite})
+	next, err := dev.Start(ctx, &sdk.StartProjectEvaluationRequest{IdempotencyKey: "candidate", Suite: suite})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = foreign.Evaluation(ctx, e.ID)
+	_, err = foreign.Evaluation(ctx, &sdk.GetProjectEvaluationRequest{ID: e.ID})
 	assertCode(err, 404)
-	err = foreign.Cancel(ctx, e.ID)
+	err = foreign.Cancel(ctx, &sdk.CancelProjectEvaluationRequest{ID: e.ID})
 	assertCode(err, 404)
-	_, _, err = reader.Start(ctx, "forbidden", sdk.StartProjectEvaluationRequest{Suite: suite})
+	_, err = reader.Start(ctx, &sdk.StartProjectEvaluationRequest{IdempotencyKey: "forbidden", Suite: suite})
 	assertCode(err, 403)
-	trace, err := reader.Trace(ctx, e.ID, e.Trials[0].ID, 0)
+	trace, err := reader.Trace(ctx, &sdk.GetProjectTrialTraceRequest{ID: e.ID, TrialID: e.Trials[0].ID, After: 0})
 	if err != nil || trace.Run.ConfigVersion != "1" {
 		t.Fatal(trace, err)
 	}
-	_, err = reader.Trace(ctx, e.ID, next.Trials[0].ID, 0)
+	_, err = reader.Trace(ctx, &sdk.GetProjectTrialTraceRequest{ID: e.ID, TrialID: next.Trials[0].ID, After: 0})
 	assertCode(err, 404)
-	if err = dev.Cancel(ctx, e.ID); err != nil {
+	if err = dev.Cancel(ctx, &sdk.CancelProjectEvaluationRequest{ID: e.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if err = dev.Cancel(ctx, next.ID); err != nil {
+	if err = dev.Cancel(ctx, &sdk.CancelProjectEvaluationRequest{ID: next.ID}); err != nil {
 		t.Fatal(err)
 	}
-	comparison, err := reader.Compare(ctx, next.ID, e.ID)
+	comparison, err := reader.Compare(
+		ctx,
+		&sdk.CompareProjectEvaluationsRequest{CandidateID: next.ID, BaselineID: e.ID},
+	)
 	if err != nil || len(comparison.Cases) != 1 {
 		t.Fatal(comparison, err)
 	}
 	suite.Target.AgentID = template.ID
-	_, _, err = dev.Start(ctx, "template-injection", sdk.StartProjectEvaluationRequest{Suite: suite})
+	_, err = dev.Start(ctx, &sdk.StartProjectEvaluationRequest{IdempotencyKey: "template-injection", Suite: suite})
 	assertCode(err, 404)
 	// Strict request DTOs reject identity and connection injection.
 	for _, body := range []string{`{"name":"x","revision":2,"prompt":"x","maxTurns":4,"model":{"baseURL":"http://attacker"}}`, `{"name":"x","revision":2,"prompt":"x","maxTurns":4,"actorID":"admin"}`} {
@@ -359,16 +386,16 @@ func TestProjectWorkspaceAuthorizationAndCandidates(t *testing.T) {
 		}
 	}
 	revoked.Store(true)
-	_, err = reader.Evaluation(ctx, e.ID)
+	_, err = reader.Evaluation(ctx, &sdk.GetProjectEvaluationRequest{ID: e.ID})
 	assertCode(err, 403)
-	_, err = reader.Trace(ctx, e.ID, e.Trials[0].ID, 0)
+	_, err = reader.Trace(ctx, &sdk.GetProjectTrialTraceRequest{ID: e.ID, TrialID: e.Trials[0].ID, After: 0})
 	assertCode(err, 403)
 	revoked.Store(false)
 	// Migration remains repeatable with project data present.
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got, err := dev.Agent(ctx, a.ID)
+	got, err := dev.Agent(ctx, &sdk.GetProjectAgentRequest{ID: a.ID})
 	if err != nil || got.Prompt != "new prompt" {
 		t.Fatal(got, err)
 	}
@@ -452,10 +479,10 @@ func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, err := client.Agents(ctx, sdk.PageOptions{})
+	list, err := client.Agents(ctx, &sdk.ListProjectAgentsRequest{PageOptions: sdk.PageOptions{}})
 	if workspace && err == nil {
 		var tpls *sdk.Page[sdk.ProjectTemplate]
-		tpls, err = client.Templates(ctx)
+		tpls, err = client.Templates(ctx, &sdk.ListProjectTemplatesRequest{})
 		if err == nil {
 			list.Templates = tpls.Items
 		}
@@ -473,13 +500,12 @@ func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
 		t.Fatal("coding template connection leaked")
 	}
 	agent, err := client.CreateAgent(
-		ctx,
-		sdk.CreateProjectAgentRequest{TemplateID: "coding", Name: "project coder"},
+		ctx, &sdk.CreateProjectAgentRequest{TemplateID: "coding", Name: "project coder"},
 	)
 	if err != nil || agent.Kind != "Coding" || len(agent.Tools) != 3 {
 		t.Fatal(agent, err)
 	}
-	version, err := client.Candidate(ctx, agent.ID, agent.Revision)
+	version, err := client.Candidate(ctx, &sdk.PublishProjectAgentRequest{ID: agent.ID, Revision: agent.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,37 +549,41 @@ func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
 	if workspace {
 		d, e := client.SaveDataset(
 			ctx,
-			"coding-cases",
-			sdk.SaveDatasetRequest{Name: suite.Dataset.Name, Cases: suite.Dataset.Cases},
+			&sdk.SaveDatasetRequest{
+				ID:    "coding-cases",
+				Name:  suite.Dataset.Name,
+				Cases: suite.Dataset.Cases,
+			},
 		)
 		if e != nil {
 			t.Fatal(e)
 		}
-		v, e := client.PublishDataset(ctx, d.ID, d.Revision)
+		v, e := client.PublishDataset(ctx, &sdk.PublishDatasetRequest{ID: d.ID, Revision: d.Revision})
 		if e != nil {
 			t.Fatal(e)
 		}
 		suite.Dataset = v.Snapshot
-		if _, _, e = client.Start(
-			ctx,
-			"missing-project",
-			sdk.StartProjectEvaluationRequest{Suite: suite},
+		if _, e = client.Start(
+			ctx, &sdk.StartProjectEvaluationRequest{IdempotencyKey: "missing-project", Suite: suite},
 		); e == nil {
 			t.Fatal("missing Coding project accepted")
 		}
-		if _, _, e = client.Start(
+		if _, e = client.Start(
 			ctx,
-			"forbidden-project",
-			sdk.StartProjectEvaluationRequest{ProjectID: "forbidden", Suite: suite},
+			&sdk.StartProjectEvaluationRequest{
+				IdempotencyKey: "forbidden-project",
+				ProjectID:      "forbidden",
+				Suite:          suite,
+			},
 		); e == nil {
 			t.Fatal("unauthorized Coding project accepted")
 		}
 	}
-	out, _, err := client.Start(
+	out, err := client.Start(
 		ctx,
-		"coding-start",
-		sdk.StartProjectEvaluationRequest{ProjectID: "project", Suite: suite},
+		&sdk.StartProjectEvaluationRequest{IdempotencyKey: "coding-start", ProjectID: "project", Suite: suite},
 	)
+
 	if err != nil || len(out.Trials) != 1 || out.Trials[0].Run != nil ||
 		out.Trials[0].Coding.Status != "Preparing" {
 		t.Fatal(out, err)
@@ -678,12 +708,16 @@ func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
 		callApproval(foreign, testToken, 404)
 	}
 	if workspace {
-		// One enterprise Agent can be evaluated independently for a second project.
-		second, _, e := client.Start(
+		second, // One enterprise Agent can be evaluated independently for a second project.
+			e := client.Start(
 			ctx,
-			"second-project",
-			sdk.StartProjectEvaluationRequest{ProjectID: "second", Suite: suite},
+			&sdk.StartProjectEvaluationRequest{
+				IdempotencyKey: "second-project",
+				ProjectID:      "second",
+				Suite:          suite,
+			},
 		)
+
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -697,42 +731,39 @@ func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
 			t.Fatal("enterprise candidate was duplicated per project")
 		}
 		if _, e = client.SaveEvaluationPlan(
-			ctx,
-			"restricted-plan",
-			sdk.SaveEvaluationPlanRequest{ProjectID: "project", Suite: suite},
+			ctx, &sdk.SaveEvaluationPlanRequest{ID: "restricted-plan", ProjectID: "project", Suite: suite},
 		); e != nil {
 			t.Fatal(e)
 		}
 		releaseLevel.Store(0)
 		for _, id := range []string{out.ID, second.ID} {
-			if _, e = client.Evaluation(ctx, id); e == nil {
+			if _, e = client.Evaluation(ctx, &sdk.GetProjectEvaluationRequest{ID: id}); e == nil {
 				t.Fatal("revoked project report exposed")
 			}
-			if e = client.Cancel(ctx, id); e == nil {
+			if e = client.Cancel(ctx, &sdk.CancelProjectEvaluationRequest{ID: id}); e == nil {
 				t.Fatal("revoked cancellation accepted")
 			}
 		}
-		listed, e := client.Evaluations(ctx, sdk.PageOptions{})
+		listed, e := client.Evaluations(ctx, &sdk.ListProjectEvaluationsRequest{PageOptions: sdk.PageOptions{}})
 		if e != nil || len(listed.Items) != 0 {
 			t.Fatal("restricted report list", listed, e)
 		}
-		plans, e := client.EvaluationPlans(ctx, sdk.PageOptions{})
+		plans, e := client.EvaluationPlans(ctx, &sdk.ListEvaluationPlansRequest{PageOptions: sdk.PageOptions{}})
 		if e != nil || len(plans.Items) != 0 {
 			t.Fatal("restricted plan list", plans, e)
 		}
-		if _, e = client.EvaluationPlan(ctx, "restricted-plan"); e == nil {
+		if _, e = client.EvaluationPlan(ctx, &sdk.GetEvaluationPlanRequest{ID: "restricted-plan"}); e == nil {
 			t.Fatal("restricted plan leaked")
 		}
-		if _, e = client.Agent(ctx, agent.ID); e != nil {
+		if _, e = client.Agent(ctx, &sdk.GetProjectAgentRequest{ID: agent.ID}); e != nil {
 			t.Fatal("repository revocation removed enterprise Agent", e)
 		}
 		releaseLevel.Store(40)
 	}
 	suite.Metrics[0].MinimumScore = 0
-	weak, _, err := client.Start(
+	weak, err := client.Start(
 		ctx,
-		"weak-gate",
-		sdk.StartProjectEvaluationRequest{ProjectID: "project", Suite: suite},
+		&sdk.StartProjectEvaluationRequest{IdempotencyKey: "weak-gate", ProjectID: "project", Suite: suite},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -754,10 +785,8 @@ func testCodingTemplateAndScenario(t *testing.T, workspace bool) {
 		TokenEnv:  "SECRET",
 		Workspace: "/",
 	}
-	if _, _, err = client.Start(
-		ctx,
-		"injected",
-		sdk.StartProjectEvaluationRequest{ProjectID: "project", Suite: suite},
+	if _, err = client.Start(
+		ctx, &sdk.StartProjectEvaluationRequest{IdempotencyKey: "injected", ProjectID: "project", Suite: suite},
 	); err == nil {
 		t.Fatal("browser environment injection accepted")
 	}

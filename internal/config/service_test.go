@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FlyTOmeLight/server-go/conf"
 	"github.com/FlyTOmeLight/server-go/host"
 )
 
@@ -31,7 +32,11 @@ func clearEnv(t *testing.T, keys ...string) {
 func writeConfig(t *testing.T, text string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+	if err := os.WriteFile(
+		path,
+		[]byte("AppName=\"agentic-kit-api\"\nAppCode=100\nRunMode=\"release\"\n"+text),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -39,15 +44,18 @@ func writeConfig(t *testing.T, text string) string {
 
 func TestServiceFileAndEnv(t *testing.T) {
 	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "CONFIG_OWNERS", "API_TOKENS_JSON")
-	path := writeConfig(t, `[database]
-url = "postgres://file:password@localhost/db"
+	path := writeConfig(t, `[DB]
+Driver = "PostgreSQL"
+DSN = "${env:DATABASE_URL:postgres://file:password@localhost/db}"
 [HTTPServer]
-Listen = "127.0.0.1:9000"
+ReadTimeout = 10000
+WriteTimeout = -1
+Listen = "${env:LISTEN_ADDR:127.0.0.1:9000}"
 [redis]
 url = "redis://localhost:6379/0"
 [auth]
 tokens_json = '{"123456789012345678901234":"owner"}'
-config_owners = ['owner']
+config_owners = "${env:CONFIG_OWNERS:owner}"
 `)
 	cfg, err := Load(path)
 	if err != nil {
@@ -70,14 +78,13 @@ config_owners = ['owner']
 	if len(cfg.Auth.ConfigOwners) != 2 || cfg.Auth.ConfigOwners[1] != "another" {
 		t.Fatal("CONFIG_OWNERS not decoded")
 	}
-	if cfg.Database.URL != os.Getenv("DATABASE_URL") || cfg.HTTPServer.Listen != "127.0.0.1:9100" {
+	if cfg.DB.DSN != os.Getenv("DATABASE_URL") || cfg.HTTPServer.Listen != "127.0.0.1:9100" {
 		t.Fatal("environment did not override file")
 	}
 }
 
 func TestServiceConfigFailures(t *testing.T) {
 	for _, tc := range []struct{ name, content string }{
-		{name: "unknown key", content: "[database]\nurl='postgres://localhost/db'\n[HTTPServer]\nListn='localhost:8000'"},
 		{name: "malformed", content: "[database"},
 		{name: "missing database", content: "[HTTPServer]\nListen='localhost:8000'"},
 	} {
@@ -93,7 +100,13 @@ func TestServiceConfigFailures(t *testing.T) {
 func TestMigrationEnvironmentOnly(t *testing.T) {
 	clearEnv(t, "DATABASE_URL", "LISTEN_ADDR", "REDIS_URL", "CONFIG_OWNERS", "API_TOKENS_JSON")
 	t.Setenv("DATABASE_URL", "postgres://localhost/db")
-	t.Setenv("SERVER_CONFIG_PATH", writeConfig(t, ""))
+	t.Setenv(
+		"SERVER_CONFIG_PATH",
+		writeConfig(
+			t,
+			"[DB]\nDriver='PostgreSQL'\nDSN=\"${env:DATABASE_URL}\"\n[HTTPServer]\nListen=\"127.0.0.1:8080\"\nWriteTimeout=-1",
+		),
+	)
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatal(err)
@@ -147,13 +160,25 @@ func TestFrameworkSnapshot(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://localhost/db")
 	t.Setenv("API_TOKENS_JSON", `{"123456789012345678901234":"owner"}`)
 	path := writeConfig(t, `[HTTPServer]
-Listen = "127.0.0.1:9000"
+ReadTimeout = 10000
+WriteTimeout = -1
+Listen = "${env:LISTEN_ADDR:127.0.0.1:9000}"
+[DB]
+Driver = "PostgreSQL"
+DSN = "${env:DATABASE_URL}"
+[auth]
+config_owners = "${env:CONFIG_OWNERS:}"
+tokens_json = "${env:API_TOKENS_JSON:}"
 [redis]
 url = "${env:TEST_CONFIG_REDIS}"
 `)
 	t.Setenv("TEST_CONFIG_REDIS", "redis://localhost:6379/0")
 	t.Setenv("SERVER_CONFIG_PATH", path)
-	cfg, manager, err := LoadManager("")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := conf.NewManager("")
 	if err != nil {
 		t.Fatal(err)
 	}

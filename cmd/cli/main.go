@@ -10,9 +10,10 @@ import (
 
 	"github.com/FlyTOmeLight/server-go/cli"
 	"github.com/spf13/cobra"
-)
 
-var errEvaluationFailed = errors.New("evaluation thresholds were not met")
+	"github.com/FlyTOmeLight/agentic-kit-api/command/evaluation"
+	"github.com/FlyTOmeLight/agentic-kit-api/command/migration"
+)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -25,10 +26,10 @@ func main() {
 			SilenceErrors: true,
 		},
 	)
-	command.Root.AddCommand(newMigrationCommand(), newEvaluationCommand())
-	if err := command.Root.ExecuteContext(ctx); err != nil {
+	command.Append(&migration.CommandBuilder{}, &evaluation.CommandBuilder{})
+	if err := command.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		if errors.Is(err, errEvaluationFailed) {
+		if errors.Is(err, evaluation.ErrFailed) {
 			os.Exit(2)
 		}
 		os.Exit(1)

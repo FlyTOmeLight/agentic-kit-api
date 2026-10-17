@@ -32,8 +32,7 @@ func TestSDKEvaluationLifecycleAndAuthorization(t *testing.T) {
 	}
 	ctx := t.Context()
 	agent, err := client.Agents.Create(
-		ctx,
-		sdk.CreateAgentRequest{
+		ctx, &sdk.CreateAgentRequest{
 			Name: "Eval",
 			Config: sdk.AgentConfig{
 				Model:    sdk.ModelSpec{Name: "test", BaseURL: "http://model.test/v1"},
@@ -44,7 +43,7 @@ func TestSDKEvaluationLifecycleAndAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	version, err := client.Agents.Publish(ctx, agent.ID, sdk.PublishAgentRequest{Revision: agent.Revision})
+	version, err := client.Agents.Publish(ctx, &sdk.PublishAgentRequest{ID: agent.ID, Revision: agent.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,37 +85,52 @@ func TestSDKEvaluationLifecycleAndAuthorization(t *testing.T) {
 			},
 		},
 	}
-	out, created, err := client.Evaluations.Start(ctx, "stable", req)
+	req.IdempotencyKey = "stable"
+	out, err := client.Evaluations.Start(ctx, &req)
+	created := out != nil && out.Created
+
 	if err != nil || !created {
 		t.Fatal(err)
 	}
-	replay, created, err := client.Evaluations.Start(ctx, "stable", req)
+	req.IdempotencyKey = "stable"
+	replay, err := client.Evaluations.Start(ctx, &req)
+	created = replay != nil && replay.Created
+
 	if err != nil || created || replay.ID != out.ID {
 		t.Fatal(err)
 	}
-	rows, err := client.Evaluations.List(ctx, sdk.ListEvaluationsOptions{TenantID: "t", ProjectID: "p"})
+	rows, err := client.Evaluations.List(
+		ctx,
+		&sdk.ListEvaluationsRequest{
+			ListEvaluationsOptions: sdk.ListEvaluationsOptions{TenantID: "t", ProjectID: "p"},
+		},
+	)
 	if err != nil || len(rows.Items) != 1 {
 		t.Fatal(err)
 	}
 	ordinary, _ := sdk.NewClient(server.URL, "ordinary-token-with-24-characters", server.Client())
-	_, _, err = ordinary.Evaluations.Start(ctx, "other", req)
+	req.IdempotencyKey = "other"
+	_, err = ordinary.Evaluations.Start(ctx, &req)
 	var apiErr *serrors.Error
 	if !errors.As(err, &apiErr) || apiErr.Status != 403 {
 		t.Fatal("ordinary submit", err)
 	}
 	other, _ := sdk.NewClient(server.URL, "other-token-with-24-characters", server.Client())
-	_, err = other.Evaluations.Get(ctx, out.ID)
+	_, err = other.Evaluations.Get(ctx, &sdk.GetEvaluationRequest{ID: out.ID})
 	if !errors.As(err, &apiErr) || apiErr.Status != 404 {
 		t.Fatal("cross-owner read", err)
 	}
-	if err = client.Evaluations.Cancel(ctx, out.ID); err != nil {
+	if err = client.Evaluations.Cancel(ctx, &sdk.CancelEvaluationRequest{ID: out.ID}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.Evaluations.Get(ctx, out.ID)
+	got, err := client.Evaluations.Get(ctx, &sdk.GetEvaluationRequest{ID: out.ID})
 	if err != nil || got.Status != "Canceled" || got.Report.Passed || got.Trials[0].Run.Status != sdk.Canceled {
 		t.Fatalf("got=%+v err=%v", got, err)
 	}
-	comparison, err := client.Evaluations.Compare(ctx, out.ID, out.ID)
+	comparison, err := client.Evaluations.Compare(
+		ctx,
+		&sdk.CompareEvaluationsRequest{CandidateID: out.ID, BaselineID: out.ID},
+	)
 	if err != nil || len(comparison.Cases) != 1 {
 		t.Fatal(err)
 	}

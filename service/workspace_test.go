@@ -84,29 +84,34 @@ func TestEnterpriseAssetsWithoutProjectAndDatasetSnapshots(t *testing.T) {
 			t.Fatalf("want %d got %v", want, err)
 		}
 	}
-	templates, err := c.Templates(ctx)
+	templates, err := c.Templates(ctx, &sdk.ListProjectTemplatesRequest{})
 	if err != nil || len(templates.Items) != 1 {
 		t.Fatal(templates, err)
 	}
 	agent, err := c.CreateAgent(
-		ctx,
-		sdk.CreateProjectAgentRequest{TemplateID: "writing", Name: "Enterprise writer"},
+		ctx, &sdk.CreateProjectAgentRequest{TemplateID: "writing", Name: "Enterprise writer"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.Candidate(ctx, agent.ID, agent.Revision); err != nil {
+	if _, err = c.Candidate(
+		ctx,
+		&sdk.PublishProjectAgentRequest{ID: agent.ID, Revision: agent.Revision},
+	); err != nil {
 		t.Fatal(err)
 	}
 	dataset, err := c.SaveDataset(
 		ctx,
-		"shared-cases",
-		sdk.SaveDatasetRequest{Name: "Shared", Cases: []sdk.EvaluationCase{{ID: "one", Input: "answer JSON"}}},
+		&sdk.SaveDatasetRequest{
+			ID:    "shared-cases",
+			Name:  "Shared",
+			Cases: []sdk.EvaluationCase{{ID: "one", Input: "answer JSON"}},
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := c.PublishDataset(ctx, dataset.ID, dataset.Revision)
+	v, err := c.PublishDataset(ctx, &sdk.PublishDatasetRequest{ID: dataset.ID, Revision: dataset.Revision})
 	if err != nil || v.Number != 1 {
 		t.Fatal(v, err)
 	}
@@ -130,69 +135,71 @@ func TestEnterpriseAssetsWithoutProjectAndDatasetSnapshots(t *testing.T) {
 		},
 	}
 	suite.Dataset.Cases[0].Input = "tampered client text"
-	plan, err := c.SaveEvaluationPlan(ctx, "shared-plan", sdk.SaveEvaluationPlanRequest{Suite: suite})
+	plan, err := c.SaveEvaluationPlan(ctx, &sdk.SaveEvaluationPlanRequest{ID: "shared-plan", Suite: suite})
 	if err != nil || plan.Suite.Dataset.Cases[0].Input != "answer JSON" {
 		t.Fatal(plan, err)
 	}
-	e, created, err := c.Start(ctx, "first", sdk.StartProjectEvaluationRequest{Suite: suite})
+	e, err := c.Start(ctx, &sdk.StartProjectEvaluationRequest{IdempotencyKey: "first", Suite: suite})
+	created := e != nil && e.Created
 	if err != nil || !created || e.Scope.ProjectID != "" || e.Suite.Dataset.Cases[0].Input != "answer JSON" {
 		t.Fatal(e, err)
 	}
-	again, created, err := c.Start(ctx, "first", sdk.StartProjectEvaluationRequest{Suite: suite})
+	again, err := c.Start(ctx, &sdk.StartProjectEvaluationRequest{IdempotencyKey: "first", Suite: suite})
+	created = again != nil && again.Created
 	if err != nil || created || again.ID != e.ID {
 		t.Fatal(again, err)
 	}
 	_, err = c.SaveDataset(
-		ctx,
-		dataset.ID,
-		sdk.SaveDatasetRequest{Revision: 0, Name: "Conflict", Cases: dataset.Cases},
+		ctx, &sdk.SaveDatasetRequest{ID: dataset.ID, Revision: 0, Name: "Conflict", Cases: dataset.Cases},
 	)
 	code(err, 409)
 	changed, err := c.SaveDataset(
-		ctx,
-		dataset.ID,
-		sdk.SaveDatasetRequest{
-			Revision: 1,
-			Name:     "Shared",
-			Cases:    []sdk.EvaluationCase{{ID: "one", Input: "new input"}},
+		ctx, &sdk.SaveDatasetRequest{
+			ID: dataset.ID, Revision: 1,
+			Name:  "Shared",
+			Cases: []sdk.EvaluationCase{{ID: "one", Input: "new input"}},
 		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := c.PublishDataset(ctx, dataset.ID, changed.Revision)
+	next, err := c.PublishDataset(ctx, &sdk.PublishDatasetRequest{ID: dataset.ID, Revision: changed.Revision})
 	if err != nil || next.Number != 2 {
 		t.Fatal(next, err)
 	}
-	old, err := c.DatasetVersion(ctx, dataset.ID, 1)
+	old, err := c.DatasetVersion(ctx, &sdk.GetDatasetVersionRequest{ID: dataset.ID, Number: 1})
 	if err != nil || old.Snapshot.Cases[0].Input != "answer JSON" {
 		t.Fatal(old, err)
 	}
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if old, err = c.DatasetVersion(ctx, dataset.ID, 1); err != nil || old.Snapshot.Cases[0].Input != "answer JSON" {
+	if old, err = c.DatasetVersion(
+		ctx,
+		&sdk.GetDatasetVersionRequest{ID: dataset.ID, Number: 1},
+	); err != nil ||
+		old.Snapshot.Cases[0].Input != "answer JSON" {
 		t.Fatal(old, err)
 	}
 	foreign, _ := sdk.NewWorkspaceClient(server.URL, "other", "member", "csrf", server.Client())
-	_, err = foreign.Agent(ctx, agent.ID)
+	_, err = foreign.Agent(ctx, &sdk.GetProjectAgentRequest{ID: agent.ID})
 	code(err, 404)
-	_, err = foreign.Dataset(ctx, dataset.ID)
+	_, err = foreign.Dataset(ctx, &sdk.GetDatasetRequest{ID: dataset.ID})
 	code(err, 404)
 	legacy, _ := sdk.NewProjectClient(server.URL, "tenant", "private", "member", "csrf", server.Client())
-	_, err = legacy.Agents(ctx, sdk.PageOptions{})
+	_, err = legacy.Agents(ctx, &sdk.ListProjectAgentsRequest{PageOptions: sdk.PageOptions{}})
 	code(err, 403)
 	wrong, _ := sdk.NewWorkspaceClient(server.URL, "tenant", "member", "wrong", server.Client())
-	_, err = wrong.Candidate(ctx, agent.ID, agent.Revision)
+	_, err = wrong.Candidate(ctx, &sdk.PublishProjectAgentRequest{ID: agent.ID, Revision: agent.Revision})
 	code(err, 403)
-	list, err := c.Evaluations(ctx, sdk.PageOptions{})
+	list, err := c.Evaluations(ctx, &sdk.ListProjectEvaluationsRequest{PageOptions: sdk.PageOptions{}})
 	if err != nil || len(list.Items) != 1 {
 		t.Fatal(list, err)
 	}
-	if err = c.Cancel(ctx, e.ID); err != nil {
+	if err = c.Cancel(ctx, &sdk.CancelProjectEvaluationRequest{ID: e.ID}); err != nil {
 		t.Fatal(err)
 	}
 	revoked.Store(true)
-	_, err = c.Agent(ctx, agent.ID)
+	_, err = c.Agent(ctx, &sdk.GetProjectAgentRequest{ID: agent.ID})
 	code(err, 403)
 }

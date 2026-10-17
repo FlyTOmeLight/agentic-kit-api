@@ -85,8 +85,9 @@ func newRouter(
 		tenant = client.NewTenant(cfg.TenantURL, cfg.TenantToken)
 		t.Cleanup(tenant.Close)
 	}
+	routes := newRoutes(store, redisClient, configOwners, tokens, cfg, tenant)
 	h, err := host.NewHTTPHost(manager, log, nil, testRoutes{register: func(g *gin.RouterGroup) {
-		registerRoutes(g, store, redisClient, configOwners, tokens, cfg, tenant)
+		routes.register(g)
 		if extra != nil {
 			extra(g)
 		}

@@ -20,8 +20,10 @@ type ExecutionSpec struct {
 }
 
 type SubmitExecutionRequest struct {
+	IdempotencyKey string `json:"-" form:"-" uri:"-" header:"Idempotency-Key" binding:"omitempty,max=128"`
+
 	Spec           ExecutionSpec `json:"spec"`
-	TimeoutSeconds int           `json:"timeoutSeconds"`
+	TimeoutSeconds int           `json:"timeoutSeconds" binding:"min=1,max=86400"`
 }
 
 type LeaseCheck struct {

@@ -33,8 +33,7 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 	}
 	ctx := context.Background()
 	agent, err := client.Agents.Create(
-		ctx,
-		sdk.CreateAgentRequest{
+		ctx, &sdk.CreateAgentRequest{
 			Name: "Trace",
 			Config: sdk.AgentConfig{
 				SystemPrompt: "private-system-prompt",
@@ -50,15 +49,13 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	version, err := client.Agents.Publish(ctx, agent.ID, sdk.PublishAgentRequest{Revision: agent.Revision})
+	version, err := client.Agents.Publish(ctx, &sdk.PublishAgentRequest{ID: agent.ID, Revision: agent.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, _, err := client.Executions.Submit(
-		ctx,
-		"round",
-		sdk.SubmitExecutionRequest{
-			Spec: sdk.ExecutionSpec{
+	run, err := client.Executions.Submit(
+		ctx, &sdk.SubmitExecutionRequest{
+			IdempotencyKey: "round", Spec: sdk.ExecutionSpec{
 				Scope: &sdk.Scope{
 					TenantID:  "tenant",
 					ProjectID: "project",
@@ -100,7 +97,7 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	first, err := client.Runs.Trace(ctx, run.ID, 0)
+	first, err := client.Runs.Trace(ctx, &sdk.GetRunTraceRequest{ID: run.ID, After: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,11 +118,11 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := client.Runs.Trace(ctx, run.ID, 0)
+	page, err := client.Runs.Trace(ctx, &sdk.GetRunTraceRequest{ID: run.ID, After: 0})
 	if err != nil || !page.HasMore || len(page.Events) != 50 || page.LatestEvent.Kind != "ModelStarted" {
 		t.Fatalf("page: %+v %v", page, err)
 	}
-	tail, err := client.Runs.Trace(ctx, run.ID, page.NextSeq)
+	tail, err := client.Runs.Trace(ctx, &sdk.GetRunTraceRequest{ID: run.ID, After: page.NextSeq})
 	if err != nil || tail.HasMore || tail.Events[0].Seq != page.NextSeq+1 || tail.NextSeq != tail.Run.EventSeq {
 		t.Fatalf("tail: %+v %v", tail, err)
 	}
@@ -144,16 +141,16 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 		}
 	}
 	other, _ := sdk.NewClient(server.URL, "other-token-at-least-24-characters", server.Client())
-	_, err = other.Runs.Trace(ctx, run.ID, 0)
+	_, err = other.Runs.Trace(ctx, &sdk.GetRunTraceRequest{ID: run.ID, After: 0})
 	var apiErr *serrors.Error
 	if !errors.As(err, &apiErr) || apiErr.Status != 404 {
 		t.Fatalf("owner isolation: %v", err)
 	}
-	_, err = client.Runs.Trace(ctx, run.ID, -1)
+	_, err = client.Runs.Trace(ctx, &sdk.GetRunTraceRequest{ID: run.ID, After: -1})
 	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
 		t.Fatalf("invalid cursor: %v", err)
 	}
-	fresh, err := client.Runs.Trace(ctx, run.ID, tail.NextSeq)
+	fresh, err := client.Runs.Trace(ctx, &sdk.GetRunTraceRequest{ID: run.ID, After: tail.NextSeq})
 	if err != nil || len(fresh.Events) != 0 || fresh.LatestEvent.Seq != tail.NextSeq {
 		t.Fatalf("reconnect: %+v %v", fresh, err)
 	}

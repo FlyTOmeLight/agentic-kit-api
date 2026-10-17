@@ -28,16 +28,20 @@ type AgentVersion struct {
 }
 
 type CreateAgentRequest struct {
-	Name   string      `json:"name"`
+	Name   string      `json:"name" binding:"required,max=200"`
 	Config AgentConfig `json:"config"`
 }
 
 type UpdateAgentRequest struct {
-	Name     string      `json:"name"`
-	Revision int64       `json:"revision"`
+	ID string `json:"-" uri:"id" binding:"required,max=128"`
+
+	Name     string      `json:"name" binding:"required,max=200"`
+	Revision int64       `json:"revision" binding:"min=1"`
 	Config   AgentConfig `json:"config"`
 }
 
 type PublishAgentRequest struct {
-	Revision int64 `json:"revision"`
+	ID string `json:"-" uri:"id" binding:"required,max=128"`
+
+	Revision int64 `json:"revision" binding:"min=1"`
 }

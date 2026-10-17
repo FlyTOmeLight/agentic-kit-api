@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	serrors "github.com/FlyTOmeLight/server-go/errors"
-	"github.com/gin-gonic/gin"
+	core "github.com/FlyTOmeLight/server-go/pkg"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 )
@@ -61,13 +61,14 @@ func (cfg Config) Validate() error {
 	return nil
 }
 
-type controller struct {
-	service Service
-	cfg     Config
-	tenant  *client.Tenant
+type Controller struct {
+	store    Store
+	business *Service
+	cfg      Config
+	tenant   *client.Tenant
 }
 
-func (h *controller) check(ctx context.Context, path string, body, out any) int {
+func (h *Controller) check(ctx context.Context, path string, body, out any) int {
 	return h.tenant.Check(ctx, path, body, out)
 }
 
@@ -78,7 +79,7 @@ func projectOwner(tenant, project string) string {
 	return fmt.Sprintf("forge-project:%x", sha256.Sum256(raw))
 }
 
-func (h *controller) authorized(c *gin.Context) {
+func (h *Controller) authorized(c *core.Context) {
 	cookie, err := c.Cookie("forge_session")
 	if err != nil || cookie == "" {
 		serrors.Abort(c, 401, "AuthRequired", "请先登录")
@@ -166,9 +167,12 @@ func (h *controller) authorized(c *gin.Context) {
 	c.Next()
 }
 
-func RegisterRoutes(r gin.IRouter, service Service, cfg Config, tenant *client.Tenant) {
-	h := &controller{service: service, cfg: cfg, tenant: tenant}
-	register := func(g *gin.RouterGroup) {
+func NewController(store Store, business *Service, cfg Config, tenant *client.Tenant) *Controller {
+	return &Controller{store: store, business: business, cfg: cfg, tenant: tenant}
+}
+
+func (h *Controller) RegisterRoutes(r core.Router) {
+	register := func(g *core.RouterGroup) {
 		g.GET("/agents", h.agents)
 		g.POST("/agents", h.createAgent)
 		g.GET("/agents/:agent", h.agent)
@@ -198,5 +202,20 @@ func RegisterRoutes(r gin.IRouter, service Service, cfg Config, tenant *client.T
 	g := r.Group("/api/v1/tenants/:tid", h.authorized)
 	register(g)
 	g.GET("/agent-templates", h.templates)
-	g.GET("/agent-workspace", func(c *gin.Context) { c.JSON(200, c.MustGet("workspaceAccess")) })
+	g.GET("/agent-workspace", h.workspace)
 }
+
+// workspace 查询企业工作区权限。
+// @Summary 查询企业工作区权限
+// @Tags Platform
+// @Produce json
+// @Param Cookie header string true "包含 forge_session 的会话 Cookie"
+// @Param tid path string true "tid"
+// @Success 200 {object} workspaceAccess "成功"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "权限不足"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "身份、权限或模板依赖暂不可用"
+// @Router /api/v1/tenants/{tid}/agent-workspace [get]
+func (h *Controller) workspace(c *core.Context) { c.JSON(200, c.MustGet("workspaceAccess")) }

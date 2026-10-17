@@ -1,13 +1,14 @@
 package session
 
 import (
-	"github.com/gin-gonic/gin"
+	core "github.com/FlyTOmeLight/server-go/pkg"
 )
 
-type controller struct{ service Service }
+type Controller struct{ service Service }
 
-func RegisterRoutes(v1 *gin.RouterGroup, service Service) {
-	h := &controller{service: service}
+func NewController(service Service) *Controller { return &Controller{service: service} }
+
+func (h *Controller) RegisterRoutes(v1 *core.RouterGroup) {
 	sessions := v1.Group("/sessions")
 	sessions.POST("", h.createSession)
 	sessions.GET("", h.listSessions)

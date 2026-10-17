@@ -16,51 +16,51 @@ type runClient struct{ transport *transport }
 
 var _ RunAPI = (*runClient)(nil)
 
-func (c *runClient) Get(ctx context.Context, id string) (*Run, error) {
-	return jsonResult[Run](ctx, c.transport, http.MethodGet, "/v1/runs/"+url.PathEscape(id), nil, http.StatusOK)
+func (c *runClient) Get(ctx context.Context, req *GetRunRequest) (*Run, error) {
+	return jsonResult[Run](ctx, c.transport, http.MethodGet, "/v1/runs/"+url.PathEscape(req.ID), nil, http.StatusOK)
 }
 
-func (c *runClient) Trace(ctx context.Context, id string, after int64) (*RunTrace, error) {
+func (c *runClient) Trace(ctx context.Context, req *GetRunTraceRequest) (*RunTrace, error) {
 	return jsonResult[RunTrace](
 		ctx,
 		c.transport,
 		http.MethodGet,
-		fmt.Sprintf("/v1/runs/%s/trace?after=%d", url.PathEscape(id), after),
+		fmt.Sprintf("/v1/runs/%s/trace?after=%d", url.PathEscape(req.ID), req.After),
 		nil,
 		http.StatusOK,
 	)
 }
 
-func (c *runClient) Cancel(ctx context.Context, id string) error {
+func (c *runClient) Cancel(ctx context.Context, req *CancelRunRequest) error {
 	_, err := jsonResult[struct{}](
 		ctx,
 		c.transport,
 		http.MethodPost,
-		"/v1/runs/"+url.PathEscape(id)+"/cancel",
+		"/v1/runs/"+url.PathEscape(req.ID)+"/cancel",
 		nil,
 		http.StatusNoContent,
 	)
 	return err
 }
 
-func (c *runClient) Answer(ctx context.Context, id string, req SupplyResultRequest) error {
+func (c *runClient) Answer(ctx context.Context, req *AnswerRunRequest) error {
 	_, err := jsonResult[struct{}](
 		ctx,
 		c.transport,
 		http.MethodPost,
-		"/v1/runs/"+url.PathEscape(id)+"/answer",
+		"/v1/runs/"+url.PathEscape(req.ID)+"/answer",
 		req,
 		http.StatusNoContent,
 	)
 	return err
 }
 
-func (c *runClient) Resolve(ctx context.Context, id string, req SupplyResultRequest) error {
+func (c *runClient) Resolve(ctx context.Context, req *ResolveRunRequest) error {
 	_, err := jsonResult[struct{}](
 		ctx,
 		c.transport,
 		http.MethodPost,
-		"/v1/runs/"+url.PathEscape(id)+"/resolve",
+		"/v1/runs/"+url.PathEscape(req.ID)+"/resolve",
 		req,
 		http.StatusNoContent,
 	)
@@ -69,14 +69,18 @@ func (c *runClient) Resolve(ctx context.Context, id string, req SupplyResultRequ
 
 // OpenEvents returns the raw SSE body. The caller must close it, even when
 // stopping early. Parse it with an SSE consumer; Event is the JSON data schema.
-// Supply the last runID:seq as after to reconnect. No automatic retry is performed.
-func (c *runClient) OpenEvents(ctx context.Context, id, after string) (io.ReadCloser, error) {
+// Supply the last runID:seq in LastEventID to reconnect. No automatic retry is performed.
+func (c *runClient) OpenEvents(ctx context.Context, req *OpenRunEventsRequest) (io.ReadCloser, error) {
+	path := "/v1/runs/" + url.PathEscape(req.ID) + "/events"
+	if req.After != "" {
+		path = withQuery(path, url.Values{"after": {req.After}})
+	}
 	resp, err := c.transport.request(ctx).
 		SetHeader("Accept", "text/event-stream").
-		SetHeader("Last-Event-ID", after).
-		SetDoNotParseResponse(true).
+		SetHeader("Last-Event-ID", req.LastEventID).
+		SetResponseDoNotParse(true).
 		SetTimeout(0).
-		Get("/v1/runs/" + url.PathEscape(id) + "/events")
+		Get(path)
 	if err != nil {
 		return nil, err
 	}

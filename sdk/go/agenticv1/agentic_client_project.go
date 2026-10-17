@@ -59,50 +59,46 @@ func newAssetClient(baseURL, tenantID, projectID, session, csrf string, hc *http
 	return &ProjectClient{transport: transport, path: path}, nil
 }
 
-func (c *ProjectClient) Agents(ctx context.Context, opts PageOptions) (*ProjectAgentList, error) {
+func (c *ProjectClient) Agents(ctx context.Context, req *ListProjectAgentsRequest) (*ProjectAgentList, error) {
 	return jsonResult[ProjectAgentList](
 		ctx,
 		c.transport,
 		"GET",
-		withQuery(c.path+"/agents", opts.query()),
+		withQuery(c.path+"/agents", req.PageOptions.query()),
 		nil,
 		200,
 	)
 }
 
-func (c *ProjectClient) Agent(ctx context.Context, id string) (*ProjectAgent, error) {
-	return jsonResult[ProjectAgent](ctx, c.transport, "GET", c.path+"/agents/"+url.PathEscape(id), nil, 200)
+func (c *ProjectClient) Agent(ctx context.Context, req *GetProjectAgentRequest) (*ProjectAgent, error) {
+	return jsonResult[ProjectAgent](ctx, c.transport, "GET", c.path+"/agents/"+url.PathEscape(req.ID), nil, 200)
 }
 
-func (c *ProjectClient) CreateAgent(ctx context.Context, req CreateProjectAgentRequest) (*ProjectAgent, error) {
+func (c *ProjectClient) CreateAgent(ctx context.Context, req *CreateProjectAgentRequest) (*ProjectAgent, error) {
 	return jsonResult[ProjectAgent](ctx, c.transport, "POST", c.path+"/agents", req, 201)
 }
 
-func (c *ProjectClient) UpdateAgent(
-	ctx context.Context,
-	id string,
-	req UpdateProjectAgentRequest,
-) (*ProjectAgent, error) {
-	return jsonResult[ProjectAgent](ctx, c.transport, "PUT", c.path+"/agents/"+url.PathEscape(id), req, 200)
+func (c *ProjectClient) UpdateAgent(ctx context.Context, req *UpdateProjectAgentRequest) (*ProjectAgent, error) {
+	return jsonResult[ProjectAgent](ctx, c.transport, "PUT", c.path+"/agents/"+url.PathEscape(req.ID), req, 200)
 }
 
-func (c *ProjectClient) Candidate(ctx context.Context, id string, revision int64) (*ProjectAgentVersion, error) {
+func (c *ProjectClient) Candidate(ctx context.Context, req *PublishProjectAgentRequest) (*ProjectAgentVersion, error) {
 	return jsonResult[ProjectAgentVersion](
 		ctx,
 		c.transport,
 		"POST",
-		c.path+"/agents/"+url.PathEscape(id)+"/candidates",
-		PublishAgentRequest{Revision: revision},
+		c.path+"/agents/"+url.PathEscape(req.ID)+"/candidates",
+		PublishAgentRequest{Revision: req.Revision},
 		200,
 	)
 }
 
-func (c *ProjectClient) Version(ctx context.Context, id string, version int64) (*ProjectAgentVersion, error) {
+func (c *ProjectClient) Version(ctx context.Context, req *GetProjectAgentVersionRequest) (*ProjectAgentVersion, error) {
 	return jsonResult[ProjectAgentVersion](
 		ctx,
 		c.transport,
 		"GET",
-		c.path+"/agents/"+url.PathEscape(id)+"/versions/"+strconv.FormatInt(version, 10),
+		c.path+"/agents/"+url.PathEscape(req.ID)+"/versions/"+strconv.FormatInt(req.Number, 10),
 		nil,
 		200,
 	)
@@ -110,50 +106,58 @@ func (c *ProjectClient) Version(ctx context.Context, id string, version int64) (
 
 func (c *ProjectClient) Start(
 	ctx context.Context,
-	key string,
-	req StartProjectEvaluationRequest,
-) (*EvaluationExperiment, bool, error) {
+	req *StartProjectEvaluationRequest,
+) (*StartProjectEvaluationResponse, error) {
 	out, status, err := doJSON[EvaluationExperiment](
 		ctx,
 		c.transport,
 		"POST",
 		c.path+"/evaluations",
 		req,
-		http.Header{"Idempotency-Key": {key}},
+		http.Header{"Idempotency-Key": {req.IdempotencyKey}},
 		202,
 		200,
 	)
-	return out, status == 202, err
+	if err != nil {
+		return nil, err
+	}
+	return &StartProjectEvaluationResponse{EvaluationExperiment: *out, Created: status == 202}, nil
 }
 
-func (c *ProjectClient) Evaluations(ctx context.Context, opts PageOptions) (*Page[EvaluationExperiment], error) {
+func (c *ProjectClient) Evaluations(
+	ctx context.Context,
+	req *ListProjectEvaluationsRequest,
+) (*Page[EvaluationExperiment], error) {
 	return jsonResult[Page[EvaluationExperiment]](
 		ctx,
 		c.transport,
 		"GET",
-		withQuery(c.path+"/evaluations", opts.query()),
+		withQuery(c.path+"/evaluations", req.PageOptions.query()),
 		nil,
 		200,
 	)
 }
 
-func (c *ProjectClient) Evaluation(ctx context.Context, id string) (*EvaluationExperiment, error) {
+func (c *ProjectClient) Evaluation(
+	ctx context.Context,
+	req *GetProjectEvaluationRequest,
+) (*EvaluationExperiment, error) {
 	return jsonResult[EvaluationExperiment](
 		ctx,
 		c.transport,
 		"GET",
-		c.path+"/evaluations/"+url.PathEscape(id),
+		c.path+"/evaluations/"+url.PathEscape(req.ID),
 		nil,
 		200,
 	)
 }
 
-func (c *ProjectClient) Cancel(ctx context.Context, id string) error {
+func (c *ProjectClient) Cancel(ctx context.Context, req *CancelProjectEvaluationRequest) error {
 	_, _, err := doJSON[struct{}](
 		ctx,
 		c.transport,
 		"POST",
-		c.path+"/evaluations/"+url.PathEscape(id)+"/cancel",
+		c.path+"/evaluations/"+url.PathEscape(req.ID)+"/cancel",
 		nil,
 		nil,
 		204,
@@ -161,28 +165,35 @@ func (c *ProjectClient) Cancel(ctx context.Context, id string) error {
 	return err
 }
 
-func (c *ProjectClient) Compare(ctx context.Context, candidate, baseline string) (*EvaluationComparison, error) {
+func (c *ProjectClient) Compare(
+	ctx context.Context,
+	req *CompareProjectEvaluationsRequest,
+) (*EvaluationComparison, error) {
 	return jsonResult[EvaluationComparison](
 		ctx,
 		c.transport,
 		"GET",
-		c.path+"/evaluations/"+url.PathEscape(candidate)+"/compare?baselineID="+url.QueryEscape(baseline),
+		c.path+"/evaluations/"+url.PathEscape(
+			req.CandidateID,
+		)+"/compare?baselineID="+url.QueryEscape(
+			req.BaselineID,
+		),
 		nil,
 		200,
 	)
 }
 
-func (c *ProjectClient) Trace(ctx context.Context, id, trial string, after int64) (*RunTrace, error) {
+func (c *ProjectClient) Trace(ctx context.Context, req *GetProjectTrialTraceRequest) (*RunTrace, error) {
 	return jsonResult[RunTrace](
 		ctx,
 		c.transport,
 		"GET",
 		c.path+"/evaluations/"+url.PathEscape(
-			id,
+			req.ID,
 		)+"/trials/"+url.PathEscape(
-			trial,
+			req.TrialID,
 		)+"/trace?after="+strconv.FormatInt(
-			after,
+			req.After,
 			10,
 		),
 		nil,
@@ -190,23 +201,26 @@ func (c *ProjectClient) Trace(ctx context.Context, id, trial string, after int64
 	)
 }
 
-func (c *ProjectClient) EvaluationPlans(ctx context.Context, opts PageOptions) (*Page[EvaluationPlan], error) {
+func (c *ProjectClient) EvaluationPlans(
+	ctx context.Context,
+	req *ListEvaluationPlansRequest,
+) (*Page[EvaluationPlan], error) {
 	return jsonResult[Page[EvaluationPlan]](
 		ctx,
 		c.transport,
 		"GET",
-		withQuery(c.path+"/evaluation-plans", opts.query()),
+		withQuery(c.path+"/evaluation-plans", req.PageOptions.query()),
 		nil,
 		200,
 	)
 }
 
-func (c *ProjectClient) EvaluationPlan(ctx context.Context, id string) (*EvaluationPlan, error) {
+func (c *ProjectClient) EvaluationPlan(ctx context.Context, req *GetEvaluationPlanRequest) (*EvaluationPlan, error) {
 	return jsonResult[EvaluationPlan](
 		ctx,
 		c.transport,
 		"GET",
-		c.path+"/evaluation-plans/"+url.PathEscape(id),
+		c.path+"/evaluation-plans/"+url.PathEscape(req.ID),
 		nil,
 		200,
 	)
@@ -214,14 +228,13 @@ func (c *ProjectClient) EvaluationPlan(ctx context.Context, id string) (*Evaluat
 
 func (c *ProjectClient) SaveEvaluationPlan(
 	ctx context.Context,
-	id string,
-	req SaveEvaluationPlanRequest,
+	req *SaveEvaluationPlanRequest,
 ) (*EvaluationPlan, error) {
 	return jsonResult[EvaluationPlan](
 		ctx,
 		c.transport,
 		"PUT",
-		c.path+"/evaluation-plans/"+url.PathEscape(id),
+		c.path+"/evaluation-plans/"+url.PathEscape(req.ID),
 		req,
 		200,
 	)
@@ -229,39 +242,41 @@ func (c *ProjectClient) SaveEvaluationPlan(
 
 func (c *ProjectClient) StartTrial(
 	ctx context.Context,
-	agent, key string,
-	req StartProjectTrialRequest,
-) (*ProjectTrial, bool, error) {
+	req *StartProjectTrialRequest,
+) (*StartProjectTrialResponse, error) {
 	out, status, err := doJSON[ProjectTrial](
 		ctx,
 		c.transport,
 		"POST",
-		c.path+"/agents/"+url.PathEscape(agent)+"/trials",
+		c.path+"/agents/"+url.PathEscape(req.AgentID)+"/trials",
 		req,
-		http.Header{"Idempotency-Key": {key}},
+		http.Header{"Idempotency-Key": {req.IdempotencyKey}},
 		202,
 		200,
 	)
-	return out, status == 202, err
+	if err != nil {
+		return nil, err
+	}
+	return &StartProjectTrialResponse{ProjectTrial: *out, Created: status == 202}, nil
 }
 
-func (c *ProjectClient) Trial(ctx context.Context, agent, id string) (*ProjectTrial, error) {
+func (c *ProjectClient) Trial(ctx context.Context, req *GetProjectTrialRequest) (*ProjectTrial, error) {
 	return jsonResult[ProjectTrial](
 		ctx,
 		c.transport,
 		"GET",
-		c.path+"/agents/"+url.PathEscape(agent)+"/trials/"+url.PathEscape(id),
+		c.path+"/agents/"+url.PathEscape(req.AgentID)+"/trials/"+url.PathEscape(req.ID),
 		nil,
 		200,
 	)
 }
 
-func (c *ProjectClient) CancelTrial(ctx context.Context, agent, id string) error {
+func (c *ProjectClient) CancelTrial(ctx context.Context, req *CancelProjectTrialRequest) error {
 	_, _, err := doJSON[struct{}](
 		ctx,
 		c.transport,
 		"POST",
-		c.path+"/agents/"+url.PathEscape(agent)+"/trials/"+url.PathEscape(id)+"/cancel",
+		c.path+"/agents/"+url.PathEscape(req.AgentID)+"/trials/"+url.PathEscape(req.ID)+"/cancel",
 		nil,
 		nil,
 		204,
@@ -269,39 +284,49 @@ func (c *ProjectClient) CancelTrial(ctx context.Context, agent, id string) error
 	return err
 }
 
-func (c *ProjectClient) Templates(ctx context.Context) (*Page[ProjectTemplate], error) {
+func (c *ProjectClient) Templates(
+	ctx context.Context,
+	req *ListProjectTemplatesRequest,
+) (*Page[ProjectTemplate], error) {
 	return jsonResult[Page[ProjectTemplate]](ctx, c.transport, "GET", c.path+"/agent-templates", nil, 200)
 }
 
-func (c *ProjectClient) Datasets(ctx context.Context, opts PageOptions) (*Page[Dataset], error) {
-	return jsonResult[Page[Dataset]](ctx, c.transport, "GET", withQuery(c.path+"/datasets", opts.query()), nil, 200)
-}
-
-func (c *ProjectClient) Dataset(ctx context.Context, id string) (*Dataset, error) {
-	return jsonResult[Dataset](ctx, c.transport, "GET", c.path+"/datasets/"+url.PathEscape(id), nil, 200)
-}
-
-func (c *ProjectClient) SaveDataset(ctx context.Context, id string, req SaveDatasetRequest) (*Dataset, error) {
-	return jsonResult[Dataset](ctx, c.transport, "PUT", c.path+"/datasets/"+url.PathEscape(id), req, 200)
-}
-
-func (c *ProjectClient) PublishDataset(ctx context.Context, id string, revision int64) (*DatasetVersion, error) {
-	return jsonResult[DatasetVersion](
+func (c *ProjectClient) Datasets(ctx context.Context, req *ListDatasetsRequest) (*Page[Dataset], error) {
+	return jsonResult[Page[Dataset]](
 		ctx,
 		c.transport,
-		"POST",
-		c.path+"/datasets/"+url.PathEscape(id)+"/versions",
-		PublishAgentRequest{Revision: revision},
+		"GET",
+		withQuery(c.path+"/datasets", req.PageOptions.query()),
+		nil,
 		200,
 	)
 }
 
-func (c *ProjectClient) DatasetVersion(ctx context.Context, id string, n int64) (*DatasetVersion, error) {
+func (c *ProjectClient) Dataset(ctx context.Context, req *GetDatasetRequest) (*Dataset, error) {
+	return jsonResult[Dataset](ctx, c.transport, "GET", c.path+"/datasets/"+url.PathEscape(req.ID), nil, 200)
+}
+
+func (c *ProjectClient) SaveDataset(ctx context.Context, req *SaveDatasetRequest) (*Dataset, error) {
+	return jsonResult[Dataset](ctx, c.transport, "PUT", c.path+"/datasets/"+url.PathEscape(req.ID), req, 200)
+}
+
+func (c *ProjectClient) PublishDataset(ctx context.Context, req *PublishDatasetRequest) (*DatasetVersion, error) {
+	return jsonResult[DatasetVersion](
+		ctx,
+		c.transport,
+		"POST",
+		c.path+"/datasets/"+url.PathEscape(req.ID)+"/versions",
+		PublishAgentRequest{Revision: req.Revision},
+		200,
+	)
+}
+
+func (c *ProjectClient) DatasetVersion(ctx context.Context, req *GetDatasetVersionRequest) (*DatasetVersion, error) {
 	return jsonResult[DatasetVersion](
 		ctx,
 		c.transport,
 		"GET",
-		c.path+"/datasets/"+url.PathEscape(id)+"/versions/"+strconv.FormatInt(n, 10),
+		c.path+"/datasets/"+url.PathEscape(req.ID)+"/versions/"+strconv.FormatInt(req.Number, 10),
 		nil,
 		200,
 	)

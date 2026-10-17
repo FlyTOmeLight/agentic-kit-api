@@ -98,6 +98,6 @@ type Event struct {
 }
 
 type SupplyResultRequest struct {
-	StepID string `json:"stepID"`
-	Result string `json:"result"`
+	StepID string `json:"stepID" binding:"required,max=128"`
+	Result string `json:"result" binding:"required"`
 }

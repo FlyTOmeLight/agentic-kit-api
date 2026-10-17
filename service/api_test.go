@@ -3,17 +3,16 @@ package service
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	server "github.com/FlyTOmeLight/server-go"
-	"github.com/FlyTOmeLight/server-go/host"
-	"github.com/FlyTOmeLight/server-go/logger"
+	"github.com/FlyTOmeLight/server-go/app"
+	"github.com/FlyTOmeLight/server-go/httpintegration"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -59,68 +58,45 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 	t.Setenv("REDIS_URL", redisURL)
 	t.Setenv("LISTEN_ADDR", "127.0.0.1:0")
 	t.Setenv("GIN_MODE", "test")
-	t.Setenv("SERVER_CONFIG_PATH", "../../conf/server/config.toml")
+	t.Setenv("SERVER_CONFIG_PATH", "../conf/server/config.toml")
 	t.Setenv("CONFIG_OWNERS", "owner")
 	token := "framework-lifecycle-test-token-32chars"
 	t.Setenv("API_TOKENS_JSON", `{"`+token+`":"owner"}`)
 	for _, key := range []string{"PLATFORM_TENANT_URL", "PLATFORM_TENANT_TOKEN", "PLATFORM_TEMPLATE_OWNER", "PLATFORM_TEMPLATES_JSON", "PLATFORM_CODING_URL", "PLATFORM_CODING_TOKEN"} {
 		t.Setenv(key, "")
 	}
-	cfg, manager, err := config.LoadManager("")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close(context.Background())
-	log, err := logger.NewLogger(&logger.Config{Outputs: []logger.Output{{Type: "Console", Level: "Error"}}})
+	endpoint := "http://" + listener.Addr().String()
+	t.Setenv("LISTEN_ADDR", listener.Addr().String())
+	_ = listener.Close()
+	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer log.Close()
-	api, err := New(cfg, log)
+	store, err := durable.Open(ctx, cfg.DB.DSN)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap := server.NewBootstrap(api)
-	if err := bootstrap.Initialize(ctx); err != nil {
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
 		t.Fatal(err)
-	}
-	defer func() {
-		if err := bootstrap.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	}()
-	if err := api.store.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	h, err := host.NewHTTPHost(manager, log, nil, api)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer h.Close()
-	w := httptest.NewRecorder()
-	h.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/healthz", nil))
-	if w.Code != 503 {
-		t.Fatalf("ready before Start: %d", w.Code)
 	}
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	finished := make(chan error, 1)
-	go func() { finished <- h.Run(runCtx) }()
-	// Join Run before releasing any resources, including when an assertion fails.
+	go func() { finished <- app.Run(runCtx, app.Options{Setup: httpintegration.Install}, Build) }()
 	defer func() {
 		stop()
 		select {
 		case err := <-finished:
-			select {
-			case <-api.done:
-			default:
-				t.Error("background workers still running")
-			}
 			if err != nil {
 				t.Error(err)
 			}
 		case <-time.After(6 * time.Second):
-			t.Error("HTTP host did not stop")
+			t.Error("application did not stop")
 		}
 	}()
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -128,17 +104,13 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 	client := &http.Client{Timeout: time.Second, Transport: transport}
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
-	endpoint := ""
 ready:
 	for {
-		if address := h.Address(); address != "" {
-			endpoint = "http://" + address
-			resp, err := client.Get(endpoint + "/healthz")
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == 200 {
-					break ready
-				}
+		resp, err := client.Get(endpoint + "/healthz")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				break ready
 			}
 		}
 		select {
@@ -180,8 +152,7 @@ ready:
 	}
 	defer sdkClient.Close()
 	agent, err := sdkClient.Agents.Create(
-		ctx,
-		sdk.CreateAgentRequest{
+		ctx, &sdk.CreateAgentRequest{
 			Name: "framework",
 			Config: sdk.AgentConfig{
 				Model:    sdk.ModelSpec{Name: "test", BaseURL: "http://localhost:11434/v1"},
@@ -193,32 +164,30 @@ ready:
 		t.Fatal(err)
 	}
 	if _, err := sdkClient.Agents.Publish(
-		ctx,
-		agent.ID,
-		sdk.PublishAgentRequest{Revision: agent.Revision},
+		ctx, &sdk.PublishAgentRequest{ID: agent.ID, Revision: agent.Revision},
 	); err != nil {
 		t.Fatal(err)
 	}
-	session, err := sdkClient.Sessions.Create(ctx, sdk.CreateSessionRequest{AgentID: agent.ID})
+	session, err := sdkClient.Sessions.Create(ctx, &sdk.CreateSessionRequest{AgentID: agent.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, created, err := sdkClient.Sessions.SendMessage(
+	run, err := sdkClient.Sessions.SendMessage(
 		ctx,
-		session.ID,
-		"framework-request",
-		sdk.SendMessageRequest{Query: "hello"},
+		&sdk.SendMessageRequest{SessionID: session.ID, IdempotencyKey: "framework-request", Query: "hello"},
 	)
+	created := run != nil && run.Created
+
 	if err != nil || !created {
 		t.Fatalf("submit: created=%t err=%v", created, err)
 	}
-	if _, err := sdkClient.Runs.Get(ctx, run.ID); err != nil {
+	if _, err := sdkClient.Runs.Get(ctx, &sdk.GetRunRequest{ID: run.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sdkClient.Runs.Cancel(ctx, run.ID); err != nil {
+	if err := sdkClient.Runs.Cancel(ctx, &sdk.CancelRunRequest{ID: run.ID}); err != nil {
 		t.Fatal(err)
 	}
-	stream, err := sdkClient.Runs.OpenEvents(ctx, run.ID, "")
+	stream, err := sdkClient.Runs.OpenEvents(ctx, &sdk.OpenRunEventsRequest{ID: run.ID, LastEventID: ""})
 	if err != nil {
 		t.Fatal(err)
 	}

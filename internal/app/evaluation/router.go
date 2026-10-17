@@ -5,15 +5,14 @@ import (
 
 	"github.com/FlyTOmeLight/server-go/auth"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
-	"github.com/gin-gonic/gin"
+	core "github.com/FlyTOmeLight/server-go/pkg"
 )
 
-func RegisterRoutes(v1 *gin.RouterGroup, service Service, owners []string) {
-	h := &controller{service: service}
+func (h *Controller) RegisterRoutes(v1 *core.RouterGroup) {
 	group := v1.Group("/evaluations")
 	// A trusted gateway checks real membership before supplying scope and environment.
-	group.Use(func(c *gin.Context) {
-		if !slices.Contains(owners, auth.UserID(c)) {
+	group.Use(func(c *core.Context) {
+		if !slices.Contains(h.owners, auth.UserID(c)) {
 			serrors.Abort(c, 403, "Forbidden", "evaluation requires a trusted application")
 			return
 		}

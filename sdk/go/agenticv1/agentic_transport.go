@@ -44,7 +44,7 @@ func newTransport(endpoint, token string, hc *http.Client) (*transport, error) {
 			client.SetTimeout(timeout)
 		}
 	}
-	client.SetRedirectPolicy(resty.NoRedirectPolicy()).SetHeader("Accept", "application/json").SetRetryCount(0)
+	client.SetRedirectPolicy(resty.RedirectNoPolicy()).SetHeader("Accept", "application/json").SetRetryCount(0)
 	return &transport{client: client, timeout: timeout}, nil
 }
 
@@ -70,7 +70,7 @@ func doJSON[T any](
 	var result T
 	req := t.request(ctx).
 		SetResult(&result).
-		SetForceResponseContentType("application/json").
+		SetResponseForceContentType("application/json").
 		SetResponseBodyUnlimitedReads(true)
 	if body != nil {
 		req.SetHeader("Content-Type", "application/json").SetBody(body)
@@ -79,11 +79,14 @@ func doJSON[T any](
 		req.Header[name] = append([]string(nil), values...)
 	}
 	resp, err := req.Execute(method, path)
-	if err != nil {
+	if err := framesdk.Complete(resp, err); err != nil {
+		if resp != nil {
+			return nil, resp.StatusCode(), err
+		}
 		return nil, 0, err
 	}
 	status := resp.StatusCode()
-	if status < 200 || status >= 300 {
+	if status >= http.StatusMultipleChoices && status < http.StatusBadRequest {
 		return nil, status, framesdk.DecodeError(status, bytes.NewReader(resp.Bytes()))
 	}
 	for _, allowed := range statuses {
