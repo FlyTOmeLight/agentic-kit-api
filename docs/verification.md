@@ -1,6 +1,8 @@
 # 执行链路验证记录
 
-验证日期：2026-10-02。使用本机 Go 1.27.1、隔离的 PostgreSQL 17.6 与 Redis 7.2.10 容器。原 agentic-kit 和现有业务数据库未修改。
+本文件按日期保留历史检查结果，条目中的路径、版本和限制描述当时的实现。当前功能、布局和契约分别以 README、docs/layout.md 和 docs/api.md 为准；可复用经验见 docs/lessons/。
+
+最早验证日期：2026-10-02。使用本机 Go 1.27.1、隔离的 PostgreSQL 17.6 与 Redis 7.2.10 容器。原 agentic-kit 和现有业务数据库未修改。
 
 两个仓库均完成 gofmt、go test -race -count=1 -timeout=60s ./...、go vet ./... 和命令入口构建。测试显式设置 TEST_DATABASE_URL；API 测试还设置 TEST_REDIS_URL，没有把缺少数据库时的跳过视为通过。
 
@@ -30,7 +32,7 @@ TestProcessKillResumesWithoutRepeatingTool 使用真实 HTTP API 提交任务、
 
 ## 未执行的验证
 
-未接入生产 Prism、AppForge、auth-center 和沙箱服务；未使用真实模型凭据；未做容量压测、数据库高可用切换、完整旧 SDK 兼容测试或依赖漏洞数据库扫描。原业务功能迁移范围见 migration.md。
+未接入生产 Prism、AppForge、auth-center 和沙箱服务；未使用真实模型凭据；未做容量压测、数据库高可用切换、完整旧 SDK 兼容测试或依赖漏洞数据库扫描。本次重构范围以[框架设计](refactoring-design.md)为准，本节保留历史验证结果。
 
 ## Gin 改造验证
 
@@ -117,3 +119,16 @@ API 和 worker 均通过 make integration（全仓库 race 与 vet），使用�
 表结构按领域迁至 internal/table，模型集合由 table.Migrate 注册。pkg/durable 保留公开执行类型、Store 和业务事务，内部使用表模型并转换为领域对象；删除原 models.go，没有保留模型别名。公开 Spec 仍定义在 durable，持久化 ExecutionSnapshot 单独定义以避免循环依赖，JSON 格式不变。
 
 通过 API 与 worker 的完整 make integration（race、vet）、GOWORK=off CGO_ENABLED=0 make build、gorgeous 格式检查。额外用已发布 v0.5.0 的模型创建隔离数据库并写入已完成任务、执行快照、checkpoint、事件和工具结果；新实现连续迁移两次后，145 项列/约束/索引定义逐项一致，全部已有数据保持一致。隔离 schema 在验证后清理。Docker 镜像 agentic-kit-api:v0.5.1 构建及镜像内 CLI 帮助通过，Helm lint 通过；首次 Docker Hub TLS 超时重试后成功。
+
+
+## server-go v0.9.0 重构与 Coding 根模块升级
+
+2026-10-14：采用 server-go v0.9.0、forge-coding-api 根模块 v0.17.0 与 Go 1.27.1。入口使用 app.Run，公开 service/ 装配与管理生命周期；配置使用框架快照和 TOML 占位符。数据库由 db.Module 接管，durable.New 借用连接并保留 UTC、唯一约束错误转换和静默 SQL 日志。专用通知缓存允许 Redis 不可用时启动并回放数据库事件。
+
+HTTP 使用 core 类型、SDK 请求标签和 binder。幂等 Header 独立绑定，回归测试验证它不能被 query 替代、任意 Header 不能覆盖 URI 或 JSON。平台具体业务 Service 处理模板复制、数据集冻结、评测权限、比较、轨迹和 Coding 发布门槛，由装配层构造并注入。共享 durable 事务与持久化格式保留，普通单次操作不增加纯转发 Service。
+
+SDK 全部操作改为 ctx 与操作请求指针；路径、查询和 Header 在请求对象里，幂等操作返回带 Created 的结果。CLI 领域命令移入 command/，通过 cli.CommandBuilder 装配。53 个业务 handler 的 Swagger 注释生成 76 项 OpenAPI 操作，测试逐项核对实际路由及路径参数。
+
+API 在 GOWORK=off、无本地 replace 的正式发布依赖下通过 make integration（全仓库 race 与 vet）、CGO_ENABLED=0 make build 和 CLI 帮助入口；make doc、OpenAPI 路由检查、Swagger 实际 JSON 响应和 Helm lint 通过。入口显式安装 httpintegration.Install，使 SwaggerEnable、指标及其他可选 HTTP 配置生效。真实 PostgreSQL 测试验证借用连接不会被 Store 关闭、唯一约束错误保留，以及同一数据上的重复迁移。
+
+worker 在 API/worker 联合 workspace 下通过完整 make integration（race 与 vet）。最终代码又通过 TestProcessKillResumesWithoutRepeatingTool，验证实际启动 API、强杀接管、不重复执行工具及 Redis 不可用时的 SSE 回放。仅更新 worker 跨进程测试生成的 API 配置，不修改执行实现。没有提交、推送或发布仓库。
