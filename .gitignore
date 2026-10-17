@@ -10,3 +10,6 @@ go.work
 go.work.sum
 
 .local/
+
+# 项目领域术语属于共享文档。
+!/CONTEXT.md

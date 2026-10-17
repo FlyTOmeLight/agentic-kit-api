@@ -1,0 +1,149 @@
+{
+  "artifact": "architecture.html",
+  "diagram_style": "layered capability architecture with execution mechanism",
+  "repository_revision": "1d0bce1ab986004f063595857ff0c530aee6e7a3",
+  "sha256": "2791b4edde3f6a2391ac6d47f69c6f7aa4559b146e8067b1eff3c15a7611856a",
+  "bytes": 36347,
+  "checks": [
+    {
+      "viewport": [
+        1440,
+        900
+      ],
+      "tab": "overview",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        1440,
+        900
+      ],
+      "tab": "runtime",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        1440,
+        900
+      ],
+      "tab": "services",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        1440,
+        900
+      ],
+      "tab": "code",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        1440,
+        900
+      ],
+      "tab": "data",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        1280,
+        900
+      ],
+      "tab": "overview",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        1280,
+        900
+      ],
+      "tab": "runtime",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        1280,
+        900
+      ],
+      "tab": "services",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        1280,
+        900
+      ],
+      "tab": "code",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        1280,
+        900
+      ],
+      "tab": "data",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        390,
+        844
+      ],
+      "tab": "overview",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        390,
+        844
+      ],
+      "tab": "runtime",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        390,
+        844
+      ],
+      "tab": "services",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        390,
+        844
+      ],
+      "tab": "code",
+      "contained": true,
+      "active": true
+    },
+    {
+      "viewport": [
+        390,
+        844
+      ],
+      "tab": "data",
+      "contained": true,
+      "active": true
+    }
+  ],
+  "keyboardNavigation": true,
+  "themeSwitch": true,
+  "printAllTopics": true,
+  "pageErrors": [],
+  "visual_review": "passed"
+}

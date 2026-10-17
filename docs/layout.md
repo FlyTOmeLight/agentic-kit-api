@@ -1,70 +1,45 @@
-# 项目目录与依赖方向
+# 项目布局与依赖约束
 
-API 采用 [server-go 项目组织约定](https://github.com/FlyTOmeLight/server-go/blob/main/docs/go-project-layout.md)。HTTP、SDK 和配置按框架布局组织，具有真实跨仓库用途的持久执行包保留为公开包。
+当前功能和各层职责见 [README 的分层说明](../README.md#功能与代码分层)。本文维护修改目录、装配、HTTP/SDK 或共享包时需要遵守的项目约束。框架调用以 go.mod 选定的 server-go 版本为准。
 
-```text
-agentic-kit-api/
-├── cmd/
-│   ├── server/main.go          # Bootstrap、HTTPHost、配置与信号
-│   └── cli/                    # server-go CLI：migrate、eval
-├── internal/
-│   ├── service/                # 资源、总路由、HTTP 契约测试与生命周期
-│   ├── app/
-│   │   ├── apperror/           # durable 领域错误到框架 HTTP 错误的映射
-│   │   ├── agent/              # Agent Controller、路由与消费方 Service 接口
-│   │   ├── session/            # Session、消息、历史
-│   │   ├── run/                # 执行、取消、SSE、trace
-│   │   ├── evaluation/         # 持久实验接口
-│   │   └── platform/           # Forge 项目与企业资产接入、授权编排
-│   ├── client/                 # Tenant 鉴权与 Coding 环境的外部协议、连接所有权
-│   ├── config/                 # 类型化配置、框架配置快照与校验
-│   └── table/                  # 持久化模型、约束、索引与迁移注册
-├── sdk/go/agenticv1/            # 公开 HTTP 契约与 server-go 客户端
-│   ├── agentic_client.go       # 客户端构造、业务入口与 Close
-│   ├── agentic_api_*.go        # 各领域请求、响应和公开数据
-│   ├── agentic_interface_*.go  # 领域接口
-│   ├── agentic_client_*.go     # 各领域 HTTP 调用
-│   └── agentic_transport.go    # 框架传输、超时与标准错误解码
-├── pkg/
-│   ├── durable/                # API 与 worker 共用的执行契约、存储操作与业务事务
-│   └── evaluation/             # CLI 与持久实验共用的确定性评分、配对比较
-├── conf/server/config.toml     # 框架默认配置路径
-├── examples/
-│   ├── agents/                 # Agent 创建、发布请求样例
-│   └── evaluation/             # 冻结评测套件
-├── deploy/                     # 本地数据库与 Redis
-├── charts/                     # Kubernetes 部署
-├── docs/
-├── go.mod
-└── Makefile
-```
+## 装配与资源所有权
 
-## 装配与职责
+依赖装配方向为 `cmd/server → app.Run → service.Build → internal/app`。入口负责信号和退出码；独立 Build 初始化连接并交给 Runtime，组合应用通过公开 `service.New` 注入已有 Store 和 Redis，不重复调用子应用 Build。
 
-装配方向为 `cmd/server → internal/service → internal/app/<领域>`。入口构造配置 Manager 和 Logger，Bootstrap 初始化资源，HTTPHost 安装路由并运行服务。`service.API` 拥有 Store、Redis、Tenant 与 Coding 客户端，以及 Outbox、评测后台任务。RegisterRoutes 只安装路由；Start 启动任务；Stop 取消并等待任务；Close 在 HTTP 与后台任务结束后关闭连接。配置在启动时加载，修改后重启。
+- 构造时创建 Controller 和平台业务 Service，由装配层注入。RegisterRoutes 只安装既有 handler；配置更新不重新构造对象或启动后台任务。
+- Start 使用框架提供的运行 context，Stop 取消并等待所属任务退出。初始化 context 只用于装配；未交给 Runtime 的部分资源在构造失败时清理。
+- HTTP 先排空，再停止任务，最后关闭资源。Stop 失败或超时后，在任务真正退出前保留依赖。
+- 框架 db.Module 拥有独立应用的数据库连接。durable.New 借用数据库句柄，Store.Close 不关闭借用的池；durable.Open 为独立 worker 创建并拥有连接。
+- API 拥有 Tenant/Coding 客户端，在任务停止后关闭。通知缓存由 Runtime 接管，允许 Redis 不可用时启动和从数据库回放事件；原因及验证见 [资源经验](lessons/resource-and-recovery.md)。
 
-各领域 Controller 处理 HTTP 绑定、状态码与响应，调用消费方定义的 Service 接口。请求与响应复用 `sdk/go/agenticv1` 的公开类型；绑定和校验留在服务端。Session 负责提交消息，Run 负责执行状态与 SSE。领域包之间不互相调用 Controller，context 沿调用链传递。
+类型化配置与业务校验在 `internal/config`，运行时配置加载由框架完成。HTTP 路径和 SSE 超时限制属于项目契约；配置字段和启动方式以 [默认配置](../conf/server/config.toml) 及 [README](../README.md#配置与启动行为) 为准。
 
-Forge 接入位于 `internal/app/platform`，负责项目和企业资产的身份、权限及业务编排。Tenant 会话及授权协议、Coding 独立环境适配位于 `internal/client`，由装配层显式构造并管理连接；Coding 调用正式发布的 `forge-coding-api/sdk/go/codingv1 v0.16.1`，只转换平台领域类型，不再维护 HTTP 协议。客户端不导入 Controller 或 Gin。
+## HTTP 与业务职责
+
+Controller 负责请求绑定、校验、响应和 Swagger，复用 SDK 请求/响应类型。JSON、URI、Query 在同一请求中绑定；Header 使用独立对象再赋值，避免覆盖路径或正文。不要把包含正文、URI 的整个对象再次传给 Header 绑定，见 [来源隔离经验](lessons/server-go-migration.md)。
+
+平台 Service 封装模板副本、权限、数据集冻结、评测及发布门槛，使用 `core.Context` 获取身份和请求信息。其 Store 接口与 Agent、Session、Run、Evaluation 的消费方接口用标准 context 调用共享事务；已有单次事务直接调用，不增加纯转发 Service。领域包不调用其他领域的 Controller。
+
+数据库与 SDK 调用使用 `ctx.Request.Context()`；长期任务、durable 和公开 SDK 使用标准 context，不持有会被 HTTP 框架复用的 Context。外部协议和连接适配属于 `internal/client`，不依赖 Controller。
+
+通用请求日志、Recovery、404/405、错误渲染、Bearer 鉴权基础能力、binder 与 SSE 传输复用 server-go。本项目保留领域权限、错误到状态的映射、SSE 游标与数据库事件回放。
+
+修改 HTTP 行为时同步 [接口契约](api.md)、SDK 和相关调用方；Controller 及 SDK 标签是文档来源，通过 `make doc` 重生成 `doc/openapi`，不直接编辑生成产物。
 
 ## 共享持久化边界
 
-`internal/table` 按 Agent、Session、Run、Evaluation、Dataset 定义 GORM 模型，表名、字段、约束和索引由此统一维护。`table.Migrate` 注册完整模型集合，`durable.Store.Migrate` 保留迁移事务与旧数据检查。表模型依赖 SDK 的领域类型，不依赖 durable 或 HTTP 模块。
+`internal/table` 是 GORM 表模型、表名、约束和索引的唯一来源。模型集合集中在 `internal/table/migrate.go`，由 durable.Store.Migrate 在持有迁移锁的事务中调用；API 和 worker 启动不自动迁移。变更模型后验证已有数据上的重复迁移。
 
-`pkg/durable` 保留 API 与独立 worker 使用的公开执行类型、Store 和事务规则，内部直接使用 table 模型，不保留旧模型别名或副本。查询与业务事务仍在对应 durable 领域文件中完成，包含执行权、epoch 和消息/任务/事件的一致提交；表记录在消费方转换为公开领域对象。公开 Spec 与私有 ExecutionSnapshot 在读取时显式转换，持久化 JSON 字段保持一致。
+表模型可以复用 SDK 的领域类型，不依赖 durable 或 HTTP。查询和业务事务位于 `pkg/durable`，使用 table 模型并显式转换为公开对象；不对外暴露私有表类型或保存旧模型副本。
 
-worker 不能直接导入 API 的 internal/table，但可使用内部依赖该包的公开 durable 模块；Go 的 internal 限制作用于直接导入者，而不是禁止公开包内部使用私有实现。`pkg/evaluation` 提供 CLI 与持久实验共用的纯函数评分逻辑。
+`pkg/durable` 的任务、租约、步骤、事件、执行快照与 Store 供 API 和独立 worker 共用，不依赖 Gin 或 HTTP 模块。公开接口或持久化格式变更时检查 worker 的真实调用和恢复行为；状态、执行权、epoch 和一致提交约束见 [恢复设计](design.md)。
 
-Worker 仓库维持自己的 `cmd/worker`、`internal/engine`、`internal/adapters` 和 `configs`。它只引用公开共享包，不导入 API 的 internal。跨进程恢复测试实际构建 `cmd/server`，通过 HTTP 提交和读取任务；本地联合验证使用临时 Go workspace。
+worker 只直接导入公开包，不能直接导入本仓库 internal。公开 durable 内部依赖 internal/table 符合 Go 的 internal 导入限制。`pkg/evaluation` 则供 CLI 和持久实验共用套件校验、评分与比较。
 
-## SDK
+## SDK 与跨仓库依赖
 
-公开导入路径为 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`，包名 `agenticv1`。文件按领域拆分请求、响应、接口和调用方法。SDK 不导入 API 的 internal、durable、Gin 或 GORM。durable 复用 SDK 的公开领域类型，保留公开执行快照和租约契约，内部使用 table 的 GORM 模型，HTTP 返回值显式转换为公开响应。
+公开路径为 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`。请求、响应、接口和客户端按领域拆文件；SDK 不导入本项目 internal、durable、Gin 或 GORM。稳定 HTTP 类型集中维护在 SDK，持久化模型与其分别演进，通过显式映射转换。
 
-Client 提供 Agents、Sessions、Runs、Executions、Evaluations，ProjectClient 提供 Forge 会话接口。私有传输复用 server-go sdk.Client，每次调用创建独立请求，显式传递 context；身份只属于对应客户端或本次请求。普通 JSON 有明确超时，SSE 由调用方 context 控制，不缓冲完整事件流。SDK 使用框架的 sdk.DecodeError，向调用方返回 *server-go/errors.Error；Status 是 HTTP 状态，StatusCode 是框架错误编号。
+普通操作接收 `context.Context` 和请求指针；路径、Query、Header 与 JSON 按协议分别编码。客户端所有者负责 Close，流所有者关闭响应体。普通 JSON 通过 sdk.Complete 完成错误处理，流式失败使用 sdk.DecodeError；调用示例与错误语义见 [SDK README](../sdk/go/agenticv1/README.md)。
 
-客户端所有者在请求结束后调用 Close，流所有者关闭返回的响应体。构造时传入的标准 HTTP Transport 会被克隆，SDK 管理自己的连接池。旧 SDK 导入路径、旧命令目录均已移除，调用方需同步迁移；业务成功响应保持原契约；错误响应改为框架的平铺格式，见 docs/api.md。
-
-## 通用 HTTP 能力
-
-server-go HTTPHost 统一安装请求 ID、请求日志、Recovery、404/405 和错误处理。Controller 直接调用框架 binder.BindJSON、binder.QueryLimit、auth.UserID 与 errors.Abort；服务凭据解析和鉴权使用 auth.ParseBearerTokens、auth.BearerTokens。SSE 使用框架 stream.NewSSE、SendWithID 与 Heartbeat；事件查询和回放游标属于 Run 业务。服务只声明路由、权限和领域错误映射，不维护通用 HTTP 工具包。这些能力统一来自已发布的 server-go v0.3.1；API 独立构建无需本地框架源码。
+Coding 适配引用 forge-coding-api 根模块中的 `sdk/go/codingv1`，不维护一份 Coding HTTP 协议。版本只在 go.mod/go.sum 固定。临时 workspace 用于 API/worker 联合开发；交付验证关闭 workspace 并使用正式依赖，具体经验见 [框架迁移经验](lessons/server-go-migration.md)。

@@ -1,20 +1,18 @@
-# Agentic Kit API 项目约定
+# Agentic Kit API 文档路由
 
-## 目录与依赖
+全局协作与工程规则沿用 `~/.codex/AGENTS.md`。本文件只指定本项目修改前应读取的文档；当前行为以代码、配置与契约为准。
 
-- 调整目录、包边界或跨仓库依赖前，读取 [项目布局](docs/layout.md)。`cmd/` 负责入口与依赖装配，`internal/config/` 负责配置加载，`internal/service/` 负责资源、总路由与生命周期，通用 HTTP 中间件由 server-go 管理，`internal/app/agent/`、`internal/app/session/`、`internal/app/run/` 分别维护业务 HTTP 接口，`conf/server/` 保存服务配置，`examples/` 保存接口与评测样例。
-- 对外 HTTP 请求、响应和 Go 客户端维护在 `sdk/go/agenticv1/`；修改 HTTP 契约时同步 SDK 和契约测试。SDK 按 AgentAPI、SessionAPI、RunAPI 提供接口，私有实现复用 server-go SDK；不导入 internal、durable、Gin 或 GORM。各 HTTP 模块在消费方定义 Service 接口，由装配层注入实现；Controller 使用 server-go binder 绑定与校验；领域错误由 internal/app/apperror 映射，SDK 直接复用框架错误类型。
-- `pkg/durable/` 是供本仓库和相邻 worker 仓库共用的任务状态与存储契约。变更其公开接口或持久化格式时，同时检查 worker 的调用与恢复行为；该包可内部依赖 internal/table，但不依赖 Gin 或 HTTP 模块，对外不暴露私有表类型；worker 只导入公开 durable 接口。
-- 表结构、约束和索引按领域维护在 `internal/table/`，模型注册集中在 `internal/table/migrate.go`，由 `cmd/cli migrate` 经 durable.Store 调用 GORM AutoMigrate；修改模型时验证已有数据上的重复迁移。项目目录说明集中在 docs/layout.md，具体启动方式以 README.md 为准。
+| 修改场景 | 先读取 |
+| --- | --- |
+| 了解当前功能、分层、启动、配置、部署或验证命令 | [README](README.md) |
+| 调整目录、模块职责、装配、连接所有权、SDK 或跨仓库依赖 | [布局与依赖约束](docs/layout.md) |
+| 修改领域术语或核对概念关系 | [领域术语](CONTEXT.md)，行为与取舍仍查对应设计及契约 |
+| 评审或实施通用 Agent 框架重构 | [框架重构设计](docs/refactoring-design.md)，先核对范围和状态；当前契约仍查 api/design/layout |
+| 维护现行 HTTP 请求/响应、鉴权及领域接口 | [接口契约](docs/api.md)、[SDK README](sdk/go/agenticv1/README.md)；同步对应契约与调用方 |
+| 修改 durable 状态、领取、续期、步骤存档、完成事务或事件发布 | [恢复设计](docs/design.md)、[项目经验索引](docs/lessons/README.md)；按 README 验证 worker 与跨进程恢复 |
+| 修改表模型、约束、索引或迁移 | [布局的持久化约束](docs/layout.md#共享持久化边界)、[恢复设计](docs/design.md)、[验证要求](README.md#验证与部署) |
+| 升级依赖、调整 binder、配置加载或框架生命周期 | [项目经验索引](docs/lessons/README.md)，再读取相关框架版本的说明 |
+| 实施首版 Memory 或上下文构建 | [框架设计](docs/refactoring-design.md#66-上下文管线与-memory-基础版)、[Memory设计](docs/memory-design.md)；涉及artifact接入先核对其中的权限、版本及跨服务提交前提 |
+| 查找历史验证证据 | [验证记录](docs/verification.md)，其中旧路径与版本不作为当前约定 |
 
-## 执行与接口契约
-
-- 修改任务状态、领取、续期、步骤存档或事件发布前，读取 [恢复设计](docs/design.md) 并核对实现；修改 HTTP 行为时同步 [接口契约](docs/api.md) 和相关测试。
-- Agent 发布版本不可变；任务使用提交时的配置快照。修改配置、会话或消息行为时同步 docs/api.md，并验证发布后重试、多轮历史与 owner 隔离。
-- 用户消息与任务同事务创建；执行消息、状态、结果和完成事件在同一数据库事务中提交；worker 的状态写入必须受执行权和 epoch 校验保护。Redis 是通知加速层，已提交事件从数据库回放。
-- 原系统功能迁移情况以 [迁移清单](docs/migration.md) 为准，不能把新执行主链路视为原服务的完整替代。
-
-## 验证
-
-- 检查命令以 Makefile 为准。涉及持久化、任务状态、SSE 或跨进程行为时，配置隔离测试数据库和 Redis，执行 `make integration`；具体环境变量和准备方式见 README.md。
-- `pkg/durable/` 的变更影响 worker 时，同时在相邻 worker 仓库验证相关测试；涉及故障接管时保留跨进程恢复验证。
+新增经验写入 `docs/lessons/`，附问题适用范围与代码/测试证据，并更新该目录索引。功能、契约和布局变化更新各自文档；本文件仅在文档职责或路由变化时更新。
