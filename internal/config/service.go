@@ -1,20 +1,15 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"strconv"
 	"strings"
 
-	"github.com/FlyTOmeLight/server-go/auth"
 	"github.com/FlyTOmeLight/server-go/conf"
 	"github.com/FlyTOmeLight/server-go/db"
+	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
 	"github.com/jackc/pgx/v5"
-	"github.com/redis/go-redis/v9"
-
-	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/platform"
 )
 
 type Service struct {
@@ -22,25 +17,11 @@ type Service struct {
 	AppCode    int
 	RunMode    string
 	HTTPServer conf.HTTPServerConfig
-	Platform   struct {
-		CodingURL     string `mapstructure:"coding_url"`
-		CodingToken   string `mapstructure:"coding_token"`
-		TenantURL     string `mapstructure:"tenant_url"`
-		TenantToken   string `mapstructure:"tenant_token"`
-		TemplateOwner string `mapstructure:"template_owner"`
-		TemplatesJSON string `mapstructure:"templates_json"`
-	} `mapstructure:"platform"`
-	DB    db.Config
-	Redis struct {
-		URL string `mapstructure:"url"`
-	} `mapstructure:"redis"`
-	Auth struct {
-		ConfigOwners []string `mapstructure:"config_owners"`
-		TokensJSON   string   `mapstructure:"tokens_json"`
-	} `mapstructure:"auth"`
+	DB         db.Config
+	Redis      frameworkredis.Config
 }
 
-// Load decodes the framework snapshot used by the server and migration command.
+// Load decodes the framework snapshot used by the server.
 func Load(path string) (Service, error) {
 	snapshot, err := conf.Load(path)
 	if err != nil {
@@ -58,7 +39,9 @@ func (cfg Service) ValidateDatabase() error {
 		return errors.New("DB.Driver must be PostgreSQL")
 	}
 	if cfg.DB.AutoMigrate {
-		return errors.New("DB.AutoMigrate must be false; use the migrate command")
+		return errors.New(
+			"DB.AutoMigrate must be false; schema initialization is managed outside the API lifecycle",
+		)
 	}
 	if strings.TrimSpace(cfg.DB.DSN) == "" {
 		return errors.New("DB.DSN is required")
@@ -69,30 +52,7 @@ func (cfg Service) ValidateDatabase() error {
 	return nil
 }
 
-func (cfg Service) ProjectPlatform() (*platform.Config, error) {
-	p := cfg.Platform
-	if p.TenantURL == "" && p.TenantToken == "" && p.TemplateOwner == "" && p.TemplatesJSON == "" &&
-		p.CodingURL == "" &&
-		p.CodingToken == "" {
-		return nil, nil
-	}
-	out := platform.Config{
-		CodingURL:     p.CodingURL,
-		CodingToken:   p.CodingToken,
-		TenantURL:     p.TenantURL,
-		TenantToken:   p.TenantToken,
-		TemplateOwner: p.TemplateOwner,
-	}
-	if err := json.Unmarshal([]byte(p.TemplatesJSON), &out.Templates); err != nil {
-		return nil, errors.New("invalid platform.templates_json")
-	}
-	if err := out.Validate(); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// ValidateAPI checks settings that the migration command does not need.
+// ValidateAPI checks the standalone HTTP and notification settings.
 func (cfg Service) ValidateAPI() error {
 	if err := cfg.ValidateDatabase(); err != nil {
 		return err
@@ -102,22 +62,18 @@ func (cfg Service) ValidateAPI() error {
 			"HTTPServer requires an empty APIBasePath and negative WriteTimeout for the public API and SSE",
 		)
 	}
-	if _, err := cfg.ProjectPlatform(); err != nil {
-		return err
-	}
 	_, port, err := net.SplitHostPort(cfg.HTTPServer.Listen)
 	number, portErr := strconv.Atoi(port)
 	if err != nil || portErr != nil || number < 0 || number > 65535 {
 		return errors.New("invalid HTTPServer.Listen")
 	}
-	if cfg.Redis.URL == "" {
-		return errors.New("redis.url is required")
+	if len(cfg.Redis.Addrs) == 0 {
+		return errors.New("Redis.Addrs is required")
 	}
-	if _, err := redis.ParseURL(cfg.Redis.URL); err != nil {
-		return errors.New("invalid redis.url")
-	}
-	if _, err := auth.ParseBearerTokens(cfg.Auth.TokensJSON); err != nil {
-		return fmt.Errorf("invalid auth.tokens_json: %w", err)
+	for _, addr := range cfg.Redis.Addrs {
+		if strings.TrimSpace(addr) == "" {
+			return errors.New("Redis.Addrs must not contain empty addresses")
+		}
 	}
 	return nil
 }

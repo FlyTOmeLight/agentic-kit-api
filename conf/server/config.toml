@@ -17,32 +17,6 @@ MaxIdleConns = 5
 ConnMaxIdleTime = 300
 DSN = "${env:DATABASE_URL:postgres://agentic:agentic_local@127.0.0.1:55432/agentic?sslmode=disable}"
 
-[redis]
-url = "${env:REDIS_URL:redis://127.0.0.1:56379/0}"
-
-[auth]
-# Supply API_TOKENS_JSON in the environment, or fill this in your local file.
-tokens_json = "${env:API_TOKENS_JSON:}"
-
-# Only these trusted owners can create/edit/publish model and tool configurations.
-config_owners = "${env:CONFIG_OWNERS:local-user}"
-
-# Optional Forge project UI. Set all PLATFORM_* variables to enable it.
-# PLATFORM_TENANT_URL=http://forge-tenant
-# PLATFORM_TENANT_TOKEN=<Tenant internal service token>
-# PLATFORM_TEMPLATE_OWNER=<owner of approved immutable templates>
-# PLATFORM_TEMPLATES_JSON=[{"id":"writing","name":"Writing","agentID":"...","version":1}]
-# Only templates without tools/toolsets are offered until isolated environments land.
-
-# Optional Coding evaluation environment (service-to-service only):
-# PLATFORM_CODING_URL=http://forge-coding
-# PLATFORM_CODING_TOKEN=<existing Coding service credential>
-# Add an approved filesystem + finish + run_checks template to PLATFORM_TEMPLATES_JSON.
-
-[platform]
-tenant_url = "${env:PLATFORM_TENANT_URL:}"
-tenant_token = "${env:PLATFORM_TENANT_TOKEN:}"
-template_owner = "${env:PLATFORM_TEMPLATE_OWNER:}"
-templates_json = "${env:PLATFORM_TEMPLATES_JSON:}"
-coding_url = "${env:PLATFORM_CODING_URL:}"
-coding_token = "${env:PLATFORM_CODING_TOKEN:}"
+[Redis]
+Addrs = ["${env:REDIS_ADDR:127.0.0.1:56379}"]
+DB = 0

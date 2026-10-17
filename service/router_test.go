@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/FlyTOmeLight/server-go/conf"
+	"github.com/FlyTOmeLight/server-go/constants"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 	"github.com/FlyTOmeLight/server-go/host"
 	"github.com/FlyTOmeLight/server-go/logger"
@@ -22,8 +23,6 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/platform"
-	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
@@ -38,31 +37,17 @@ func (testRoutes) Stop(context.Context) error { return nil }
 func NewRouter(
 	t *testing.T,
 	store *durable.Store,
-	redisClient *redis.Client,
-	configOwners []string,
+	redisClient redis.UniversalClient,
 	tokens map[string]string,
 ) http.Handler {
-	return newRouter(t, store, redisClient, configOwners, tokens, nil, nil)
-}
-
-func NewPlatformRouter(
-	t *testing.T,
-	store *durable.Store,
-	redisClient *redis.Client,
-	configOwners []string,
-	tokens map[string]string,
-	cfg platform.Config,
-) http.Handler {
-	return newRouter(t, store, redisClient, configOwners, tokens, &cfg, nil)
+	return newRouter(t, store, redisClient, tokens, nil)
 }
 
 func newRouter(
 	t *testing.T,
 	store *durable.Store,
-	redisClient *redis.Client,
-	configOwners []string,
+	redisClient redis.UniversalClient,
 	tokens map[string]string,
-	cfg *platform.Config,
 	extra func(*gin.RouterGroup),
 ) http.Handler {
 	t.Helper()
@@ -80,13 +65,17 @@ func newRouter(
 		t.Fatal(err)
 	}
 	t.Cleanup(log.Close)
-	var tenant *client.Tenant
-	if cfg != nil {
-		tenant = client.NewTenant(cfg.TenantURL, cfg.TenantToken)
-		t.Cleanup(tenant.Close)
-	}
-	routes := newRoutes(store, redisClient, configOwners, tokens, cfg, tenant)
+	routes := newRoutes(store, redisClient)
 	h, err := host.NewHTTPHost(manager, log, nil, testRoutes{register: func(g *gin.RouterGroup) {
+		// Test double for the future Forge middleware: it only establishes the
+		// identity context and does not authenticate or authorize requests.
+		g.Use(func(c *gin.Context) {
+			token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			if owner := tokens[token]; owner != "" {
+				c.Set(constants.KeyUserID, owner)
+			}
+			c.Next()
+		})
 		routes.register(g)
 		if extra != nil {
 			extra(g)
@@ -100,6 +89,30 @@ func newRouter(
 }
 
 const testToken = "test-bearer-token-at-least-24-chars"
+
+func TestScenarioBusinessRoutesAreAbsent(t *testing.T) {
+	router := NewRouter(t, nil, nil, nil)
+	for _, path := range []string{
+		"/v1/evaluations",
+		"/internal/v1/evaluation-trials/trial/lease?runID=run&epoch=1",
+		"/internal/v1/coding-release-approval",
+		"/api/v1/tenants/tenant/agent-workspace",
+		"/api/v1/tenants/tenant/datasets",
+		"/api/v1/tenants/tenant/evaluation-plans",
+		"/api/v1/tenants/tenant/projects/project/agents",
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut} {
+			t.Run(method+" "+path, func(t *testing.T) {
+				assertError(
+					t,
+					request(router, method, path, `{}`, "", ""),
+					http.StatusNotFound,
+					"APINotFound",
+				)
+			})
+		}
+	}
+}
 
 func request(router http.Handler, method, path, body, token, key string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -129,33 +142,13 @@ func assertError(t *testing.T, w *httptest.ResponseRecorder, status int, code st
 	}
 }
 
-func TestGinAuthenticationAndValidation(t *testing.T) {
-	router := NewRouter(t, nil, nil, nil, map[string]string{testToken: "owner"})
+func TestGinValidation(t *testing.T) {
+	router := NewRouter(t, nil, nil, map[string]string{testToken: "owner"})
 	tests := []struct {
 		name, method, path, body, token, key string
 		status                               int
 		code                                 string
 	}{
-		{
-			name:   "no auth",
-			method: "POST",
-			path:   "/v1/sessions/s/messages",
-			body:   `{}`,
-			token:  "",
-			key:    "",
-			status: 401,
-			code:   "Unauthorized",
-		},
-		{
-			name:   "wrong token",
-			method: "GET",
-			path:   "/v1/runs/run",
-			body:   ``,
-			token:  "wrong",
-			key:    "",
-			status: 401,
-			code:   "Unauthorized",
-		},
 		{
 			name:   "required fields",
 			method: "POST",
@@ -270,7 +263,7 @@ func TestGinAuthenticationAndValidation(t *testing.T) {
 }
 
 func TestGinRecoveryDoesNotAppendJSONToStream(t *testing.T) {
-	router := newRouter(t, nil, nil, nil, map[string]string{testToken: "owner"}, nil, func(g *gin.RouterGroup) {
+	router := newRouter(t, nil, nil, map[string]string{testToken: "owner"}, func(g *gin.RouterGroup) {
 		g.GET("/panic", func(c *gin.Context) { panic("internal detail") })
 		g.GET("/stream-panic", func(c *gin.Context) {
 			c.Header("Content-Type", "text/event-stream")
@@ -332,7 +325,6 @@ func TestGinRunLifecycleAndSSE(t *testing.T) {
 		t,
 		store,
 		nil,
-		[]string{"owner"},
 		map[string]string{testToken: "owner", "other-token-with-24-characters": "other"},
 	)
 	session := createHTTPConversation(t, router)

@@ -22,7 +22,7 @@
 - durable_step：工具执行前的意图、输入摘要、重试策略、执行结果。操作编号是 runID:stepID，重试不改变。
 - durable_event：与状态同事务写入的事件，也是 Outbox。Redis 只是通知与缓存，数据库是事件权威来源。
 
-API 仓库拥有共享持久化包，worker 只调用其中的状态变更方法。持久化访问统一由 GORM 管理；领取使用 Locking 子句，事件计数用 Updates 与 Returning 子句递增并取回；事件写入仍在同一事务。表结构、约束与索引由 internal/table 中的领域模型定义，迁移命令在事务中执行 AutoMigrate。数据库时钟和数值递增通过 gorm.Expr 表达，事务级 advisory lock 通过 GORM Exec 调用。数据库时间决定执行权期限，避免多个 worker 的本地时钟差异影响领取判断。
+API 仓库拥有共享持久化包，worker 只调用其中的状态变更方法。持久化访问统一由 GORM 管理；领取使用 Locking 子句，事件计数用 Updates 与 Returning 子句递增并取回；事件写入仍在同一事务。表结构、约束与索引由 internal/table 中的领域模型定义，Store 的结构初始化方法在事务中执行 AutoMigrate，不再提供迁移 CLI。数据库时钟和数值递增通过 gorm.Expr 表达，事务级 advisory lock 通过 GORM Exec 调用。数据库时间决定执行权期限，避免多个 worker 的本地时钟差异影响领取判断。
 
 ## 会话提交与记录
 
@@ -76,7 +76,7 @@ Redis Stream 使用事件 seq 作为显式 ID。Lua 在插入前查询该 ID，�
 
 ## 配置与版本
 
-任务固定模型地址、模型名、系统提示词、工具元信息与配置版本。凭据保存环境变量引用，允许部署侧轮换凭据。受信任的 config_owners 可以通过管理接口配置模型和工具；普通发送消息接口只接受 query。Agent 配置保存在数据库，任务保存发布版本的完整快照。
+任务固定模型地址、模型名、系统提示词、工具元信息与配置版本。凭据保存环境变量引用，允许部署侧轮换凭据。管理接口的调用权限由 Forge middleware 校验；普通发送消息接口只接受 query。Agent 配置保存在数据库，任务保存发布版本的完整快照。
 
 执行状态带版本号 2，保存 Eino 原生 checkpoint、操作编号使用的模型轮次及 waitingStep。旧 version 1 不转换、不从头重跑；新版 Worker 会明确拒绝。升级前由旧 Worker 完成或取消旧格式的所有活动、等待澄清和待确认运行，保留历史记录，再切换 Worker；需要继续的业务任务创建新的执行轮次。不要混跑两个版本的 Worker。后续 Eino 升级须验证 checkpoint 格式与工具语义兼容。
 

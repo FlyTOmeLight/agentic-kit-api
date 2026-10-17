@@ -1,7 +1,7 @@
 // Package agent provides Agent HTTP handlers.
 // @title Agentic Kit API
 // @version 1.0
-// @description Agent, Session, Run, Evaluation and Forge workspace interfaces.
+// @description Generic Agent, Session, Run and Execution interfaces.
 // @BasePath /
 // @securityDefinitions.apikey BearerAuth
 // @in header

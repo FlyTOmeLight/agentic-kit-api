@@ -12,10 +12,5 @@ func Migrate(db *gorm.DB) error {
 		&Step{},
 		&Event{},
 		&Message{},
-		&Evaluation{},
-		&EvaluationTrial{},
-		&EvaluationPlan{},
-		&Dataset{},
-		&DatasetVersion{},
 	)
 }

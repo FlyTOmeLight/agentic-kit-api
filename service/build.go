@@ -25,7 +25,7 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	}
 	runtime.Config.Subscribe(prepareHTTPConfig)
 	database := &db.Module{Config: &cfg.DB}
-	cache := &notificationCache{url: cfg.Redis.URL}
+	cache := &notificationCache{config: &cfg.Redis}
 	if err := runtime.Initialize(ctx, database, cache); err != nil {
 		return err
 	}

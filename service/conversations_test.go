@@ -11,7 +11,7 @@ import (
 func TestAgentEditingAndPersistentSessions(t *testing.T) {
 	store := integrationStore(t)
 	tokens := map[string]string{testToken: "owner", "other-token-with-24-characters": "other"}
-	router := NewRouter(t, store, nil, []string{"owner", "other"}, tokens)
+	router := NewRouter(t, store, nil, tokens)
 	session := createHTTPConversation(t, router)
 	agentPath := "/v1/agents/" + session.AgentID
 	sessionPath := "/v1/sessions/" + session.ID
@@ -52,7 +52,7 @@ func TestAgentEditingAndPersistentSessions(t *testing.T) {
 		t.Fatalf("version=%+v", v)
 	}
 	// Recreating the router must load definitions and history from the database.
-	router = NewRouter(t, store, nil, []string{"owner", "other"}, tokens)
+	router = NewRouter(t, store, nil, tokens)
 	w = request(router, "POST", sessionPath+"/messages", `{"query":"hello"}`, testToken, "request")
 	if w.Code != 202 {
 		t.Fatal(w.Body.String())
@@ -121,20 +121,13 @@ func TestAgentEditingAndPersistentSessions(t *testing.T) {
 	)
 }
 
-func TestConfigurationPermissionAndInputValidation(t *testing.T) {
+func TestConfigurationInputValidation(t *testing.T) {
 	store := integrationStore(t)
 	router := NewRouter(
 		t,
 		store,
 		nil,
-		[]string{"owner"},
 		map[string]string{testToken: "owner", "reader-token-with-24-characters": "reader"},
-	)
-	assertError(
-		t,
-		request(router, "POST", "/v1/agents", `{}`, "reader-token-with-24-characters", ""),
-		403,
-		"Forbidden",
 	)
 	for _, tc := range []struct{ method, path, body, code string }{
 		{method: "POST", path: "/v1/agents", body: `{"name":"agent","config":{"maxTurns":5}}`, code: "InvalidParameter"},

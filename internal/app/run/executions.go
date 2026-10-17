@@ -18,20 +18,12 @@ import (
 type ExecutionService interface {
 	SubmitExecution(context.Context, string, string, sdk.ExecutionSpec, time.Duration) (*durable.Run, bool, error)
 	CheckExecutionLease(context.Context, string, string, int64) (bool, error)
-	CheckCodingEvaluationLease(context.Context, string, string, int64) (bool, error)
 }
 
 var _ ExecutionService = (*durable.Store)(nil)
 
 func (h *Controller) RegisterExecutionRoutes(router core.Router) {
-	group := router.Group("/internal/v1", func(c *core.Context) {
-		if !h.owners[auth.UserID(c)] {
-			serrors.Abort(c, 403, "Forbidden", "trusted application required")
-			return
-		}
-		c.Next()
-	})
-	group.GET("/evaluation-trials/:trial/lease", h.codingLease)
+	group := router.Group("/internal/v1")
 	group.GET("/healthz", h.health)
 	group.POST("/executions", h.submitExecution)
 	group.GET("/executions/:id/lease", h.executionLease)
@@ -48,39 +40,6 @@ func (h *Controller) RegisterExecutionRoutes(router core.Router) {
 // @Router /internal/v1/healthz [get]
 func (h *Controller) health(c *core.Context) { c.JSON(200, map[string]string{"status": "ok"}) }
 
-// codingLease 校验 Coding 评测试验执行权。
-// @Summary 校验 Coding 评测试验执行权
-// @Tags Run
-// @Produce json
-// @Security BearerAuth
-// @Param trial path string true "trial"
-// @Param epoch query int true "执行 epoch" minimum(1)
-// @Param runID query string true "任务 ID"
-// @Success 200 {object} agenticv1.LeaseCheck "成功"
-// @Failure 400 {object} serrors.Error "参数无效"
-// @Failure 401 {object} serrors.Error "身份校验失败"
-// @Failure 403 {object} serrors.Error "权限不足"
-// @Failure 404 {object} serrors.Error "资源不存在"
-// @Failure 500 {object} serrors.Error "内部错误"
-// @Router /internal/v1/evaluation-trials/{trial}/lease [get]
-func (h *Controller) codingLease(c *core.Context) {
-	var req struct {
-		Trial string `json:"-" uri:"trial" binding:"required"`
-		RunID string `json:"-" form:"runID" binding:"required"`
-		Epoch int64  `json:"-" form:"epoch" binding:"min=1"`
-	}
-	if err := binder.Bind(c, &req).All().Error(); err != nil {
-		serrors.AbortWithError(c, err)
-		return
-	}
-	allowed, err := h.execution.CheckCodingEvaluationLease(c.Request.Context(), req.Trial, req.RunID, req.Epoch)
-	if err != nil {
-		apperror.Respond(c, err)
-		return
-	}
-	c.JSON(200, sdk.LeaseCheck{Allowed: allowed})
-}
-
 // submitExecution 提交执行任务。
 // @Summary 提交执行任务
 // @Tags Run
@@ -95,7 +54,7 @@ func (h *Controller) codingLease(c *core.Context) {
 // @Failure 401 {object} serrors.Error "身份校验失败"
 // @Failure 403 {object} serrors.Error "权限不足"
 // @Failure 404 {object} serrors.Error "资源不存在"
-// @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
+// @Failure 409 {object} serrors.Error "版本、任务状态或幂等标识冲突"
 // @Failure 413 {object} serrors.Error "请求体超过限制"
 // @Failure 500 {object} serrors.Error "内部错误"
 // @Router /internal/v1/executions [post]
