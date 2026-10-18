@@ -26,6 +26,7 @@ agentic-kit-api/
 │   │   ├── run/              # 执行、租约、取消、人工恢复、trace 与 SSE
 │   │   └── apperror/         # 领域错误到 HTTP 错误的映射
 │   ├── config/               # 类型化配置与启动校验
+│   ├── schema/               # 空库目标表结构初始化
 │   └── table/                # Agent、Session、Run、Step、Event、Message 表模型
 ├── pkg/durable/              # API/worker 共享持久化事务与执行契约
 ├── sdk/go/agenticv1/          # 通用 HTTP 请求/响应、Go SDK 与 SSE 消费
@@ -50,7 +51,7 @@ GOWORK=off go run ./cmd/server -config conf/server/config.toml
 
 API 不维护静态 token、config owner 白名单、Tenant/Coding 业务客户端或对应连接配置。请求身份与鉴权后续通过 forge-tenant-api middleware 接入；当前尚未接入，业务路由没有身份校验。`auth.UserID(c)` 是现有身份读取点，持久化对象按 owner 隔离。
 
-API 启动不自动建表，也不提供 `eval`、`migrate` 命令。部署方须在接收业务请求前准备数据库；共享 `Store.Migrate` 仍供表结构初始化和集成测试调用，不是独立迁移产品或部署命令。新结构自动初始化属于后续框架重构，本次不改变已有数据库内容。
+`service.Build` 在接收请求前调用 `durable.Store.InitSchema`，在空库或空 schema 上初始化目标表结构；该初始化可重复执行，只建表与约束，不做历史迁移或数据回填。组合部署直接调用 `service.New` 时由调用方负责初始化。本仓库不提供 `eval`、`migrate` 命令或 Helm 迁移任务。
 
 server-go HTTPHost 提供 `/ping`、`/healthz`、`/version` 探针；开启 `HTTPServer.SwaggerEnable` 可查看 `/swagger/`。SSE 要求 `HTTPServer.WriteTimeout` 为负数，`APIBasePath` 为空。
 

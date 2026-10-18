@@ -28,11 +28,11 @@ Agent、Session、Run 通过消费方接口调用共享事务。数据库使用 
 
 ## 共享持久化边界
 
-`internal/table` 是 GORM 表模型、表名、约束和索引的唯一来源，当前仅包含 Agent、AgentVersion、Session、Run、Step、Event、Message。模型集合集中在 `internal/table/migrate.go`，Store.Migrate 在持有锁的事务中调用，供初始化及测试使用。API 与 worker 启动不自动迁移；本仓库不提供迁移 CLI 或 Helm 迁移任务。已有平台表不在本次清理中执行 DROP 或改写。
+`internal/table` 是 GORM 表模型、表名、约束和索引的唯一来源，当前包含 Agent、AgentVersion、Session、Run、Step、Event、Message。`internal/schema.Init` 在持有 advisory lock 的事务中对这些模型执行 AutoMigrate，`service.Build` 在接收请求前调用；公开的 `durable.Store.InitSchema` 供测试与联合验证使用。初始化只面向空库或空 schema，可重复执行，不做历史迁移或回填；本仓库不提供迁移 CLI 或 Helm 迁移任务。已有平台表不在本次清理中执行 DROP 或改写。
 
 表模型可以复用 SDK 领域类型，不依赖 durable 或 HTTP。查询和业务事务位于 `pkg/durable`，使用 table 模型并显式转换公开对象；不对外暴露私有表类型或保留旧模型副本。
 
-`pkg/durable` 的任务、租约、步骤、事件、执行快照与 Store 供 API 和 worker 共用，不依赖 Gin 或 HTTP 模块。公开契约或持久化格式变化时核对 worker 的真实调用与恢复行为。执行权、epoch 和一致提交见 [恢复设计](design.md)。
+`pkg/durable` 的任务、租约、步骤、事件、执行快照与 Store 供 API 和 worker 共用，不依赖 Gin 或 HTTP 模块。执行状态写入按职责拆分在 `lease.go`、`boundary.go`、`step.go`、`interaction.go`、`cancellation.go`、`retry.go`；等待交互由 Run 的 `waiting_step`/`waiting_kind` 列显式保存。公开契约或持久化格式变化时核对 worker 的真实调用与恢复行为。执行权、epoch 和一致提交见 [恢复设计](design.md)。
 
 ## SDK 与跨仓库依赖
 

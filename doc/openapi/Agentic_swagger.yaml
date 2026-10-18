@@ -220,6 +220,8 @@ definitions:
         type: string
       status:
         type: string
+      waitingKind:
+        type: string
       waitingStep:
         type: string
     type: object
@@ -359,6 +361,8 @@ definitions:
       sessionID:
         type: string
       status:
+        type: string
+      waitingKind:
         type: string
       waitingStep:
         type: string

@@ -98,14 +98,10 @@ func TestApplicationsReusePublishedAgentsAndTaskConversations(t *testing.T) {
 				t.Fatalf("retry changed snapshot: %+v %v", replay, err)
 			}
 			running := claim(t, s, "worker")
-			if err = s.Save(
+			if err = s.CommitBoundary(
 				ctx,
 				running.Lease(),
-				[]byte(`{}`),
-				Completed,
-				"first answer",
-				"",
-				"RunCompleted",
+				Boundary{Kind: BoundaryComplete, State: []byte(`{}`), Output: "first answer"},
 			); err != nil {
 				t.Fatal(err)
 			}

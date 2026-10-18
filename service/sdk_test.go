@@ -118,15 +118,7 @@ func TestSDKConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.Save(
-		ctx,
-		claimed.Lease(),
-		[]byte(`{}`),
-		durable.Completed,
-		"hello back",
-		"",
-		"Completed",
-	); err != nil {
+	if err = store.CommitBoundary(ctx, claimed.Lease(), durable.Boundary{Kind: durable.BoundaryComplete, State: []byte(`{}`), Output: "hello back"}); err != nil {
 		t.Fatal(err)
 	}
 	run, err = client.Runs.Get(ctx, &sdk.GetRunRequest{ID: run.ID})
@@ -153,7 +145,7 @@ func TestSDKConversation(t *testing.T) {
 	}
 	data, readErr := io.ReadAll(stream)
 	stream.Close()
-	if readErr != nil || !strings.Contains(string(data), "event:Completed") {
+	if readErr != nil || !strings.Contains(string(data), "event:RunCompleted") {
 		t.Fatalf("events=%s err=%v", data, readErr)
 	}
 	other, err := sdk.NewClient(server.URL, "other-token-with-24-characters", server.Client())

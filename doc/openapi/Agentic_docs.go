@@ -1837,6 +1837,9 @@ const docTemplateAgentic = `{
                 "status": {
                     "type": "string"
                 },
+                "waitingKind": {
+                    "type": "string"
+                },
                 "waitingStep": {
                     "type": "string"
                 }
@@ -2045,6 +2048,9 @@ const docTemplateAgentic = `{
                     "type": "string"
                 },
                 "status": {
+                    "type": "string"
+                },
+                "waitingKind": {
                     "type": "string"
                 },
                 "waitingStep": {

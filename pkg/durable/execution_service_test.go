@@ -142,7 +142,7 @@ func TestApplicationExecutionSnapshotAndFencing(t *testing.T) {
 		t.Fatal("canceled lease accepted")
 	}
 	for range 2 {
-		if e = s.Migrate(ctx); e != nil {
+		if e = s.InitSchema(ctx); e != nil {
 			t.Fatal(e)
 		}
 	}

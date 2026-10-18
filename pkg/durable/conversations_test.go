@@ -84,10 +84,14 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 		Content:   "searching",
 		ToolCalls: []ToolCall{{ID: "search", Name: "lookup", Arguments: `{}`}},
 	}
-	if err = s.SaveDecision(ctx, running.Lease(), json.RawMessage(`{"version":1}`), decision); err != nil {
+	if err = s.RecordDecision(ctx, running.Lease(), json.RawMessage(`{"version":1}`), decision); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = s.BeginStep(ctx, running.Lease(), "search", "input", ReadOnly); err != nil {
+	if _, err = s.BeginStep(
+		ctx,
+		running.Lease(),
+		StepIntent{ID: "search", Input: "input", Policy: ReadOnly},
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.FinishStep(
@@ -99,14 +103,10 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Save(
+	if err = s.CommitBoundary(
 		ctx,
 		running.Lease(),
-		json.RawMessage(`{}`),
-		Completed,
-		"first answer",
-		"",
-		"RunCompleted",
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "first answer"},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 	if err != nil || old.Config.SystemPrompt != "version one" {
 		t.Fatalf("published version changed: %+v %v", old, err)
 	}
-	if err = s.Migrate(ctx); err != nil {
+	if err = s.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	read, err := s.Session(ctx, "owner", session.ID)
@@ -292,14 +292,10 @@ func TestMessageAndRunRollbackTogether(t *testing.T) {
 	).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Save(
+	if err = s.CommitBoundary(
 		ctx,
 		active.Lease(),
-		json.RawMessage(`{}`),
-		Completed,
-		"answer",
-		"",
-		"RunCompleted",
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "answer"},
 	); err == nil {
 		t.Fatal("expected final message failure")
 	}
@@ -310,40 +306,5 @@ func TestMessageAndRunRollbackTogether(t *testing.T) {
 	read, err = s.Session(ctx, "owner", session.ID)
 	if err != nil || read.MessageSeq != 1 {
 		t.Fatalf("message seq changed on rollback: %+v %v", read, err)
-	}
-}
-
-func TestMigrationRefusesUnmanagedLegacyRuns(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-	// Reproduce a v0.1 database: only the three durable tables, with an existing run.
-	for _, model := range []any{&table.Message{}, &table.Session{}, &table.AgentVersion{}, &table.Agent{}} {
-		if err := s.db.Migrator().DropTable(model); err != nil {
-			t.Fatal(err)
-		}
-	}
-	legacy := table.Run{
-		ID:          "old-run",
-		OwnerID:     "owner",
-		SessionID:   "old-label",
-		RequestKey:  "request",
-		RequestHash: "hash",
-		Spec:        table.ExecutionSnapshot{},
-		Status:      Queued,
-		Deadline:    time.Now().Add(time.Hour),
-		MaxAttempts: 3,
-	}
-	if err := s.db.Create(&legacy).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Migrate(ctx); err == nil {
-		t.Fatal("accepted legacy runs without a conversation migration")
-	}
-	if s.db.Migrator().HasTable(&table.Session{}) {
-		t.Fatal("failed migration partially created tables")
-	}
-	got, err := s.Get(ctx, "owner", legacy.ID)
-	if err != nil || got.Status != Queued {
-		t.Fatalf("migration changed legacy task: %+v %v", got, err)
 	}
 }

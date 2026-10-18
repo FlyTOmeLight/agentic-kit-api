@@ -27,26 +27,28 @@ type ExecutionSnapshot struct {
 }
 
 type Run struct {
-	ID          string            `gorm:"type:text;primaryKey;not null"`
-	OwnerID     string            `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:1;uniqueIndex:durable_session_active,priority:1,where:status = 'Queued' OR status = 'Running' OR status = 'WaitingClarification' OR status = 'NeedsReview'"`
-	SessionID   string            `gorm:"type:text;not null;uniqueIndex:durable_session_active,priority:2"`
-	RequestKey  string            `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:2"`
-	RequestHash string            `gorm:"type:text;not null"`
-	Spec        ExecutionSnapshot `gorm:"serializer:json;type:jsonb;not null"`
-	State       json.RawMessage   `gorm:"serializer:json;type:jsonb;not null;default:'{}'"`
-	Status      execution.Status  `gorm:"type:text;not null;check:durable_run_status_check,status IN ('Queued','Running','WaitingClarification','NeedsReview','Completed','Failed','Canceled')"`
-	WorkerID    string            `gorm:"type:text;not null;default:''"`
-	Epoch       int64             `gorm:"type:bigint;not null;default:0"`
-	LeaseUntil  *time.Time        `gorm:"type:timestamptz"`
-	AvailableAt time.Time         `gorm:"type:timestamptz;not null;default:clock_timestamp();index:durable_run_queue,priority:1,where:status = 'Queued' OR status = 'Running'"`
-	Deadline    time.Time         `gorm:"type:timestamptz;not null"`
-	Attempt     int               `gorm:"type:integer;not null;default:0"`
-	MaxAttempts int               `gorm:"type:integer;not null"`
-	EventSeq    int64             `gorm:"type:bigint;not null;default:0"`
-	Output      string            `gorm:"type:text;not null;default:''"`
-	Error       string            `gorm:"type:text;not null;default:''"`
-	CreatedAt   time.Time         `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false;index:durable_run_queue,priority:2"`
-	UpdatedAt   time.Time         `gorm:"type:timestamptz;not null;default:clock_timestamp();autoUpdateTime:false"`
+	ID          string                    `gorm:"type:text;primaryKey;not null"`
+	OwnerID     string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:1;uniqueIndex:durable_session_active,priority:1,where:status = 'Queued' OR status = 'Running' OR status = 'WaitingClarification' OR status = 'NeedsReview'"`
+	SessionID   string                    `gorm:"type:text;not null;uniqueIndex:durable_session_active,priority:2"`
+	RequestKey  string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:2"`
+	RequestHash string                    `gorm:"type:text;not null"`
+	Spec        ExecutionSnapshot         `gorm:"serializer:json;type:jsonb;not null"`
+	State       json.RawMessage           `gorm:"serializer:json;type:jsonb;not null;default:'{}'"`
+	Status      execution.Status          `gorm:"type:text;not null;check:durable_run_status_check,status IN ('Queued','Running','WaitingClarification','NeedsReview','Completed','Failed','Canceled')"`
+	WorkerID    string                    `gorm:"type:text;not null;default:''"`
+	Epoch       int64                     `gorm:"type:bigint;not null;default:0"`
+	LeaseUntil  *time.Time                `gorm:"type:timestamptz"`
+	AvailableAt time.Time                 `gorm:"type:timestamptz;not null;default:clock_timestamp();index:durable_run_queue,priority:1,where:status = 'Queued' OR status = 'Running'"`
+	Deadline    time.Time                 `gorm:"type:timestamptz;not null"`
+	Attempt     int                       `gorm:"type:integer;not null;default:0"`
+	MaxAttempts int                       `gorm:"type:integer;not null"`
+	EventSeq    int64                     `gorm:"type:bigint;not null;default:0"`
+	Output      string                    `gorm:"type:text;not null;default:''"`
+	Error       string                    `gorm:"type:text;not null;default:''"`
+	WaitingStep string                    `gorm:"type:text;not null;default:''"`
+	WaitingKind execution.InteractionKind `gorm:"type:text;not null;default:'';check:durable_run_waiting_kind_check,waiting_kind IN ('','Clarification','Review')"`
+	CreatedAt   time.Time                 `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false;index:durable_run_queue,priority:2"`
+	UpdatedAt   time.Time                 `gorm:"type:timestamptz;not null;default:clock_timestamp();autoUpdateTime:false"`
 }
 
 func (Run) TableName() string { return "durable_run" }

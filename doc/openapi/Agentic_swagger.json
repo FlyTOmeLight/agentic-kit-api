@@ -1829,6 +1829,9 @@
                 "status": {
                     "type": "string"
                 },
+                "waitingKind": {
+                    "type": "string"
+                },
                 "waitingStep": {
                     "type": "string"
                 }
@@ -2037,6 +2040,9 @@
                     "type": "string"
                 },
                 "status": {
+                    "type": "string"
+                },
+                "waitingKind": {
                     "type": "string"
                 },
                 "waitingStep": {

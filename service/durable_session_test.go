@@ -48,10 +48,10 @@ func TestInjectedDatabaseOwnershipAndErrors(t *testing.T) {
 	if module.DB.Config.TranslateError {
 		t.Fatal("store mutated the shared database settings")
 	}
-	if err := store.Migrate(ctx); err != nil {
+	if err := store.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Migrate(ctx); err != nil {
+	if err := store.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	run := createDurableRun(t, store)

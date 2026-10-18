@@ -33,6 +33,9 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if err != nil {
 		return err
 	}
+	if err = store.InitSchema(ctx); err != nil {
+		return err
+	}
 	api, err := New(*cfg, runtime.Log, store, cache.client)
 	if err != nil {
 		return err

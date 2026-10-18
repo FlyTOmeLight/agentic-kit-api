@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/schema"
 )
 
 // Store executes durable transactions. Open owns its pool; New borrows a
@@ -62,38 +62,8 @@ func (s *Store) Close() {
 	}
 }
 
-func (s *Store) Migrate(ctx context.Context) error {
-	// Serialize concurrent schema initialization.
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(7412101)").Error; err != nil {
-			return err
-		}
-		// v0.1 stored a session label only, not an Agent/session/message graph.
-		// Refuse to invent published configurations or silently hide old history.
-		if tx.Migrator().HasTable(&table.Run{}) && !tx.Migrator().HasTable(&table.Session{}) {
-			var count int64
-			if err := tx.Model(&table.Run{}).Count(&count).Error; err != nil {
-				return err
-			}
-			if count > 0 {
-				return errors.New(
-					"database contains v0.1 runs without managed sessions; finish old tasks with v0.1 and use an empty database for v0.2",
-				)
-			}
-		}
-		return table.Migrate(tx)
-	})
-}
-
-func readRun(query *gorm.DB) (*Run, error) {
-	var r table.Run
-	if err := query.Take(&r).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	return runFromRow(r), nil
+func (s *Store) InitSchema(ctx context.Context) error {
+	return schema.Init(ctx, s.db)
 }
 
 // DB exposes the borrowed session for tests that inspect stored rows.

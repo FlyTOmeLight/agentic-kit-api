@@ -50,6 +50,31 @@ type ExecutionSpec = execution.ExecutionSpec
 
 type FilesystemBinding = execution.FilesystemBinding
 
+type Boundary = execution.Boundary
+
+type BoundaryKind = execution.BoundaryKind
+
+type InteractionKind = execution.InteractionKind
+
+type StepIntent = execution.StepIntent
+
+type StepDecision = execution.StepDecision
+
+type StepOutcome = execution.StepOutcome
+
+const (
+	BoundaryModelStarted       = execution.BoundaryModelStarted
+	BoundaryComplete           = execution.BoundaryComplete
+	BoundaryFail               = execution.BoundaryFail
+	BoundaryAwaitClarification = execution.BoundaryAwaitClarification
+	BoundaryAwaitReview        = execution.BoundaryAwaitReview
+	InteractionClarification   = execution.InteractionClarification
+	InteractionReview          = execution.InteractionReview
+	StepExecute                = execution.StepExecute
+	StepReplay                 = execution.StepReplay
+	StepUncertain              = execution.StepUncertain
+)
+
 const (
 	Queued               = execution.Queued
 	Running              = execution.Running
@@ -68,7 +93,6 @@ var (
 	ErrNotFound  = execution.ErrNotFound
 	ErrConflict  = execution.ErrConflict
 	ErrLeaseLost = execution.ErrLeaseLost
-	ErrUncertain = execution.ErrUncertain
 	ErrNoWork    = execution.ErrNoWork
 )
 

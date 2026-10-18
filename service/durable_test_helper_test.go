@@ -43,7 +43,7 @@ func durableTestStore(t *testing.T) *durable.Store {
 		}
 		admin.Close()
 	})
-	if err = s.Migrate(ctx); err != nil {
+	if err = s.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	return s

@@ -312,7 +312,7 @@ func integrationStore(t *testing.T) *durable.Store {
 		pool, _ := admin.DB()
 		_ = pool.Close()
 	})
-	if err = store.Migrate(ctx); err != nil {
+	if err = store.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	return store
@@ -351,18 +351,19 @@ func TestGinRunLifecycleAndSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = store.BeginStep(ctx, active.Lease(), "clarify", "question", durable.ReadOnly); err != nil {
+	if _, err = store.BeginStep(ctx, active.Lease(), durable.StepIntent{
+		ID:     "clarify",
+		Input:  "question",
+		Policy: durable.ReadOnly,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.Save(
-		ctx,
-		active.Lease(),
-		json.RawMessage(`{"waitingStep":"clarify"}`),
-		durable.WaitingClarification,
-		"",
-		"question",
-		"ClarificationRequested",
-	); err != nil {
+	if err = store.CommitBoundary(ctx, active.Lease(), durable.Boundary{
+		Kind:        durable.BoundaryAwaitClarification,
+		State:       json.RawMessage(`{}`),
+		Detail:      "question",
+		WaitingStep: "clarify",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	w = request(
@@ -380,15 +381,7 @@ func TestGinRunLifecycleAndSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.Save(
-		ctx,
-		active.Lease(),
-		json.RawMessage(`{}`),
-		durable.Completed,
-		"final\nanswer",
-		"",
-		"RunCompleted",
-	); err != nil {
+	if err = store.CommitBoundary(ctx, active.Lease(), durable.Boundary{Kind: durable.BoundaryComplete, State: json.RawMessage(`{}`), Output: "final\nanswer"}); err != nil {
 		t.Fatal(err)
 	}
 	eventRequest := httptest.NewRequest("GET", "/v1/runs/"+run.ID+"/events", nil)

@@ -79,7 +79,7 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.Migrate(ctx); err != nil {
+	if err := store.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	runCtx, stop := context.WithCancel(ctx)

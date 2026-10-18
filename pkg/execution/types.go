@@ -74,6 +74,7 @@ type Run struct {
 	EventSeq      int64           `json:"eventSeq"`
 	Output        string          `json:"output,omitempty"`
 	WaitingStep   string          `json:"waitingStep,omitempty"`
+	WaitingKind   InteractionKind `json:"waitingKind,omitempty"`
 	Error         string          `json:"error,omitempty"`
 }
 

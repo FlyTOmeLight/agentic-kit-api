@@ -81,7 +81,7 @@ func (h *Controller) cancel(c *core.Context) {
 // @Failure 413 {object} serrors.Error "请求体超过限制"
 // @Failure 500 {object} serrors.Error "内部错误"
 // @Router /v1/runs/{id}/answer [post]
-func (h *Controller) answer(c *core.Context) { h.supply(c, durable.WaitingClarification) }
+func (h *Controller) answer(c *core.Context) { h.supply(c, durable.InteractionClarification) }
 
 // resolve 提交人工复核结果。
 // @Summary 提交人工复核结果
@@ -99,9 +99,9 @@ func (h *Controller) answer(c *core.Context) { h.supply(c, durable.WaitingClarif
 // @Failure 413 {object} serrors.Error "请求体超过限制"
 // @Failure 500 {object} serrors.Error "内部错误"
 // @Router /v1/runs/{id}/resolve [post]
-func (h *Controller) resolve(c *core.Context) { h.supply(c, durable.NeedsReview) }
+func (h *Controller) resolve(c *core.Context) { h.supply(c, durable.InteractionReview) }
 
-func (h *Controller) supply(c *core.Context, status durable.Status) {
+func (h *Controller) supply(c *core.Context, kind durable.InteractionKind) {
 	var req struct {
 		sdk.GetRunRequest
 		sdk.SupplyResultRequest
@@ -116,7 +116,7 @@ func (h *Controller) supply(c *core.Context, status durable.Status) {
 		req.ID,
 		req.StepID,
 		req.Result,
-		status,
+		kind,
 	); err != nil {
 		apperror.Respond(c, err)
 		return

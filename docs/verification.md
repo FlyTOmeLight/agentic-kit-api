@@ -168,3 +168,13 @@ worker 通过其 go.work 指向本地 API 工作树，完整 make integration（
 行为测试无回归：`TestMessageAndRunRollbackTogether`、`TestConcurrentPublishAndSubmit`、`TestApplicationsReusePublishedAgentsAndTaskConversations`、`TestConcurrentApplicationRoundsShareOneConversation`、`TestPublishedSnapshotsAndConversationHistory`、`TestFilesystemBindingIsFrozenAndRequired`、`TestToolExecutionDoesNotRequireProject`、`TestApplicationExecutionSnapshotAndFencing` 全部通过。
 
 在 deploy/compose.yaml 提供的隔离 PostgreSQL 17.6、Redis 7.2.10 上通过 GOWORK=off make integration（全仓库 race 与 vet）。`go test -json` 统计 162 个用例通过、0 失败、10 跳过；`GOWORK=off CGO_ENABLED=0 make build` 与 `make doc` 通过。worker 通过其 go.work 指向本地 API 工作树，完整 make integration（race 与 vet）通过，56 通过、0 失败、3 跳过，包含 TestProcessKillResumesWithoutRepeatingTool，说明统一接受路径未改变 worker 观察到的执行契约。
+
+## 框架重构阶段 3：类型化执行命令与显式等待元数据
+
+2026-10-19：阶段 3 撤掉 `Save`/`SaveDecision` 任意组合写入面，改为 `CommitBoundary`、`RecordDecision`、`BeginStep`/`FinishStep`、`SupplyResult` 等类型化命令；`durable_run` 新增 `waiting_step`/`waiting_kind` 列，API 与 worker 不再从 opaque state 解析 `waitingStep`。空库由 `internal/schema.Init`（advisory lock + AutoMigrate 七表）初始化，`service.Build` 在对外服务前调用 `durable.Store.InitSchema`；删除 `internal/table/migrate.go` 与 v0.1 legacy guard。`pkg/durable` 按 lease/boundary/step/interaction 等文件拆分；`pkg/execution` 新增 `Boundary`/`StepIntent` 与 `validate.go`。
+
+新增测试覆盖非法 `CommitBoundary` 组合、`BeginStep` 三种 outcome、等待元数据生命周期与 schema 可重复初始化。静态检查：`rg` 确认 API 与 worker 源码无 `.Save(`/`SaveDecision` 调用，worker 无 `State.WaitingStep`；`go list -deps ./pkg/execution` 不含 gorm、server-go、SDK、Resty。
+
+在 deploy/compose.yaml 提供的隔离 PostgreSQL 17.6、Redis 7.2.10 上通过 GOWORK=off `go test -race -count=1 -timeout=120s ./...`（`TEST_DATABASE_URL`、`TEST_REDIS_URL`）。`go test -json` 统计 **186** 个用例通过、**0** 失败、**0** 跳过；`GOWORK=off CGO_ENABLED=0 make build` 与 `make doc` 通过（OpenAPI Run 增加 `waitingKind`）。
+
+worker 通过 go.work 指向本地 API 工作树，`TEST_DATABASE_URL` 下 `go test -race -count=1 -timeout=120s ./...`：**52** 通过、**0** 失败、**1** 跳过（需 AIO 环境的公开 SDK 测试）；包含 TestProcessKillResumesWithoutRepeatingTool、TestUnsafeErrorPausesInsteadOfRetrying（断言公开 Run 的 `waitingStep`/`waitingKind`）。worker `go.mod` 仍 pin 已发布 API 版本且无 replace；**GOWORK=off** 独立构建 worker 需等 API 发布含本阶段符号的版本，联合验证以 go.work 为准。
