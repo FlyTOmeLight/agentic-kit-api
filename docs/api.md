@@ -24,7 +24,7 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | POST /v1/runs/{id}/resolve | 提交人工确认的工具结果 | stepID、result |
 | GET /v1/runs/{id}/events | SSE 回放及订阅 | Last-Event-ID header 或 after query，格式 runID:seq |
 
-config 包括 systemPrompt、model、tools、maxTurns，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)；maxTurns 为 1～100。工具名称不能重复，parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`；该工具成功时，Eino 直接返回工具结果并结束本轮，不再调用模型。此设置随 Agent 发布版本和 Run 快照冻结。AppForge 尚无已验证的下游幂等契约，不能配置为 Idempotent。
+config 包括 systemPrompt、model、tools、maxTurns，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)；maxTurns 为 1～100。工具名称不能重复，parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`；该工具成功时，worker 直接返回工具结果并结束本轮，不再调用模型；错误结果返回给模型处理。此设置随 Agent 发布版本和 Run 快照冻结。工具 `kind` 仅接受空字符串或 `HTTP`；`AppForgeMCP`、`AppForgeOpenAPI` 及其他未知 kind 一律拒绝；ask_for_clarification 必须 `ReadOnly` 且 kind 为空或 `HTTP`，URL 字段可不填。
 
 Agent 创建时 revision=1，编辑成功递增 revision。编辑或发布携带旧 revision 返回 409。同一 revision 重复发布返回同一个版本，版本 number 从 1 开始。仅已发布 Agent 可以创建会话。每次提交消息使用当时最新的发布版本，并把配置写入 Run 快照；恢复时不重新读取草稿或最新版本。Run 响应中的 agentID、configVersion 可用于定位版本。
 
@@ -74,7 +74,7 @@ Agent 定义先通过 `/v1/agents` 创建、编辑与发布。应用执行必须
 
 幂等键必填。同键同输入返回原 Run，包括发布新版本之后的重试；同键不同输入返回 409。Agent、发布版本不存在或属于其他 owner 时返回 404。创建会话、Run、输入消息与事件在同一事务提交。应用服务凭据不能下发给浏览器；应用从已验证的用户与任务构造 scope，敏感操作仍动态检查业务权限。
 
-`GET /internal/v1/executions/{id}/lease?epoch=N` 返回当前数据库时钟下的执行权；取消、旧 epoch 或其他 owner 均无法通过。模型工具参数不能提供该执行身份，Worker 在 HTTP headers 中注入真实 run ID 和 epoch。运行时执行权不替代业务授权或外部进程停止确认。projectID 是可选的执行上下文；工具或文件系统绑定本身不要求选择项目，资源是否允许使用由调用方授权。
+`GET /internal/v1/executions/{id}/lease?epoch=N` 返回当前数据库时钟下的执行权；取消、旧 epoch、超过 deadline 或其他 owner 均无法通过。模型工具参数不能提供该执行身份，Worker 在 HTTP headers 中注入真实 run ID 和 epoch。运行时执行权不替代业务授权或外部进程停止确认。projectID 是可选的执行上下文；工具或文件系统绑定本身不要求选择项目，资源是否允许使用由调用方授权。
 
 ## Public run trace
 

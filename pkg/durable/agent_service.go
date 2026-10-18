@@ -83,10 +83,6 @@ func ValidateAgentConfig(c AgentConfig) error {
 		}
 		switch t.Kind {
 		case "", "HTTP":
-		case "AppForgeMCP", "AppForgeOpenAPI":
-			if t.ResourceID == "" || t.ToolID == "" || t.Policy == Idempotent {
-				return ErrInvalid
-			}
 		default:
 			return ErrInvalid
 		}

@@ -169,7 +169,7 @@ func (s *Store) CheckExecutionLease(ctx context.Context, owner, id string, epoch
 	var n int64
 	e := s.db.WithContext(ctx).
 		Model(&table.Run{}).
-		Where("owner_id = ? AND id = ? AND epoch = ? AND status = ? AND lease_until > clock_timestamp()", owner, id, epoch, Running).
+		Where("owner_id = ? AND id = ? AND epoch = ? AND status = ? AND lease_until > clock_timestamp() AND deadline > clock_timestamp()", owner, id, epoch, Running).
 		Count(&n).
 		Error
 	return n == 1, e

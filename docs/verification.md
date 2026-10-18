@@ -132,3 +132,11 @@ SDK 全部操作改为 ctx 与操作请求指针；路径、查询和 Header 在
 API 在 GOWORK=off、无本地 replace 的正式发布依赖下通过 make integration（全仓库 race 与 vet）、CGO_ENABLED=0 make build 和 CLI 帮助入口；make doc、OpenAPI 路由检查、Swagger 实际 JSON 响应和 Helm lint 通过。入口显式安装 httpintegration.Install，使 SwaggerEnable、指标及其他可选 HTTP 配置生效。真实 PostgreSQL 测试验证借用连接不会被 Store 关闭、唯一约束错误保留，以及同一数据上的重复迁移。
 
 worker 在 API/worker 联合 workspace 下通过完整 make integration（race 与 vet）。最终代码又通过 TestProcessKillResumesWithoutRepeatingTool，验证实际启动 API、强杀接管、不重复执行工具及 Redis 不可用时的 SSE 回放。仅更新 worker 跨进程测试生成的 API 配置，不修改执行实现。没有提交、推送或发布仓库。
+
+## 平台业务删除与执行权截止校验
+
+2026-10-18：删除平台业务、评测、CLI 与 Coding 客户端后，工具 kind 只接受空值或 HTTP；AppForgeMCP、AppForgeOpenAPI 及未知类型返回 ErrInvalid。CheckExecutionLease 同时检查 lease_until 与 deadline，超过期限的执行权不再通过（新增 TestCheckExecutionLeaseEnforcesDeadline，ToolKind 契约由 TestValidateAgentConfigToolKindContract 覆盖）。
+
+在 deploy/compose.yaml 提供的隔离 PostgreSQL 17.6、Redis 7.2.10 上通过 GOWORK=off make integration（全仓库 race 与 vet）。`go test -json` 统计为 156 个用例通过、0 个用例跳过（无测试文件的包不计入）；GOWORK=off CGO_ENABLED=0 make build 通过。
+
+worker 通过其 go.work 指向本地 API 工作树，完整 make integration（race 与 vet）通过，其中 TestProcessKillResumesWithoutRepeatingTool 确认通过，说明 deadline 收紧后的执行权检查不影响强杀接管。worker 仓库另有未提交改动，本次验证未修改或提交它。
