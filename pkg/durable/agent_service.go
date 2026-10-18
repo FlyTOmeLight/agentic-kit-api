@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
@@ -28,19 +27,6 @@ func agentFromRow(r table.Agent) *Agent {
 
 func versionFromRow(r table.AgentVersion) *AgentVersion {
 	return &AgentVersion{AgentID: r.AgentID, Number: r.Number, Config: r.Config, CreatedAt: r.CreatedAt.UTC()}
-}
-
-func runSpec(c AgentConfig, agent string, version int64, query string) Spec {
-	return Spec{
-		AgentID:       agent,
-		ConfigVersion: strconv.FormatInt(version, 10),
-		Query:         query,
-		SystemPrompt:  c.SystemPrompt,
-		Model:         c.Model,
-		Tools:         c.Tools,
-		Toolsets:      c.Toolsets,
-		MaxTurns:      c.MaxTurns,
-	}
 }
 
 // ValidateAgentConfig applies the generic asset rules from pkg/agent.

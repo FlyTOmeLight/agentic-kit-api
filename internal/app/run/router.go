@@ -3,17 +3,19 @@ package run
 import (
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
+
+	appexec "github.com/FlyTOmeLight/agentic-kit-api/internal/app/execution"
 )
 
 type Controller struct {
 	service   Service
 	redis     frameworkredis.Redis
-	execution ExecutionService
+	execution *appexec.Service
 }
 
 func NewController(
 	service Service,
-	execution ExecutionService,
+	execution *appexec.Service,
 	redisClient frameworkredis.Redis,
 ) *Controller {
 	return &Controller{service: service, execution: execution, redis: redisClient}

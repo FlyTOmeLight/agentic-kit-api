@@ -152,3 +152,19 @@ worker 通过其 go.work 指向本地 API 工作树，完整 make integration（
 副作用：阶段 1 让 SDK 公共类型变成领域包别名，swag 1.8.4 会跟随别名跳到目标包，OpenAPI 文档的 schema 名从 `agenticv1.AgentConfig` 等迁移到 `agent.AgentConfig`、`execution.Run` 等。API 处于 v0.x 阶段没有外部 SDK 消费者，记录此变化供后续阶段 4 处理；如需恢复 `agenticv1.*` schema 名称需把 SDK 类型改回 wrapper struct。
 
 在 deploy/compose.yaml 提供的隔离 PostgreSQL 17.6、Redis 7.2.10 上通过 GOWORK=off make integration（全仓库 race 与 vet）。`go test -json` 统计 161 个用例通过、0 失败、9 跳过（DB 无关的子测试）；GOWORK=off CGO_ENABLED=0 make build 通过。`make doc` 重新生成的 OpenAPI 文档路径/操作与之前一致，只是 schema 名称随别名展开。worker 通过其 go.work 指向本地 API 工作树，完整 make integration（race 与 vet）通过，56 通过、0 失败、3 跳过，包含 TestProcessKillResumesWithoutRepeatingTool。
+
+## 框架重构阶段 2：统一接受执行
+
+2026-10-19：阶段 2 把 chat 与 application 两条接受路径合并为一个算法，并把版本解析与快照编译移出 durable 事务内核。
+
+- `pkg/execution` 新增 `commands.go`（`SubmitCommand`、`SubmitKind`、`SubmissionFacts`、`PreparedSubmission`、`Submission`）与 `snapshot.go`（`CompileRunSpec` 纯编译）。该包仍不依赖 GORM、表模型或 HTTP。
+- `pkg/durable` 新增 `tx.go`（`BindTransaction(tx *gorm.DB) *Tx`）与 `submission.go`（`Tx.Submit` 与 `Store.Accept`）。统一算法按顺序执行：请求 advisory lock、按 request_key 回放（**回放不调用 prepare**）、会话锁或按 scope 创建会话、活动任务检查、`prepare` 编译快照、写入 Run 与 User 消息与 RunQueued 事件。
+- `pkg/durable/prepare.go` 提供 `PrepareChatSubmission`（当前发布版本，拒绝带 toolset 的配置）与 `PrepareApplicationSubmission`（显式版本、filesystem 绑定校验）；`loadConversationHistory` 随之迁移。
+- `internal/app/execution` 新增提交编排服务，注入 `*durable.Store`，`session` 与 `run` 业务模块改为依赖它，不再断言 `*durable.Store` 实现 Service。
+- 请求摘要保持与阶段 1 一致（chat 为 `{session,query}`，application 为 `{spec,ttl}`），因此既有幂等键与重放语义不变。`SubmitExecution` 的对外签名与 `MaxAttempts=5` 保持不变。
+- 新增 `TestPublishSameRevisionReturnsExistingVersion`，确认同 revision 重复发布返回原版本且不新增版本行。
+- 资产 Create/Update/Publish 仍由 `pkg/durable/agent_service.go` 提供；把资产事务迁入 `internal/app/agent` 与 `table/agent_query` 属于后续阶段，本轮未做。CreateDerivedVersion 未做。
+
+行为测试无回归：`TestMessageAndRunRollbackTogether`、`TestConcurrentPublishAndSubmit`、`TestApplicationsReusePublishedAgentsAndTaskConversations`、`TestConcurrentApplicationRoundsShareOneConversation`、`TestPublishedSnapshotsAndConversationHistory`、`TestFilesystemBindingIsFrozenAndRequired`、`TestToolExecutionDoesNotRequireProject`、`TestApplicationExecutionSnapshotAndFencing` 全部通过。
+
+在 deploy/compose.yaml 提供的隔离 PostgreSQL 17.6、Redis 7.2.10 上通过 GOWORK=off make integration（全仓库 race 与 vet）。`go test -json` 统计 162 个用例通过、0 失败、10 跳过；`GOWORK=off CGO_ENABLED=0 make build` 与 `make doc` 通过。worker 通过其 go.work 指向本地 API 工作树，完整 make integration（race 与 vet）通过，56 通过、0 失败、3 跳过，包含 TestProcessKillResumesWithoutRepeatingTool，说明统一接受路径未改变 worker 观察到的执行契约。

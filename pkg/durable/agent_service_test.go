@@ -1,9 +1,12 @@
 package durable
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
 func TestValidateAgentConfigToolKindContract(t *testing.T) {
@@ -82,4 +85,36 @@ func cloneConfig(in AgentConfig) AgentConfig {
 	out := in
 	out.Tools = cloneTools(in.Tools)
 	return out
+}
+
+func TestPublishSameRevisionReturnsExistingVersion(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	cfg := AgentConfig{
+		Model:        ModelSpec{Name: "test", BaseURL: "http://model.test/v1"},
+		MaxTurns:     5,
+		SystemPrompt: "draft",
+	}
+	a, err := s.CreateAgent(ctx, "owner", "agent", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.PublishAgent(ctx, "owner", a.ID, a.Revision)
+	if err != nil || first.Number != 1 {
+		t.Fatalf("first publish: %+v %v", first, err)
+	}
+	repeat, err := s.PublishAgent(ctx, "owner", a.ID, a.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeat.Number != first.Number || repeat.AgentID != first.AgentID {
+		t.Fatalf("repeat publish: %+v want %+v", repeat, first)
+	}
+	var count int64
+	if err = s.DB().Model(&table.AgentVersion{}).Where("agent_id = ?", a.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("versions=%d want 1", count)
+	}
 }
