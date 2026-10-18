@@ -1501,6 +1501,119 @@ const docTemplateAgentic = `{
         }
     },
     "definitions": {
+        "agent.Agent": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "draft": {
+                    "$ref": "#/definitions/agent.AgentConfig"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "publishedVersion": {
+                    "type": "integer"
+                },
+                "revision": {
+                    "type": "integer"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "agent.AgentConfig": {
+            "type": "object",
+            "properties": {
+                "maxTurns": {
+                    "type": "integer"
+                },
+                "model": {
+                    "$ref": "#/definitions/agent.ModelSpec"
+                },
+                "systemPrompt": {
+                    "type": "string"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.ToolSpec"
+                    }
+                },
+                "toolsets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "agent.ModelSpec": {
+            "type": "object",
+            "properties": {
+                "apiKeyEnv": {
+                    "type": "string"
+                },
+                "baseURL": {
+                    "type": "string"
+                },
+                "maxTokens": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "temperature": {
+                    "type": "number"
+                },
+                "topP": {
+                    "type": "number"
+                }
+            }
+        },
+        "agent.ToolSpec": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "endRun": {
+                    "type": "boolean"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parameters": {
+                    "type": "object"
+                },
+                "policy": {
+                    "type": "string"
+                },
+                "resourceID": {
+                    "type": "string"
+                },
+                "returnDirectly": {
+                    "type": "boolean"
+                },
+                "tokenEnv": {
+                    "type": "string"
+                },
+                "toolID": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "agenticv1.Agent": {
             "type": "object",
             "properties": {
@@ -1508,7 +1621,7 @@ const docTemplateAgentic = `{
                     "type": "string"
                 },
                 "draft": {
-                    "$ref": "#/definitions/agenticv1.AgentConfig"
+                    "$ref": "#/definitions/agent.AgentConfig"
                 },
                 "id": {
                     "type": "string"
@@ -1534,7 +1647,7 @@ const docTemplateAgentic = `{
                     "type": "integer"
                 },
                 "model": {
-                    "$ref": "#/definitions/agenticv1.ModelSpec"
+                    "$ref": "#/definitions/agent.ModelSpec"
                 },
                 "systemPrompt": {
                     "type": "string"
@@ -1542,7 +1655,7 @@ const docTemplateAgentic = `{
                 "tools": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/agenticv1.ToolSpec"
+                        "$ref": "#/definitions/agent.ToolSpec"
                     }
                 },
                 "toolsets": {
@@ -1560,7 +1673,7 @@ const docTemplateAgentic = `{
                     "type": "string"
                 },
                 "config": {
-                    "$ref": "#/definitions/agenticv1.AgentConfig"
+                    "$ref": "#/definitions/agent.AgentConfig"
                 },
                 "createdAt": {
                     "type": "string"
@@ -1601,26 +1714,6 @@ const docTemplateAgentic = `{
                 }
             }
         },
-        "agenticv1.Event": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "kind": {
-                    "type": "string"
-                },
-                "payload": {
-                    "type": "object"
-                },
-                "runID": {
-                    "type": "string"
-                },
-                "seq": {
-                    "type": "integer"
-                }
-            }
-        },
         "agenticv1.ExecutionSpec": {
             "type": "object",
             "properties": {
@@ -1631,30 +1724,13 @@ const docTemplateAgentic = `{
                     "type": "integer"
                 },
                 "filesystem": {
-                    "$ref": "#/definitions/agenticv1.FilesystemBinding"
+                    "$ref": "#/definitions/execution.FilesystemBinding"
                 },
                 "query": {
                     "type": "string"
                 },
                 "scope": {
-                    "$ref": "#/definitions/agenticv1.Scope"
-                }
-            }
-        },
-        "agenticv1.FilesystemBinding": {
-            "type": "object",
-            "properties": {
-                "provider": {
-                    "type": "string"
-                },
-                "tokenEnv": {
-                    "type": "string"
-                },
-                "url": {
-                    "type": "string"
-                },
-                "workspace": {
-                    "type": "string"
+                    "$ref": "#/definitions/workspace.Scope"
                 }
             }
         },
@@ -1666,59 +1742,13 @@ const docTemplateAgentic = `{
                 }
             }
         },
-        "agenticv1.ModelSpec": {
-            "type": "object",
-            "properties": {
-                "apiKeyEnv": {
-                    "type": "string"
-                },
-                "baseURL": {
-                    "type": "string"
-                },
-                "maxTokens": {
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "temperature": {
-                    "type": "number"
-                },
-                "topP": {
-                    "type": "number"
-                }
-            }
-        },
         "agenticv1.Page-agenticv1_Agent": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "type": "object",
-                        "properties": {
-                            "createdAt": {
-                                "type": "string"
-                            },
-                            "draft": {
-                                "$ref": "#/definitions/agenticv1.AgentConfig"
-                            },
-                            "id": {
-                                "type": "string"
-                            },
-                            "name": {
-                                "type": "string"
-                            },
-                            "publishedVersion": {
-                                "type": "integer"
-                            },
-                            "revision": {
-                                "type": "integer"
-                            },
-                            "updatedAt": {
-                                "type": "string"
-                            }
-                        }
+                        "$ref": "#/definitions/agent.Agent"
                     }
                 }
             }
@@ -1729,51 +1759,7 @@ const docTemplateAgentic = `{
                 "items": {
                     "type": "array",
                     "items": {
-                        "type": "object",
-                        "properties": {
-                            "agentID": {
-                                "type": "string"
-                            },
-                            "attempt": {
-                                "type": "integer"
-                            },
-                            "configVersion": {
-                                "type": "string"
-                            },
-                            "deadline": {
-                                "type": "string"
-                            },
-                            "epoch": {
-                                "type": "integer"
-                            },
-                            "error": {
-                                "type": "string"
-                            },
-                            "eventSeq": {
-                                "type": "integer"
-                            },
-                            "id": {
-                                "type": "string"
-                            },
-                            "output": {
-                                "type": "string"
-                            },
-                            "ownerID": {
-                                "type": "string"
-                            },
-                            "scope": {
-                                "$ref": "#/definitions/agenticv1.Scope"
-                            },
-                            "sessionID": {
-                                "type": "string"
-                            },
-                            "status": {
-                                "type": "string"
-                            },
-                            "waitingStep": {
-                                "type": "string"
-                            }
-                        }
+                        "$ref": "#/definitions/execution.Run"
                     }
                 }
             }
@@ -1784,27 +1770,7 @@ const docTemplateAgentic = `{
                 "items": {
                     "type": "array",
                     "items": {
-                        "type": "object",
-                        "properties": {
-                            "agentID": {
-                                "type": "string"
-                            },
-                            "createdAt": {
-                                "type": "string"
-                            },
-                            "id": {
-                                "type": "string"
-                            },
-                            "messageSeq": {
-                                "type": "integer"
-                            },
-                            "title": {
-                                "type": "string"
-                            },
-                            "updatedAt": {
-                                "type": "string"
-                            }
-                        }
+                        "$ref": "#/definitions/execution.Session"
                     }
                 }
             }
@@ -1815,39 +1781,7 @@ const docTemplateAgentic = `{
                 "items": {
                     "type": "array",
                     "items": {
-                        "type": "object",
-                        "properties": {
-                            "content": {
-                                "type": "string"
-                            },
-                            "createdAt": {
-                                "type": "string"
-                            },
-                            "kind": {
-                                "type": "string"
-                            },
-                            "role": {
-                                "type": "string"
-                            },
-                            "runID": {
-                                "type": "string"
-                            },
-                            "seq": {
-                                "type": "integer"
-                            },
-                            "sessionID": {
-                                "type": "string"
-                            },
-                            "toolCallID": {
-                                "type": "string"
-                            },
-                            "toolCalls": {
-                                "type": "array",
-                                "items": {
-                                    "$ref": "#/definitions/agenticv1.ToolCall"
-                                }
-                            }
-                        }
+                        "$ref": "#/definitions/execution.SessionMessage"
                     }
                 }
             }
@@ -1895,7 +1829,7 @@ const docTemplateAgentic = `{
                     "type": "string"
                 },
                 "scope": {
-                    "$ref": "#/definitions/agenticv1.Scope"
+                    "$ref": "#/definitions/workspace.Scope"
                 },
                 "sessionID": {
                     "type": "string"
@@ -1914,40 +1848,20 @@ const docTemplateAgentic = `{
                 "events": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/agenticv1.Event"
+                        "$ref": "#/definitions/execution.Event"
                     }
                 },
                 "hasMore": {
                     "type": "boolean"
                 },
                 "latestEvent": {
-                    "$ref": "#/definitions/agenticv1.Event"
+                    "$ref": "#/definitions/execution.Event"
                 },
                 "nextSeq": {
                     "type": "integer"
                 },
                 "run": {
-                    "$ref": "#/definitions/agenticv1.Run"
-                }
-            }
-        },
-        "agenticv1.Scope": {
-            "type": "object",
-            "properties": {
-                "actorID": {
-                    "type": "string"
-                },
-                "projectID": {
-                    "type": "string"
-                },
-                "roundID": {
-                    "type": "string"
-                },
-                "taskID": {
-                    "type": "string"
-                },
-                "tenantID": {
-                    "type": "string"
+                    "$ref": "#/definitions/execution.Run"
                 }
             }
         },
@@ -2014,58 +1928,6 @@ const docTemplateAgentic = `{
                 }
             }
         },
-        "agenticv1.ToolCall": {
-            "type": "object",
-            "properties": {
-                "arguments": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "agenticv1.ToolSpec": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "endRun": {
-                    "type": "boolean"
-                },
-                "kind": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "parameters": {
-                    "type": "object"
-                },
-                "policy": {
-                    "type": "string"
-                },
-                "resourceID": {
-                    "type": "string"
-                },
-                "returnDirectly": {
-                    "type": "boolean"
-                },
-                "tokenEnv": {
-                    "type": "string"
-                },
-                "toolID": {
-                    "type": "string"
-                },
-                "url": {
-                    "type": "string"
-                }
-            }
-        },
         "agenticv1.UpdateAgentRequest": {
             "type": "object",
             "required": [
@@ -2103,6 +1965,182 @@ const docTemplateAgentic = `{
                 "statusCode": {
                     "description": "StatusCode 状态码，推荐6位数字",
                     "type": "integer"
+                }
+            }
+        },
+        "execution.Event": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "object"
+                },
+                "runID": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                }
+            }
+        },
+        "execution.FilesystemBinding": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string"
+                },
+                "tokenEnv": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "workspace": {
+                    "type": "string"
+                }
+            }
+        },
+        "execution.Run": {
+            "type": "object",
+            "properties": {
+                "agentID": {
+                    "type": "string"
+                },
+                "attempt": {
+                    "type": "integer"
+                },
+                "configVersion": {
+                    "type": "string"
+                },
+                "deadline": {
+                    "type": "string"
+                },
+                "epoch": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "eventSeq": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "output": {
+                    "type": "string"
+                },
+                "ownerID": {
+                    "type": "string"
+                },
+                "scope": {
+                    "$ref": "#/definitions/workspace.Scope"
+                },
+                "sessionID": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "waitingStep": {
+                    "type": "string"
+                }
+            }
+        },
+        "execution.Session": {
+            "type": "object",
+            "properties": {
+                "agentID": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "messageSeq": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "execution.SessionMessage": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "runID": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "sessionID": {
+                    "type": "string"
+                },
+                "toolCallID": {
+                    "type": "string"
+                },
+                "toolCalls": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/execution.ToolCall"
+                    }
+                }
+            }
+        },
+        "execution.ToolCall": {
+            "type": "object",
+            "properties": {
+                "arguments": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "workspace.Scope": {
+            "type": "object",
+            "properties": {
+                "actorID": {
+                    "type": "string"
+                },
+                "projectID": {
+                    "type": "string"
+                },
+                "roundID": {
+                    "type": "string"
+                },
+                "taskID": {
+                    "type": "string"
+                },
+                "tenantID": {
+                    "type": "string"
                 }
             }
         }

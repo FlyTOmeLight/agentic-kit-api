@@ -11,6 +11,7 @@ import (
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -154,11 +155,7 @@ func (h *Controller) listSessionRuns(c *core.Context) {
 		apperror.Respond(c, err)
 		return
 	}
-	out := make([]sdk.Run, len(items))
-	for i, r := range items {
-		out[i] = r.Response()
-	}
-	c.JSON(200, sdk.Page[sdk.Run]{Items: out})
+	c.JSON(200, sdk.Page[durable.Run]{Items: items})
 }
 
 const (
@@ -227,5 +224,5 @@ func (h *Controller) submitMessage(c *core.Context) {
 	if created {
 		status = http.StatusAccepted
 	}
-	c.JSON(status, run.Response())
+	c.JSON(status, run)
 }

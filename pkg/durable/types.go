@@ -1,98 +1,76 @@
+// Package durable is the execution store shared by the API and the worker.
+// Public value names are aliases of the pure domain packages so both sides
+// and the SDK describe the same values.
 package durable
 
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"time"
 
-	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/workspace"
 )
 
-type Status = sdk.Status
+type Status = execution.Status
 
-type Policy = sdk.Policy
+type Policy = agent.Policy
+
+type Scope = workspace.Scope
+
+type Message = execution.Message
+
+type ToolCall = execution.ToolCall
+
+type ModelSpec = agent.ModelSpec
+
+type ToolSpec = agent.ToolSpec
+
+type AgentConfig = agent.AgentConfig
+
+type Agent = agent.Agent
+
+type AgentVersion = agent.AgentVersion
+
+type Session = execution.Session
+
+type SessionMessage = execution.SessionMessage
+
+type Spec = execution.Spec
+
+type Run = execution.Run
+
+type Lease = execution.Lease
+
+type Event = execution.Event
+
+type RunTrace = execution.RunTrace
+
+type ExecutionSpec = execution.ExecutionSpec
+
+type FilesystemBinding = execution.FilesystemBinding
 
 const (
-	Queued               = sdk.Queued
-	Running              = sdk.Running
-	WaitingClarification = sdk.WaitingClarification
-	NeedsReview          = sdk.NeedsReview
-	Completed            = sdk.Completed
-	Failed               = sdk.Failed
-	Canceled             = sdk.Canceled
-	ReadOnly             = sdk.ReadOnly
-	Idempotent           = sdk.Idempotent
-	Unsafe               = sdk.Unsafe
+	Queued               = execution.Queued
+	Running              = execution.Running
+	WaitingClarification = execution.WaitingClarification
+	NeedsReview          = execution.NeedsReview
+	Completed            = execution.Completed
+	Failed               = execution.Failed
+	Canceled             = execution.Canceled
+	ReadOnly             = agent.ReadOnly
+	Idempotent           = agent.Idempotent
+	Unsafe               = agent.Unsafe
 )
 
 var (
-	ErrInvalid   = errors.New("invalid input")
-	ErrNotFound  = errors.New("resource not found")
-	ErrConflict  = errors.New("state or idempotency conflict")
-	ErrLeaseLost = errors.New("execution lease lost")
-	ErrUncertain = errors.New("tool outcome needs confirmation")
-	ErrNoWork    = errors.New("no runnable task")
+	ErrInvalid   = execution.ErrInvalid
+	ErrNotFound  = execution.ErrNotFound
+	ErrConflict  = execution.ErrConflict
+	ErrLeaseLost = execution.ErrLeaseLost
+	ErrUncertain = execution.ErrUncertain
+	ErrNoWork    = execution.ErrNoWork
 )
-
-type Scope = sdk.Scope
-
-// Spec is an immutable snapshot. Credentials are environment references, never secret values.
-type Spec struct {
-	Toolsets   []string               `json:"toolsets,omitempty"`
-	Filesystem *sdk.FilesystemBinding `json:"filesystem,omitempty"`
-	Scope      *Scope                 `json:"scope,omitempty"`
-
-	AgentID       string     `json:"agentID"`
-	ConfigVersion string     `json:"configVersion"`
-	Query         string     `json:"query"`
-	SystemPrompt  string     `json:"systemPrompt"`
-	Model         ModelSpec  `json:"model"`
-	Tools         []ToolSpec `json:"tools,omitempty"`
-	MaxTurns      int        `json:"maxTurns"`
-	History       []Message  `json:"history,omitempty"`
-}
-
-type Message = sdk.Message
-
-type ToolCall = sdk.ToolCall
-
-type ModelSpec = sdk.ModelSpec
-
-type ToolSpec = sdk.ToolSpec
-
-type Run struct {
-	Scope *Scope `json:"scope,omitempty"`
-
-	AgentID       string          `json:"agentID"`
-	ConfigVersion string          `json:"configVersion"`
-	ID            string          `json:"id"`
-	OwnerID       string          `json:"ownerID"`
-	SessionID     string          `json:"sessionID"`
-	Spec          Spec            `json:"-"`
-	State         json.RawMessage `json:"-"`
-	Status        Status          `json:"status"`
-	WorkerID      string          `json:"-"`
-	Epoch         int64           `json:"epoch"`
-	LeaseUntil    *time.Time      `json:"-"`
-	Deadline      time.Time       `json:"deadline"`
-	Attempt       int             `json:"attempt"`
-	MaxAttempts   int             `json:"-"`
-	EventSeq      int64           `json:"eventSeq"`
-	Output        string          `json:"output,omitempty"`
-	WaitingStep   string          `json:"waitingStep,omitempty"`
-	Error         string          `json:"error,omitempty"`
-}
-
-type Lease struct {
-	RunID, WorkerID string
-	Epoch           int64
-}
-
-func (r Run) Lease() Lease { return Lease{RunID: r.ID, WorkerID: r.WorkerID, Epoch: r.Epoch} }
-
-type Event = sdk.Event
 
 func NewID() string {
 	var b [16]byte
@@ -100,23 +78,4 @@ func NewID() string {
 		panic(err)
 	}
 	return hex.EncodeToString(b[:])
-}
-
-func (r Run) Response() sdk.Run {
-	return sdk.Run{
-		Scope:         r.Scope,
-		ID:            r.ID,
-		AgentID:       r.AgentID,
-		ConfigVersion: r.ConfigVersion,
-		OwnerID:       r.OwnerID,
-		SessionID:     r.SessionID,
-		Status:        r.Status,
-		Epoch:         r.Epoch,
-		Deadline:      r.Deadline,
-		Attempt:       r.Attempt,
-		EventSeq:      r.EventSeq,
-		Output:        r.Output,
-		WaitingStep:   r.WaitingStep,
-		Error:         r.Error,
-	}
 }

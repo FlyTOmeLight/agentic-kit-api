@@ -4,7 +4,6 @@ import (
 	"context"
 
 	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
-	"github.com/redis/go-redis/v9"
 )
 
 // notificationCache owns the Outbox notification connection. Redis is optional
@@ -24,9 +23,13 @@ func (m *notificationCache) Initialize(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		// Redis only accelerates notifications. Keep a client for reconnection and
-		// let the database remain the event replay source while it is unavailable.
-		client = redis.NewUniversalClient(m.config)
+		// Redis only accelerates notifications. The lazy client keeps a reconnecting
+		// handle so startup succeeds while Redis is down and the database remains
+		// the event replay source.
+		client, err = frameworkredis.NewRedisLazy(m.config)
+		if err != nil {
+			return err
+		}
 	}
 	m.client = client
 	return nil

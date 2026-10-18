@@ -17,7 +17,7 @@ build:
 
 SWAG := $(shell go env GOPATH)/bin/swag
 FRAMEWORK_DIR := $(shell go list -m -f '{{.Dir}}' github.com/FlyTOmeLight/server-go)
-SWAG_SCAN_DIRS := internal/app/agent,internal/app/session,internal/app/run,sdk/go/agenticv1,$(FRAMEWORK_DIR)/errors,$(shell go env GOROOT)/src/encoding/json
+SWAG_SCAN_DIRS := internal/app/agent,internal/app/session,internal/app/run,sdk/go/agenticv1,pkg/agent,pkg/execution,pkg/workspace,$(FRAMEWORK_DIR)/errors,$(shell go env GOROOT)/src/encoding/json
 
 .PHONY: doc install-doc
 install-doc:

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	frameworkdb "github.com/FlyTOmeLight/server-go/db"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
@@ -21,48 +20,39 @@ type Store struct {
 }
 
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		DisableAutomaticPing: true,
-		TranslateError:       true,
-		NowFunc:              func() time.Time { return time.Now().UTC() },
-		// Domain errors are reported by callers; avoid logging prompts and tool results as SQL.
-		Logger: logger.Default.LogMode(logger.Silent),
+	database, err := frameworkdb.NewDB(ctx, &frameworkdb.Config{
+		Driver:       frameworkdb.DriverPostgreSQL,
+		DSN:          dsn,
+		MaxOpenConns: 20,
+		MaxIdleConns: 5,
 	})
 	if err != nil {
 		return nil, err
 	}
-	pool, err := db.DB()
-	if err != nil {
-		return nil, err
-	}
-	pool.SetMaxOpenConns(20)
-	pool.SetMaxIdleConns(5)
-	pool.SetConnMaxIdleTime(5 * time.Minute)
-	if err = pool.PingContext(ctx); err != nil {
-		_ = pool.Close()
-		return nil, err
-	}
-	return &Store{db: db, owned: true}, nil
+	return &Store{db: session(database), owned: true}, nil
 }
 
-// New uses an injected framework database; the caller owns its connection pool.
-func New(database *frameworkdb.DB) (*Store, error) {
-	if database == nil {
-		return nil, errors.New("durable store requires a database")
-	}
-	handle := database.Session(
-		&gorm.Session{
-			Logger:  database.Logger.LogMode(logger.Silent),
-			NowFunc: func() time.Time { return time.Now().UTC() },
-		},
-	)
-	// Durable transactions use PostgreSQL error translation for uniqueness conflicts.
-	// The framework's cross-database dialector does not expose ErrorTranslator.
+// session applies the settings durable transactions rely on: silent SQL logs,
+// UTC timestamps, PostgreSQL error translation, and the underlying dialector.
+func session(database *frameworkdb.DB) *gorm.DB {
+	handle := database.Session(&gorm.Session{
+		Logger:  logger.Default.LogMode(logger.Silent),
+		NowFunc: func() time.Time { return time.Now().UTC() },
+	})
 	if dialect, ok := handle.Dialector.(*frameworkdb.AIBaseDialector); ok {
 		handle.Config.Dialector = dialect.GetDialector()
 	}
 	handle.Config.TranslateError = true
-	return &Store{db: handle}, nil
+	return handle
+}
+
+// New borrows a framework database. The caller owns the connection pool and
+// must not close it through Store.
+func New(database *frameworkdb.DB) (*Store, error) {
+	if database == nil {
+		return nil, errors.New("durable store requires a database")
+	}
+	return &Store{db: session(database)}, nil
 }
 
 func (s *Store) Close() {
@@ -105,3 +95,6 @@ func readRun(query *gorm.DB) (*Run, error) {
 	}
 	return runFromRow(r), nil
 }
+
+// DB exposes the borrowed session for tests that inspect stored rows.
+func (s *Store) DB() *gorm.DB { return s.db }

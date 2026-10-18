@@ -2,7 +2,7 @@ package service
 
 import (
 	core "github.com/FlyTOmeLight/server-go/pkg"
-	"github.com/redis/go-redis/v9"
+	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/run"
@@ -18,7 +18,7 @@ type routes struct {
 
 func newRoutes(
 	store *durable.Store,
-	cache redis.UniversalClient,
+	cache frameworkredis.Redis,
 ) *routes {
 	return &routes{
 		agent:   agent.NewController(store),

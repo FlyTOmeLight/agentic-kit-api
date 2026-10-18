@@ -88,7 +88,7 @@ func (h *Controller) submitExecution(c *core.Context) {
 	if created {
 		status = http.StatusAccepted
 	}
-	c.JSON(status, r.Response())
+	c.JSON(status, r)
 }
 
 // executionLease 校验任务执行权。

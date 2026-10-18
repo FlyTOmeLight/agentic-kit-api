@@ -36,7 +36,7 @@ func (h *Controller) get(c *core.Context) {
 		apperror.Respond(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, run.Response())
+	c.JSON(http.StatusOK, run)
 }
 
 // cancel 取消任务。

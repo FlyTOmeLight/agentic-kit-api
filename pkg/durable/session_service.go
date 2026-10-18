@@ -11,12 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
-	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
-
-type Session = sdk.Session
-
-type SessionMessage = sdk.SessionMessage
 
 func sessionFromRow(r table.Session) *Session {
 	return &Session{

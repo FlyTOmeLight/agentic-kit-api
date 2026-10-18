@@ -9,28 +9,27 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
-	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
 // Trace reads a consistent public projection. Engine state, prompts and credentials
 // are deliberately excluded. Historical calls come from public assistant messages.
-func (s *Store) Trace(ctx context.Context, owner, id string, after int64) (*sdk.RunTrace, error) {
+func (s *Store) Trace(ctx context.Context, owner, id string, after int64) (*RunTrace, error) {
 	if after < 0 {
 		return nil, ErrInvalid
 	}
-	var trace sdk.RunTrace
+	var trace RunTrace
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		run, err := readRun(tx.Model(&table.Run{}).Where("id = ? AND owner_id = ?", id, owner))
 		if err != nil {
 			return err
 		}
-		trace.Run = run.Response()
+		trace.Run = *run
 		trace.NextSeq = after
 		var messages []table.Message
 		if err = tx.Where("run_id = ? AND kind = ?", id, "Assistant").Find(&messages).Error; err != nil {
 			return err
 		}
-		calls := map[string]sdk.ToolCall{}
+		calls := map[string]ToolCall{}
 		for _, m := range messages {
 			for _, call := range m.Message.ToolCalls {
 				calls[call.ID] = call
@@ -44,7 +43,7 @@ func (s *Store) Trace(ctx context.Context, owner, id string, after int64) (*sdk.
 			Error; err != nil {
 			return err
 		}
-		trace.Events = make([]sdk.Event, 0, len(events))
+		trace.Events = make([]Event, 0, len(events))
 		for _, record := range events {
 			trace.Events = append(trace.Events, traceEvent(record, calls))
 			trace.NextSeq = record.Seq
@@ -63,7 +62,7 @@ func (s *Store) Trace(ctx context.Context, owner, id string, after int64) (*sdk.
 	return &trace, err
 }
 
-func traceEvent(record table.Event, calls map[string]sdk.ToolCall) sdk.Event {
+func traceEvent(record table.Event, calls map[string]ToolCall) Event {
 	event := eventFromRow(record)
 	var payload map[string]any
 	if json.Unmarshal(event.Payload, &payload) != nil {

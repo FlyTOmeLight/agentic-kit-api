@@ -1,24 +1,10 @@
 package agenticv1
 
-import "time"
+import "github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 
-type Session struct {
-	ID         string    `json:"id"`
-	AgentID    string    `json:"agentID"`
-	Title      string    `json:"title"`
-	MessageSeq int64     `json:"messageSeq"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
-}
+type Session = execution.Session
 
-type SessionMessage struct {
-	SessionID string `json:"sessionID"`
-	Seq       int64  `json:"seq"`
-	RunID     string `json:"runID"`
-	Kind      string `json:"kind"`
-	Message
-	CreatedAt time.Time `json:"createdAt"`
-}
+type SessionMessage = execution.SessionMessage
 
 type CreateSessionRequest struct {
 	AgentID string `json:"agentID" binding:"required,max=128"`

@@ -140,3 +140,15 @@ worker 在 API/worker 联合 workspace 下通过完整 make integration（race �
 在 deploy/compose.yaml 提供的隔离 PostgreSQL 17.6、Redis 7.2.10 上通过 GOWORK=off make integration（全仓库 race 与 vet）。`go test -json` 统计为 156 个用例通过、0 个用例跳过（无测试文件的包不计入）；GOWORK=off CGO_ENABLED=0 make build 通过。
 
 worker 通过其 go.work 指向本地 API 工作树，完整 make integration（race 与 vet）通过，其中 TestProcessKillResumesWithoutRepeatingTool 确认通过，说明 deadline 收紧后的执行权检查不影响强杀接管。worker 仓库另有未提交改动，本次验证未修改或提交它。
+
+## 框架重构阶段 1：纯值包与服务端依赖收敛
+
+2026-10-18：阶段 1 拆分纯值包与领域层依赖方向。新增 `pkg/workspace`（Scope）、`pkg/agent`（Policy/ModelSpec/ToolSpec/AgentConfig/Agent/AgentVersion 及 `ValidateAgentConfig` 纯规则）与 `pkg/execution`（Status/Message/ToolCall/Spec/Run/Lease/Event/RunTrace/Session/SessionMessage/ExecutionSpec/FilesystemBinding 及错误集）。`pkg/durable` 公开类型改为上述纯值包的别名，导出名保持不变；`pkg/durable` 的直接依赖收缩为 `server-go/db`、`gorm.io/gorm` 及上述三个纯值包，不再导入 SDK、HTTP 框架或 Redis。SDK 改为依赖纯值包，不再 import `pkg/durable`。
+
+阶段 1 之外：升级 server-go 到 v0.12.0，使用其 `db.NewDB`、`redis.NewRedis` / `NewRedisLazy`、`redis.XReadArgs` / `redis.Nil` / `redis.Redis` 别名。Outbox 拆为 `durable.ClaimOutbox`（返回 *gorm.DB 事务与是否首事件）与 `durable.MarkPublished`，Redis 发布与重试循环迁入 `service/outbox.go`（`publishOutbox`、`relayOutbox`）；事件相关测试随迁到 `service`。`pkg/durable` 不再 import go-redis/v9，`service` 装配改用 server-go 提供的 Redis 句柄，Redis 不可用时使用 `NewRedisLazy` 允许启动并通过数据库回放事件。Makefile 的 `swag` 搜索路径追加三个新包，让 SDK 别名能解析到目标类型。
+
+依赖方向验证（`go list -deps`）：`pkg/agent`、`pkg/execution`、`pkg/workspace` 仅依赖标准库与彼此；`pkg/durable` 非测试直接 import 集合为 `context`、`crypto/*`、`encoding/*`、`errors`、`server-go/db`、`gorm.io/gorm`、`internal/table`、`pkg/agent`、`pkg/execution`、`pkg/workspace`、`net/url`、`strconv`、`strings`、`time`、`unicode/utf8`，不含 HTTP SDK、Gin、Resty；`service` 与 `internal/app/run` 不再直接 import go-redis/v9，仅依赖 `server-go/redis`。
+
+副作用：阶段 1 让 SDK 公共类型变成领域包别名，swag 1.8.4 会跟随别名跳到目标包，OpenAPI 文档的 schema 名从 `agenticv1.AgentConfig` 等迁移到 `agent.AgentConfig`、`execution.Run` 等。API 处于 v0.x 阶段没有外部 SDK 消费者，记录此变化供后续阶段 4 处理；如需恢复 `agenticv1.*` schema 名称需把 SDK 类型改回 wrapper struct。
+
+在 deploy/compose.yaml 提供的隔离 PostgreSQL 17.6、Redis 7.2.10 上通过 GOWORK=off make integration（全仓库 race 与 vet）。`go test -json` 统计 161 个用例通过、0 失败、9 跳过（DB 无关的子测试）；GOWORK=off CGO_ENABLED=0 make build 通过。`make doc` 重新生成的 OpenAPI 文档路径/操作与之前一致，只是 schema 名称随别名展开。worker 通过其 go.work 指向本地 API 工作树，完整 make integration（race 与 vet）通过，56 通过、0 失败、3 跳过，包含 TestProcessKillResumesWithoutRepeatingTool。

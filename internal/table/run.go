@@ -5,23 +5,25 @@ import (
 	"encoding/json"
 	"time"
 
-	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/workspace"
 )
 
 // ExecutionSnapshot stores the immutable configuration accepted for a run.
 type ExecutionSnapshot struct {
-	Toolsets   []string               `json:"toolsets,omitempty"`
-	Filesystem *sdk.FilesystemBinding `json:"filesystem,omitempty"`
-	Scope      *sdk.Scope             `json:"scope,omitempty"`
+	Toolsets   []string                     `json:"toolsets,omitempty"`
+	Filesystem *execution.FilesystemBinding `json:"filesystem,omitempty"`
+	Scope      *workspace.Scope             `json:"scope,omitempty"`
 
-	AgentID       string         `json:"agentID"`
-	ConfigVersion string         `json:"configVersion"`
-	Query         string         `json:"query"`
-	SystemPrompt  string         `json:"systemPrompt"`
-	Model         sdk.ModelSpec  `json:"model"`
-	Tools         []sdk.ToolSpec `json:"tools,omitempty"`
-	MaxTurns      int            `json:"maxTurns"`
-	History       []sdk.Message  `json:"history,omitempty"`
+	AgentID       string              `json:"agentID"`
+	ConfigVersion string              `json:"configVersion"`
+	Query         string              `json:"query"`
+	SystemPrompt  string              `json:"systemPrompt"`
+	Model         agent.ModelSpec     `json:"model"`
+	Tools         []agent.ToolSpec    `json:"tools,omitempty"`
+	MaxTurns      int                 `json:"maxTurns"`
+	History       []execution.Message `json:"history,omitempty"`
 }
 
 type Run struct {
@@ -32,7 +34,7 @@ type Run struct {
 	RequestHash string            `gorm:"type:text;not null"`
 	Spec        ExecutionSnapshot `gorm:"serializer:json;type:jsonb;not null"`
 	State       json.RawMessage   `gorm:"serializer:json;type:jsonb;not null;default:'{}'"`
-	Status      sdk.Status        `gorm:"type:text;not null;check:durable_run_status_check,status IN ('Queued','Running','WaitingClarification','NeedsReview','Completed','Failed','Canceled')"`
+	Status      execution.Status  `gorm:"type:text;not null;check:durable_run_status_check,status IN ('Queued','Running','WaitingClarification','NeedsReview','Completed','Failed','Canceled')"`
 	WorkerID    string            `gorm:"type:text;not null;default:''"`
 	Epoch       int64             `gorm:"type:bigint;not null;default:0"`
 	LeaseUntil  *time.Time        `gorm:"type:timestamptz"`
@@ -50,13 +52,13 @@ type Run struct {
 func (Run) TableName() string { return "durable_run" }
 
 type Step struct {
-	RunID     string     `gorm:"type:text;primaryKey;not null"`
-	StepID    string     `gorm:"type:text;primaryKey;not null"`
-	InputHash string     `gorm:"type:text;not null"`
-	Policy    sdk.Policy `gorm:"type:text;not null;check:durable_step_policy_check,policy IN ('ReadOnly','Idempotent','Unsafe')"`
-	Status    string     `gorm:"type:text;not null;check:durable_step_status_check,status IN ('Started','Completed')"`
-	Result    string     `gorm:"type:text;not null;default:''"`
-	Run       *Run       `gorm:"foreignKey:RunID;references:ID;constraint:durable_step_run_id_fkey,OnUpdate:NO ACTION,OnDelete:NO ACTION"`
+	RunID     string       `gorm:"type:text;primaryKey;not null"`
+	StepID    string       `gorm:"type:text;primaryKey;not null"`
+	InputHash string       `gorm:"type:text;not null"`
+	Policy    agent.Policy `gorm:"type:text;not null;check:durable_step_policy_check,policy IN ('ReadOnly','Idempotent','Unsafe')"`
+	Status    string       `gorm:"type:text;not null;check:durable_step_status_check,status IN ('Started','Completed')"`
+	Result    string       `gorm:"type:text;not null;default:''"`
+	Run       *Run         `gorm:"foreignKey:RunID;references:ID;constraint:durable_step_run_id_fkey,OnUpdate:NO ACTION,OnDelete:NO ACTION"`
 }
 
 func (Step) TableName() string { return "durable_step" }

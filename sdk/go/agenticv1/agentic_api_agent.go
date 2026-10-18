@@ -1,31 +1,12 @@
 package agenticv1
 
-import "time"
+import "github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 
-type AgentConfig struct {
-	Toolsets     []string   `json:"toolsets,omitempty"`
-	SystemPrompt string     `json:"systemPrompt"`
-	Model        ModelSpec  `json:"model"`
-	Tools        []ToolSpec `json:"tools,omitempty"`
-	MaxTurns     int        `json:"maxTurns"`
-}
+type AgentConfig = agent.AgentConfig
 
-type Agent struct {
-	ID               string      `json:"id"`
-	Name             string      `json:"name"`
-	Draft            AgentConfig `json:"draft"`
-	Revision         int64       `json:"revision"`
-	PublishedVersion int64       `json:"publishedVersion"`
-	CreatedAt        time.Time   `json:"createdAt"`
-	UpdatedAt        time.Time   `json:"updatedAt"`
-}
+type Agent = agent.Agent
 
-type AgentVersion struct {
-	AgentID   string      `json:"agentID"`
-	Number    int64       `json:"number"`
-	Config    AgentConfig `json:"config"`
-	CreatedAt time.Time   `json:"createdAt"`
-}
+type AgentVersion = agent.AgentVersion
 
 type CreateAgentRequest struct {
 	Name   string      `json:"name" binding:"required,max=200"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 
@@ -11,15 +12,20 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
-	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
+
+func validEndpoint(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Host != "" && (u.Scheme == "http" || u.Scheme == "https") && u.User == nil &&
+		u.Fragment == ""
+}
 
 // SubmitExecution freezes a published Agent version and business input.
 // A task reuses its conversation; retries reuse the originally accepted run.
 func (s *Store) SubmitExecution(
 	ctx context.Context,
 	owner, key string,
-	inputSpec sdk.ExecutionSpec,
+	inputSpec ExecutionSpec,
 	ttl time.Duration,
 ) (*Run, bool, error) {
 	var result *Run
@@ -37,7 +43,7 @@ func submitExecution(
 	ctx context.Context,
 	tx *gorm.DB,
 	owner, key string,
-	inputSpec sdk.ExecutionSpec,
+	inputSpec ExecutionSpec,
 	ttl time.Duration,
 ) (*Run, bool, error) {
 	if owner == "" || strings.TrimSpace(key) == "" || len(key) > 128 || inputSpec.Scope == nil ||
@@ -53,7 +59,7 @@ func submitExecution(
 		return nil, false, ErrInvalid
 	}
 	input, _ := json.Marshal(struct {
-		Spec sdk.ExecutionSpec
+		Spec ExecutionSpec
 		TTL  time.Duration
 	}{Spec: inputSpec, TTL: ttl})
 	hash := Hash(input)
@@ -164,7 +170,7 @@ func submitExecution(
 	return result, created, e
 }
 
-// CheckExecutionLease uses the database clock and rejects canceled or old attempts.
+// CheckExecutionLease uses the database clock and rejects canceled, expired, or old attempts.
 func (s *Store) CheckExecutionLease(ctx context.Context, owner, id string, epoch int64) (bool, error) {
 	var n int64
 	e := s.db.WithContext(ctx).

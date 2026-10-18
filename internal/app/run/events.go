@@ -12,8 +12,8 @@ import (
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
+	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
 	"github.com/FlyTOmeLight/server-go/stream"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
@@ -107,9 +107,9 @@ func (h *Controller) events(c *core.Context) {
 		}
 		// Redis is a wake-up accelerator. Database polling still serves committed events during a Redis outage.
 		if h.redis != nil {
-			_, err = h.redis.XRead(r.Context(), &redis.XReadArgs{Streams: []string{durable.StreamKey(id), fmt.Sprintf("%d-0", after)}, Count: 1, Block: time.Second}).
+			_, err = h.redis.XRead(r.Context(), &frameworkredis.XReadArgs{Streams: []string{durable.StreamKey(id), fmt.Sprintf("%d-0", after)}, Count: 1, Block: time.Second}).
 				Result()
-			if err == nil || errors.Is(err, redis.Nil) {
+			if err == nil || errors.Is(err, frameworkredis.Nil) {
 				continue
 			}
 		}

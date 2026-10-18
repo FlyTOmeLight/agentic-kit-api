@@ -15,13 +15,12 @@ import (
 
 	"github.com/FlyTOmeLight/server-go/conf"
 	"github.com/FlyTOmeLight/server-go/constants"
+	frameworkdb "github.com/FlyTOmeLight/server-go/db"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 	"github.com/FlyTOmeLight/server-go/host"
 	"github.com/FlyTOmeLight/server-go/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
@@ -286,7 +285,7 @@ func integrationStore(t *testing.T) *durable.Store {
 		t.Skip("TEST_DATABASE_URL required")
 	}
 	ctx := context.Background()
-	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	admin, err := frameworkdb.NewDB(ctx, &frameworkdb.Config{Driver: frameworkdb.DriverPostgreSQL, DSN: dsn})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package durable
+package service
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
 func eventRedis(t *testing.T) *redis.Client {
@@ -32,7 +33,7 @@ func eventRedis(t *testing.T) *redis.Client {
 
 func checkStream(t *testing.T, ctx context.Context, rdb *redis.Client, id string, count int) {
 	t.Helper()
-	entries, err := rdb.XRange(ctx, StreamKey(id), "-", "+").Result()
+	entries, err := rdb.XRange(ctx, durable.StreamKey(id), "-", "+").Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +44,7 @@ func checkStream(t *testing.T, ctx context.Context, rdb *redis.Client, id string
 		if entry.ID != fmt.Sprintf("%d-0", i+1) {
 			t.Fatalf("run %s: out of order entry %s", id, entry.ID)
 		}
-		var e Event
+		var e durable.Event
 		raw, ok := entry.Values["event"].(string)
 		if !ok {
 			t.Fatalf("missing event payload: %+v", entry)
@@ -60,19 +61,19 @@ func checkStream(t *testing.T, ctx context.Context, rdb *redis.Client, id string
 func TestOutboxLockedHeadDoesNotBlockOtherRun(t *testing.T) {
 	for _, commit := range []bool{false, true} {
 		t.Run(fmt.Sprintf("commit=%t", commit), func(t *testing.T) {
-			s := testStore(t)
+			s := durableTestStore(t)
 			rdb := eventRedis(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			a := createRun(t, s)
+			a := createDurableRun(t, s)
 			if err := s.Cancel(ctx, "owner", a.ID); err != nil {
 				t.Fatal(err)
 			} // A1, A2
-			b := createRun(t, s) // B1
-			defer rdb.Del(context.Background(), StreamKey(a.ID), StreamKey(b.ID))
+			b := createDurableRun(t, s) // B1
+			defer rdb.Del(context.Background(), durable.StreamKey(a.ID), durable.StreamKey(b.ID))
 
 			// Hold A1 after Redis succeeds, but before its database marker commits.
-			tx := s.db.WithContext(ctx).Begin()
+			tx := s.DB().WithContext(ctx).Begin()
 			if tx.Error != nil {
 				t.Fatal(tx.Error)
 			}
@@ -85,11 +86,19 @@ func TestOutboxLockedHeadDoesNotBlockOtherRun(t *testing.T) {
 				Error; err != nil {
 				t.Fatal(err)
 			}
-			data, err := json.Marshal(eventFromRow(head))
+			data, err := json.Marshal(
+				durable.Event{
+					RunID:     head.RunID,
+					Seq:       head.Seq,
+					Kind:      head.Kind,
+					Payload:   head.Payload,
+					CreatedAt: head.CreatedAt,
+				},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = rdb.Eval(ctx, publishLua, []string{StreamKey(a.ID)}, "1-0", string(data)).
+			if err = rdb.Eval(ctx, publishLua, []string{durable.StreamKey(a.ID)}, "1-0", string(data)).
 				Err(); err != nil {
 				t.Fatal(err)
 			}
@@ -101,13 +110,13 @@ func TestOutboxLockedHeadDoesNotBlockOtherRun(t *testing.T) {
 			}
 
 			publishCtx, stop := context.WithTimeout(ctx, 2*time.Second)
-			sent, err := s.PublishOne(publishCtx, rdb)
+			sent, err := publishOutbox(publishCtx, s, rdb)
 			stop()
 			if err != nil || !sent {
 				t.Fatalf("B1 blocked by A1: sent=%t err=%v", sent, err)
 			}
 			checkStream(t, ctx, rdb, b.ID, 1)
-			sent, err = s.PublishOne(ctx, rdb)
+			sent, err = publishOutbox(ctx, s, rdb)
 			if err != nil || sent {
 				t.Fatalf("A2 bypassed uncommitted A1: sent=%t err=%v", sent, err)
 			}
@@ -123,13 +132,13 @@ func TestOutboxLockedHeadDoesNotBlockOtherRun(t *testing.T) {
 				t.Fatal(err)
 			}
 			for i := 0; i < remaining; i++ {
-				sent, err = s.PublishOne(ctx, rdb)
+				sent, err = publishOutbox(ctx, s, rdb)
 				if err != nil || !sent {
 					t.Fatalf("resume publication: sent=%t err=%v", sent, err)
 				}
 			}
 			checkStream(t, ctx, rdb, a.ID, 2)
-			sent, err = s.PublishOne(ctx, rdb)
+			sent, err = publishOutbox(ctx, s, rdb)
 			if err != nil || sent {
 				t.Fatalf("unexpected pending event: sent=%t err=%v", sent, err)
 			}
@@ -138,19 +147,19 @@ func TestOutboxLockedHeadDoesNotBlockOtherRun(t *testing.T) {
 }
 
 func TestConcurrentOutboxPublishersPreservePerRunOrder(t *testing.T) {
-	s := testStore(t)
+	s := durableTestStore(t)
 	rdb := eventRedis(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	var runs []*Run
+	var runs []*durable.Run
 	var keys []string
 	for i := 0; i < 8; i++ {
-		r := createRun(t, s)
+		r := createDurableRun(t, s)
 		if err := s.Cancel(ctx, "owner", r.ID); err != nil {
 			t.Fatal(err)
 		}
 		runs = append(runs, r)
-		keys = append(keys, StreamKey(r.ID))
+		keys = append(keys, durable.StreamKey(r.ID))
 	}
 	defer rdb.Del(context.Background(), keys...)
 	start := make(chan struct{})
@@ -162,7 +171,7 @@ func TestConcurrentOutboxPublishersPreservePerRunOrder(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for {
-				sent, err := s.PublishOne(ctx, rdb)
+				sent, err := publishOutbox(ctx, s, rdb)
 				if err != nil {
 					failures <- err
 					return
@@ -183,7 +192,12 @@ func TestConcurrentOutboxPublishersPreservePerRunOrder(t *testing.T) {
 		checkStream(t, ctx, rdb, r.ID, 2)
 	}
 	var pending int64
-	if err := s.db.WithContext(ctx).Model(&table.Event{}).Where("NOT published").Count(&pending).Error; err != nil {
+	if err := s.DB().
+		WithContext(ctx).
+		Model(&table.Event{}).
+		Where("NOT published").
+		Count(&pending).
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	if pending != 0 {

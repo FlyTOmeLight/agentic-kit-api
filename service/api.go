@@ -8,7 +8,7 @@ import (
 	"github.com/FlyTOmeLight/server-go/host"
 	"github.com/FlyTOmeLight/server-go/logger"
 	core "github.com/FlyTOmeLight/server-go/pkg"
-	"github.com/redis/go-redis/v9"
+	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
@@ -20,14 +20,14 @@ type API struct {
 	log     *logger.Logger
 	stopped bool
 	store   *durable.Store
-	redis   redis.UniversalClient
+	redis   frameworkredis.Redis
 	cancel  context.CancelFunc
 	done    chan struct{}
 }
 
 // New constructs an API using caller-owned resources. Stop joins background tasks;
 // the caller releases Store and Redis after Stop succeeds.
-func New(cfg Config, log *logger.Logger, store *durable.Store, cache redis.UniversalClient) (*API, error) {
+func New(cfg Config, log *logger.Logger, store *durable.Store, cache frameworkredis.Redis) (*API, error) {
 	if err := cfg.ValidateAPI(); err != nil {
 		return nil, err
 	}
@@ -55,7 +55,12 @@ func (a *API) Start(ctx context.Context) error {
 	a.done = make(chan struct{})
 	go func() {
 		defer close(a.done)
-		a.store.Relay(ctx, a.redis, func(err error) { a.log.Errorf(ctx, "outbox publish failed: %v", err) })
+		relayOutbox(
+			ctx,
+			a.store,
+			a.redis,
+			func(err error) { a.log.Errorf(ctx, "outbox publish failed: %v", err) },
+		)
 	}()
 	return nil
 }

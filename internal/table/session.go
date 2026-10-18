@@ -3,7 +3,7 @@ package table
 import (
 	"time"
 
-	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 type Session struct {
@@ -20,14 +20,14 @@ type Session struct {
 func (Session) TableName() string { return "agent_session" }
 
 type Message struct {
-	SessionID string      `gorm:"type:text;primaryKey;not null"`
-	Seq       int64       `gorm:"primaryKey;autoIncrement:false;not null"`
-	RunID     string      `gorm:"type:text;not null;index"`
-	Kind      string      `gorm:"type:text;not null;check:agent_message_kind,kind IN ('User','Assistant','Final','Tool','ClarificationAnswer','ReviewResult')"`
-	Message   sdk.Message `gorm:"serializer:json;type:jsonb;not null"`
-	CreatedAt time.Time   `gorm:"not null"`
-	Session   *Session    `gorm:"foreignKey:SessionID;references:ID"`
-	Run       *Run        `gorm:"foreignKey:RunID;references:ID"`
+	SessionID string            `gorm:"type:text;primaryKey;not null"`
+	Seq       int64             `gorm:"primaryKey;autoIncrement:false;not null"`
+	RunID     string            `gorm:"type:text;not null;index"`
+	Kind      string            `gorm:"type:text;not null;check:agent_message_kind,kind IN ('User','Assistant','Final','Tool','ClarificationAnswer','ReviewResult')"`
+	Message   execution.Message `gorm:"serializer:json;type:jsonb;not null"`
+	CreatedAt time.Time         `gorm:"not null"`
+	Session   *Session          `gorm:"foreignKey:SessionID;references:ID"`
+	Run       *Run              `gorm:"foreignKey:RunID;references:ID"`
 }
 
 func (Message) TableName() string { return "agent_message" }

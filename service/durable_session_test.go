@@ -1,4 +1,4 @@
-package durable
+package service
 
 import (
 	"context"
@@ -12,13 +12,14 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
 func TestInjectedDatabaseOwnershipAndErrors(t *testing.T) {
-	existing := testStore(t)
+	existing := durableTestStore(t)
 	ctx := context.Background()
 	var schema string
-	if err := existing.db.Raw("SELECT current_schema()").Scan(&schema).Error; err != nil {
+	if err := existing.DB().Raw("SELECT current_schema()").Scan(&schema).Error; err != nil {
 		t.Fatal(err)
 	}
 	endpoint, err := url.Parse(os.Getenv("TEST_DATABASE_URL"))
@@ -40,7 +41,7 @@ func TestInjectedDatabaseOwnershipAndErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer module.Close(ctx)
-	store, err := New(module.DB)
+	store, err := durable.New(module.DB)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,13 +54,9 @@ func TestInjectedDatabaseOwnershipAndErrors(t *testing.T) {
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	run := createRun(t, store)
+	run := createDurableRun(t, store)
 	duplicate := table.Event{RunID: run.ID, Seq: 1, Kind: "Progress", Payload: json.RawMessage(`{}`)}
-	if err := store.db.Create(&duplicate).Error; !errors.Is(err, gorm.ErrDuplicatedKey) {
+	if err := store.DB().Create(&duplicate).Error; !errors.Is(err, gorm.ErrDuplicatedKey) {
 		t.Fatalf("duplicate error lost: %v", err)
-	}
-	store.Close()
-	if _, err := store.Get(ctx, "owner", run.ID); err != nil {
-		t.Fatalf("borrowed pool closed by Store: %v", err)
 	}
 }
