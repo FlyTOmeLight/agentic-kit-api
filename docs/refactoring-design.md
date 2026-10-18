@@ -665,6 +665,6 @@ Memory接入另须核对artifact三元查询与唯一约束、固定存储绑定
 | Q15：Memory默认使用政策 | 已确认A；已补入 [ADR-0005](adr/0005-context-and-memory-foundation.md) | 聊天/应用均默认Off，仅显式Recall召回；模式进入Intent，内容与政策随Run冻结 |
 | Q16：上下文裁剪与超限行为 | 已确认A；已补入 [ADR-0005](adr/0005-context-and-memory-foundation.md) | 先裁低相关Memory和最旧完整历史，保留必需输入/完整工具链；仍超限则失败、不Retry，摘要压缩后置 |
 
-Q12的代码事实：核心AgentConfig可描述HTTP、AppForgeMCP、AppForgeOpenAPI与filesystem等工具组合；Workspace当前却按无工具Writing或特定finish/run_checks工具组合Coding分类。固定产品类型已被否决，通用配置校验与场景组合校验分开。
+Q12的当前代码事实：核心AgentConfig接受HTTP工具与filesystem工具集；AppForgeMCP、AppForgeOpenAPI等未接入协议在创建、更新和发布时拒绝。Workspace当前却按无工具Writing或特定finish/run_checks工具组合Coding分类。固定产品类型已被否决，通用配置校验与场景组合校验分开。
 
 本轮评审收束，实施以通用Agent框架为范围；摘要压缩、Memory自动提炼/学习和场景产品流程后置。
