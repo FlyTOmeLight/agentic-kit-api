@@ -8,4 +8,4 @@ artifact-go 已提供不可变 JSON 版本、发布幂等及保护能力。Memor
 
 接入须先完成artifact三元数据隔离与集合幂等创建：tenant_id、精确project_id、user_id同时参与访问、名称唯一和幂等约束。复用现有created_by保存固定用户归属，Memory适配传入已核验的ArtifactBinding；共享条目由Memory授权，后续编辑者变化不改变远端绑定。账号和凭据治理不属于本次设计。当前tenant/project过滤尚不等于已实现用户隔离，SDK正式发布及依赖兼容仍须验证。
 
-待补能力见[Memory设计§2.4](../memory-design.md#24-artifact-go-待补的通用能力)及[artifact独立设计](../../../artifact-go/docs/service-consumer-design-20261016.md)。Memory历史只展示生效版本，artifact保留完整存档历史；artifact直接管理操作不自动生效或撤销Memory。本提案不迁移Agent资产版本或执行checkpoint。
+待补能力见[Memory设计§2.4](../memory-design.md#24-artifact-go-待补的通用能力)及[artifact独立设计](../../../artifact-go/docs/service-consumer-design-20261016.md)。Memory历史只展示生效版本，artifact保留完整存档历史；artifact直接管理操作不自动生效或撤销Memory。本提案不迁移Agent资产版本或执行checkpoint；Agent版本的后续决定见[ADR-0009](0009-agent-versions-in-artifact.md)。
