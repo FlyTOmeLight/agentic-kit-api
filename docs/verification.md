@@ -200,3 +200,5 @@ worker 通过 go.work 指向本地 API 工作树，`TEST_DATABASE_URL` 下 `go t
 worker 通过本地 `go.work` 指向 API 隔离树执行全仓 race：**63** 个测试及子测试通过、**0** 失败、**1** 跳过（`TestAIOPublicSDKAndEinoTools` 需要真实 AIO 环境）。`go vet ./...`、`go build ./...` 通过。新增用例覆盖实际工具定义超限、空实际工具集替换冻结定义、历史折叠与整轮淘汰，以及模型收到预览但下一工具边界 checkpoint 和持久消息保留完整正文。`TestProcessKillResumesWithoutRepeatingTool` 通过，验证强杀后接管且工具不重复调用。
 
 独立只读审查由 1 个子代理完成，主代理核实并修复 checkpoint 写回和工具 ID 冲突。Memory 维护、召回与 artifact 接入仍未实现，提交固定 Off；没有实现 LLM 摘要。本次跨仓库结果是本地联合验证，worker 正式依赖版本尚未发布或升级，未进行生产部署或性能容量测试。
+
+同日收口复验：API 在 `GOWORK=off` 下执行 `make integration`（全仓 race 与 vet）及 `CGO_ENABLED=0 make build` 通过；worker 使用隔离树 `go.work` 执行相同检查与构建通过，正式依赖独立构建仍待 API 发布后验证。两仓同时运行集成检查时，worker 的强杀恢复用例曾因 API 未在 5 秒内就绪而失败，日志包含预期离线 Redis 的连接重试；该用例单独复跑及 worker 全仓串行复跑均通过。该次就绪超时的原因尚未定位，未修改测试期限或宣称已修复。
