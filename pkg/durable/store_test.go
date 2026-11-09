@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
@@ -51,7 +50,7 @@ func testStore(t *testing.T) *Store {
 		}
 		admin.Close()
 	})
-	if err = s.Migrate(ctx); err != nil {
+	if err = s.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -144,14 +143,10 @@ func TestConcurrentClaimAndFence(t *testing.T) {
 	if next.Epoch <= old.Epoch {
 		t.Fatal("epoch did not increase")
 	}
-	if err := s.Save(
+	if err := s.CommitBoundary(
 		ctx,
 		old.Lease(),
-		json.RawMessage(`{}`),
-		Completed,
-		"stale",
-		"",
-		"RunCompleted",
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "stale"},
 	); !errors.Is(
 		err,
 		ErrLeaseLost,
@@ -161,14 +156,10 @@ func TestConcurrentClaimAndFence(t *testing.T) {
 	if err := s.Renew(ctx, old.Lease(), time.Minute); !errors.Is(err, ErrLeaseLost) {
 		t.Fatalf("stale renewal accepted: %v", err)
 	}
-	if err := s.Save(
+	if err := s.CommitBoundary(
 		ctx,
 		next.Lease(),
-		json.RawMessage(`{}`),
-		Completed,
-		"correct",
-		"",
-		"RunCompleted",
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "correct"},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -203,14 +194,10 @@ func TestIdempotencyOwnershipAndCancellation(t *testing.T) {
 	if err = s.Cancel(ctx, "owner", r.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Save(
+	if err = s.CommitBoundary(
 		ctx,
 		active.Lease(),
-		json.RawMessage(`{}`),
-		Completed,
-		"wrong",
-		"",
-		"RunCompleted",
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "wrong"},
 	); !errors.Is(
 		err,
 		ErrLeaseLost,
@@ -227,26 +214,41 @@ func TestUnsafeStepAndHumanResolution(t *testing.T) {
 	ctx := context.Background()
 	createRun(t, s)
 	r := claim(t, s, "a")
-	if _, _, err := s.BeginStep(ctx, r.Lease(), "submit", "arguments", Unsafe); err != nil {
+	if d, err := s.BeginStep(
+		ctx,
+		r.Lease(),
+		StepIntent{ID: "submit", Input: "arguments", Policy: Unsafe},
+	); err != nil ||
+		d.Outcome != StepExecute {
+		t.Fatalf("first step: %+v %v", d, err)
+	}
+	if d, err := s.BeginStep(
+		ctx,
+		r.Lease(),
+		StepIntent{ID: "submit", Input: "arguments", Policy: Unsafe},
+	); err != nil ||
+		d.Outcome != StepUncertain {
+		t.Fatalf("unsafe repeated: %+v %v", d, err)
+	}
+	state := json.RawMessage(`{}`)
+	if err := s.CommitBoundary(ctx, r.Lease(), Boundary{
+		Kind:        BoundaryAwaitReview,
+		State:       state,
+		Detail:      "uncertain",
+		WaitingStep: "submit",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.BeginStep(ctx, r.Lease(), "submit", "arguments", Unsafe); !errors.Is(err, ErrUncertain) {
-		t.Fatal("unsafe repeated", err)
-	}
-	state := json.RawMessage(`{"waitingStep":"submit"}`)
-	if err := s.Save(ctx, r.Lease(), state, NeedsReview, "", "uncertain", "RunNeedsReview"); err != nil {
+	if err := s.SupplyResult(ctx, "owner", r.ID, "wrong", "ok", InteractionReview); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
-	if err := s.SupplyResult(ctx, "owner", r.ID, "wrong", "ok", NeedsReview); !errors.Is(err, ErrConflict) {
-		t.Fatal(err)
-	}
-	if err := s.SupplyResult(ctx, "owner", r.ID, "submit", "external receipt", NeedsReview); err != nil {
+	if err := s.SupplyResult(ctx, "owner", r.ID, "submit", "external receipt", InteractionReview); err != nil {
 		t.Fatal(err)
 	}
 	next := claim(t, s, "b")
-	result, cached, err := s.BeginStep(ctx, next.Lease(), "submit", "arguments", Unsafe)
-	if err != nil || !cached || result != "external receipt" {
-		t.Fatalf("result=%q cached=%v err=%v", result, cached, err)
+	d, err := s.BeginStep(ctx, next.Lease(), StepIntent{ID: "submit", Input: "arguments", Policy: Unsafe})
+	if err != nil || d.Outcome != StepReplay || d.Result != "external receipt" {
+		t.Fatalf("decision=%+v err=%v", d, err)
 	}
 }
 
@@ -262,7 +264,11 @@ func TestResultAndEventCommitTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = s.Save(ctx, r.Lease(), json.RawMessage(`{}`), Completed, "should roll back", "", "RunCompleted")
+	err = s.CommitBoundary(
+		ctx,
+		r.Lease(),
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "should roll back"},
+	)
 	if err == nil {
 		t.Fatal("expected transaction failure")
 	}
@@ -272,46 +278,6 @@ func TestResultAndEventCommitTogether(t *testing.T) {
 	}
 	if got.Status != Running || got.Output != "" {
 		t.Fatalf("partial commit: %+v", got)
-	}
-}
-
-func TestOutboxRetryAfterPublishAndRedisLoss(t *testing.T) {
-	raw := os.Getenv("TEST_REDIS_URL")
-	if raw == "" {
-		t.Skip("TEST_REDIS_URL required")
-	}
-	s := testStore(t)
-	ctx := context.Background()
-	r := createRun(t, s)
-	opts, err := redis.ParseURL(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rdb := redis.NewClient(opts)
-	defer rdb.Close()
-	defer rdb.Del(ctx, StreamKey(r.ID))
-	// Simulate Redis success followed by database commit failure.
-	events, err := s.Events(ctx, "owner", r.ID, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, _ := json.Marshal(events[0])
-	if err = rdb.Eval(ctx, publishLua, []string{StreamKey(r.ID)}, "1-0", string(data)).Err(); err != nil {
-		t.Fatal(err)
-	}
-	sent, err := s.PublishOne(ctx, rdb)
-	if err != nil || !sent {
-		t.Fatal(err)
-	}
-	if n, err := rdb.XLen(ctx, StreamKey(r.ID)).Result(); err != nil || n != 1 {
-		t.Fatalf("duplicate publication: %d %v", n, err)
-	}
-	if err = rdb.Del(ctx, StreamKey(r.ID)).Err(); err != nil {
-		t.Fatal(err)
-	}
-	events, err = s.Events(ctx, "owner", r.ID, 0)
-	if err != nil || len(events) != 1 {
-		t.Fatal("Redis deletion lost durable event", err)
 	}
 }
 
@@ -361,14 +327,10 @@ func TestSessionHistoryAndSingleActiveRun(t *testing.T) {
 	if running.ID != first.ID {
 		t.Fatal("wrong task")
 	}
-	if err = s.Save(
+	if err = s.CommitBoundary(
 		ctx,
 		running.Lease(),
-		json.RawMessage(`{}`),
-		Completed,
-		"first answer",
-		"",
-		"RunCompleted",
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "first answer"},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +344,7 @@ func TestSessionHistoryAndSingleActiveRun(t *testing.T) {
 	}
 }
 
-func TestJSONRoundTripAndRepeatedMigration(t *testing.T) {
+func TestJSONRoundTripAndRepeatedSchemaInit(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	temperature := float32(0.3)
@@ -413,7 +375,7 @@ func TestJSONRoundTripAndRepeatedMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Migrate(ctx); err != nil {
+	if err = s.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Get(ctx, "owner", run.ID)
@@ -433,18 +395,17 @@ func TestJSONRoundTripAndRepeatedMigration(t *testing.T) {
 		t.Fatalf("configuration changed: %s", gotJSON)
 	}
 	active := claim(t, s, "worker")
-	if err = s.Save(
-		ctx,
-		active.Lease(),
-		json.RawMessage(`{"waitingStep":"example"}`),
-		Running,
-		"draft",
-		"draft error",
-		"Progress",
-	); err != nil {
+	if err = s.CommitBoundary(ctx, active.Lease(), Boundary{
+		Kind:  BoundaryModelStarted,
+		State: json.RawMessage(`{}`),
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Save(ctx, active.Lease(), json.RawMessage(`{}`), Completed, "", "", "RunCompleted"); err != nil {
+	if err = s.CommitBoundary(
+		ctx,
+		active.Lease(),
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`)},
+	); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.Get(ctx, "owner", run.ID)

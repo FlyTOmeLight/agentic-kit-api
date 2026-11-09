@@ -79,7 +79,7 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 	lease := durable.Lease{RunID: run.ID, WorkerID: "worker", Epoch: claimed.Epoch}
 	state := json.RawMessage(`{"reasoning_content":"private-reasoning","credentials":"private-secret"}`)
 	call := sdk.ToolCall{ID: "tool-1", Name: "read_file", Arguments: `{"path":"src/calc.py"}`}
-	if err = store.SaveDecision(
+	if err = store.RecordDecision(
 		ctx,
 		lease,
 		state,
@@ -87,13 +87,11 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = store.BeginStep(
-		ctx,
-		lease,
-		call.ID,
-		call.Name+"\x00"+call.Arguments,
-		durable.ReadOnly,
-	); err != nil {
+	if _, err = store.BeginStep(ctx, lease, durable.StepIntent{
+		ID:     call.ID,
+		Input:  call.Name + "\x00" + call.Arguments,
+		Policy: durable.ReadOnly,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	first, err := client.Runs.Trace(ctx, &sdk.GetRunTraceRequest{ID: run.ID, After: 0})
@@ -113,7 +111,11 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 	}
 	// Fill two pages to prove reconnect is ordered and latest progress is independent of cursor.
 	for i := 0; i < 55; i++ {
-		if err = store.Save(ctx, lease, state, durable.Running, "", "", "ModelStarted"); err != nil {
+		if err = store.CommitBoundary(
+			ctx,
+			lease,
+			durable.Boundary{Kind: durable.BoundaryModelStarted, State: state},
+		); err != nil {
 			t.Fatal(err)
 		}
 	}

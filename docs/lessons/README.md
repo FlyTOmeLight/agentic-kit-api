@@ -9,6 +9,8 @@
 | 配置启用了 Swagger，入口却没有安装相应能力 | [入口与配置配套](server-go-migration.md#入口迁移要核对配置和可选能力) |
 | 框架接管数据库后，Store 关闭连接或丢失约束错误 | [数据库所有权](resource-and-recovery.md#借用数据库时保留所有权与事务语义) |
 | Redis 断开，API 无法启动或无法回放事件 | [通知连接与数据库事件](resource-and-recovery.md#通知连接不能成为数据库回放的前置条件) |
+| 带 digest 的 JSON payload 经 `jsonb` 往返后校验失败 | [上下文快照存储](context-snapshot-storage.md#带-digest-的不透明-payload-不要存-jsonb) |
+| 上下文裁剪污染 checkpoint，或多个历史 Run 的工具 ID 冲突 | [上下文投影与完整事实](context-projection.md) |
 | 测试通过，但外部依赖用例被跳过，或未覆盖真实恢复 | [验证范围](verification.md) |
 
 新增经验时记录具体问题、已验证的处理和代码或测试链接。历史验证流水继续写入 `docs/verification.md`，避免在这里重复维护版本清单。

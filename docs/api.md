@@ -24,7 +24,11 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | POST /v1/runs/{id}/resolve | 提交人工确认的工具结果 | stepID、result |
 | GET /v1/runs/{id}/events | SSE 回放及订阅 | Last-Event-ID header 或 after query，格式 runID:seq |
 
-config 包括 systemPrompt、model、tools、maxTurns，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)；maxTurns 为 1～100。工具名称不能重复，parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`；该工具成功时，Eino 直接返回工具结果并结束本轮，不再调用模型。此设置随 Agent 发布版本和 Run 快照冻结。AppForge 尚无已验证的下游幂等契约，不能配置为 Idempotent。
+config 包括 systemPrompt、model、tools、maxTurns，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)；maxTurns 为 1～100。工具名称不能重复，parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`；该工具成功时，worker 直接返回工具结果并结束本轮，不再调用模型；错误结果返回给模型处理。此设置随 Agent 发布版本和 Run 快照冻结。工具 `kind` 仅接受空字符串或 `HTTP`；`AppForgeMCP`、`AppForgeOpenAPI` 及其他未知 kind 一律拒绝；ask_for_clarification 必须 `ReadOnly` 且 kind 为空或 `HTTP`，URL 字段可不填。
+
+`model.contextWindow`为可选非负整数。非零时必须同时配置正数`model.maxTokens`且小于窗口，输入预算为窗口减输出预留；`maxTokens`一旦提供就必须为正数。当前采用版本化UTF-8字节估算，并预留256 token协议开销，不是精确tokenizer计数。未配置窗口时冻结128 KiB输入字节上限。单条工具结果以有界首尾预览进入模型输入，完整结果仍持久保存。预算、预览上限和裁剪策略随Run冻结，发布新配置不改变已有Run。
+
+提交消息及应用执行时，对已知必需材料预检；超限返回HTTP 400、错误码`ContextBudgetExceeded`，不创建Run、消息或事件，也不占用本次幂等键。worker调用模型前再核算动态工具schema与当前工具链；超限以Failed结束Run，错误详情包含`context budget exceeded`。裁剪顺序及限制见[上下文设计](refactoring-design.md#66-上下文管线与-memory-基础版)。
 
 Agent 创建时 revision=1，编辑成功递增 revision。编辑或发布携带旧 revision 返回 409。同一 revision 重复发布返回同一个版本，版本 number 从 1 开始。仅已发布 Agent 可以创建会话。每次提交消息使用当时最新的发布版本，并把配置写入 Run 快照；恢复时不重新读取草稿或最新版本。Run 响应中的 agentID、configVersion 可用于定位版本。
 
@@ -36,7 +40,7 @@ Agent 创建时 revision=1，编辑成功递增 revision。编辑或发布携带
 
 消息与对应任务状态在同一事务提交。客户端可以用会话消息列表展示历史，用 Run SSE 展示当前任务进度；Event 不作为聊天记录。当前模型上下文取最近 20 个已完成 Run 的 User/Final 消息，工具历史保存在消息表供查询，尚未实现跨轮工具历史与上下文压缩。
 
-任务状态为 Queued、Running、WaitingClarification、NeedsReview、Completed、Failed、Canceled。等待状态查询结果包含 waitingStep。answer/resolve 使用这个值作为 stepID；result 是提供给模型的用户回答或已确认工具结果。
+任务状态为 Queued、Running、WaitingClarification、NeedsReview、Completed、Failed、Canceled。等待状态时，GET /v1/runs/{id} 与 Run 列表项从 `durable_run` 显式列返回 `waitingStep` 与 `waitingKind`（`Clarification` 或 `Review`），不再从 worker 私有 checkpoint JSON 解析。`POST /v1/runs/{id}/answer` 在 `WaitingClarification` 且 `waitingKind=Clarification` 时提交澄清；`POST /v1/runs/{id}/resolve` 在 `NeedsReview` 且 `waitingKind=Review` 时提交人工确认的工具结果。两处请求体仍为 `stepID` 与 `result`，`stepID` 必须等于当前 `waitingStep`；`result` 是提供给模型的用户回答或已确认工具结果。相关 SSE 事件 payload 在保留 `waitingStep` 的同时新增 `waitingKind`。
 
 SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payload。客户端按该 id 去重。只在终态且已发送全部提交事件后关闭连接；WaitingClarification 和 NeedsReview 不是终态。重新连接不会启动新的任务。
 
@@ -74,7 +78,7 @@ Agent 定义先通过 `/v1/agents` 创建、编辑与发布。应用执行必须
 
 幂等键必填。同键同输入返回原 Run，包括发布新版本之后的重试；同键不同输入返回 409。Agent、发布版本不存在或属于其他 owner 时返回 404。创建会话、Run、输入消息与事件在同一事务提交。应用服务凭据不能下发给浏览器；应用从已验证的用户与任务构造 scope，敏感操作仍动态检查业务权限。
 
-`GET /internal/v1/executions/{id}/lease?epoch=N` 返回当前数据库时钟下的执行权；取消、旧 epoch 或其他 owner 均无法通过。模型工具参数不能提供该执行身份，Worker 在 HTTP headers 中注入真实 run ID 和 epoch。运行时执行权不替代业务授权或外部进程停止确认。projectID 是可选的执行上下文；工具或文件系统绑定本身不要求选择项目，资源是否允许使用由调用方授权。
+`GET /internal/v1/executions/{id}/lease?epoch=N` 返回当前数据库时钟下的执行权；取消、旧 epoch、超过 deadline 或其他 owner 均无法通过。模型工具参数不能提供该执行身份，Worker 在 HTTP headers 中注入真实 run ID 和 epoch。运行时执行权不替代业务授权或外部进程停止确认。projectID 是可选的执行上下文；工具或文件系统绑定本身不要求选择项目，资源是否允许使用由调用方授权。
 
 ## Public run trace
 

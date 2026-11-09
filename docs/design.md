@@ -18,11 +18,11 @@
 
 - agent / agent_version：可编辑草稿与不可变发布版本。revision 检测并发编辑，发布在 Agent 行锁下递增版本号。
 - agent_session / agent_message：独立会话和消息记录；消息 seq 在会话行锁下递增。
-- durable_run：不可变执行配置、输入、Eino checkpoint、当前状态、期限、执行者和 epoch。
+- durable_run：不可变执行配置、输入、Eino checkpoint、当前状态、等待交互（waiting_step / waiting_kind）、期限、执行者和 epoch。
 - durable_step：工具执行前的意图、输入摘要、重试策略、执行结果。操作编号是 runID:stepID，重试不改变。
 - durable_event：与状态同事务写入的事件，也是 Outbox。Redis 只是通知与缓存，数据库是事件权威来源。
 
-API 仓库拥有共享持久化包，worker 只调用其中的状态变更方法。持久化访问统一由 GORM 管理；领取使用 Locking 子句，事件计数用 Updates 与 Returning 子句递增并取回；事件写入仍在同一事务。表结构、约束与索引由 internal/table 中的领域模型定义，Store 的结构初始化方法在事务中执行 AutoMigrate，不再提供迁移 CLI。数据库时钟和数值递增通过 gorm.Expr 表达，事务级 advisory lock 通过 GORM Exec 调用。数据库时间决定执行权期限，避免多个 worker 的本地时钟差异影响领取判断。
+API 仓库拥有共享持久化包，worker 只调用其中的状态变更方法。持久化访问统一由 GORM 管理；领取使用 Locking 子句，事件计数用 Updates 与 Returning 子句递增并取回；事件写入仍在同一事务。表结构、约束与索引由 internal/table 中的领域模型定义，`internal/schema.Init` 在事务中执行 AutoMigrate，由 `service.Build` 在接收请求前调用，不再提供迁移 CLI 或历史升级。数据库时钟和数值递增通过 gorm.Expr 表达，事务级 advisory lock 通过 GORM Exec 调用。数据库时间决定执行权期限，避免多个 worker 的本地时钟差异影响领取判断。
 
 ## 会话提交与记录
 
@@ -44,9 +44,11 @@ Run 锁保护执行步骤，Session 锁保护消息编号。提交持有 Session
 
 发布的 JSON 配置装配为单个 `ChatModelAgent`，由 `Runner` 执行 ReAct。Eino 管理消息上下文、工具分派、模型轮次上限和中断恢复。任务领取、租约、项目授权及外部副作用记录属于平台。
 
-模型返回工具调用后，工具 middleware 先触发原生中断，不执行实际工具。Runner 调用平台的 `CheckPointStore.Set`；该适配器通过 `SaveDecision` 将 Eino checkpoint 与公开模型消息同事务提交。Runner 随后自动恢复此内部中断。
+执行状态的写入只使用类型化命令：`CommitBoundary` 接受 ModelStarted、Complete、Fail、AwaitClarification、AwaitReview 五种边界，由存储推导状态、消息和事件；字段组合不合法时返回 Invalid 且不写数据库。`RecordDecision` 提交模型决策，`BeginStep` / `FinishStep` 记录工具意图与结果，`Retry`、`Cancel`、`SupplyResult` 保持各自的原子语义。
 
-每个实际工具仍通过 `BeginStep` / `FinishStep` 记录意图与结果。结果提交时保存的 checkpoint 可以位于本批工具之前。进程崩溃后，Eino 恢复工具节点，middleware 用已提交结果完成该调用；Eino 自己重建后续上下文，无需平台保存第二份消息队列或工具游标。澄清或 Unsafe 结果不明时，再保存原生 checkpoint 和等待状态，并释放执行权。
+模型返回工具调用后，工具 middleware 先触发原生中断，不执行实际工具。Runner 调用平台的 `CheckPointStore.Set`；该适配器通过 `RecordDecision` 将 Eino checkpoint 与公开模型消息同事务提交。Runner 随后自动恢复此内部中断。
+
+每个实际工具仍通过 `BeginStep` / `FinishStep` 记录意图与结果；`BeginStep` 返回 Execute、Replay 或 Uncertain，Replay 携带已保存结果，Uncertain 必须进入人工审核而不能自动重试。结果提交时保存的 checkpoint 可以位于本批工具之前。进程崩溃后，Eino 恢复工具节点，middleware 用已提交结果完成该调用；Eino 自己重建后续上下文，无需平台保存第二份消息队列或工具游标。澄清或 Unsafe 结果不明时，再保存原生 checkpoint 和等待元数据（waiting_step / waiting_kind），并释放执行权。
 
 ## 恢复边界
 
@@ -60,7 +62,7 @@ Run 锁保护执行步骤，Session 锁保护消息编号。提交持有 Session
 | 等待澄清时重启 | 保持等待；用户回答提交后重新排队 |
 | 完成状态提交，Redis 不可用 | Outbox 重试，API 仍从数据库返回完成状态和事件 |
 
-工具执行与本地数据库事务不能跨服务原子提交。Idempotent 策略必须由下游真正实现操作编号去重；加 HTTP header 本身不构成幂等。AppForge 两种协议没有已验证的去重契约，因此配置校验拒绝将它们标为 Idempotent。
+工具执行与本地数据库事务不能跨服务原子提交。Idempotent 策略必须由下游真正实现操作编号去重；加 HTTP header 本身不构成幂等。当前新配置只接受 HTTP 工具，未接入的 AppForge 协议不作为可执行能力接受。
 
 NeedsReview 接口要求用户提供已经确认的外部结果；它不是“无条件重跑”按钮。人工确认、取消同样写事件。取消阻止后续状态提交和自动领取，但不会撤销已经完成的外部操作。
 
@@ -78,7 +80,7 @@ Redis Stream 使用事件 seq 作为显式 ID。Lua 在插入前查询该 ID，�
 
 任务固定模型地址、模型名、系统提示词、工具元信息与配置版本。凭据保存环境变量引用，允许部署侧轮换凭据。管理接口的调用权限由 Forge middleware 校验；普通发送消息接口只接受 query。Agent 配置保存在数据库，任务保存发布版本的完整快照。
 
-执行状态带版本号 2，保存 Eino 原生 checkpoint、操作编号使用的模型轮次及 waitingStep。旧 version 1 不转换、不从头重跑；新版 Worker 会明确拒绝。升级前由旧 Worker 完成或取消旧格式的所有活动、等待澄清和待确认运行，保留历史记录，再切换 Worker；需要继续的业务任务创建新的执行轮次。不要混跑两个版本的 Worker。后续 Eino 升级须验证 checkpoint 格式与工具语义兼容。
+执行状态带版本号 3，保存 Eino 原生 checkpoint、操作编号使用的模型轮次，以及直返步骤和最终输出等终止元数据；等待交互由 durable_run 的显式列保存，API 不再解析 worker 状态中的 waitingStep。旧 version 1/2 不转换、不从头重跑；新版 Worker 会明确拒绝。升级前由旧 Worker 完成或取消旧格式的所有活动、等待澄清和待确认运行，保留历史记录，再切换 Worker；需要继续的业务任务创建新的执行轮次。不要混跑两个版本的 Worker。后续 Eino 升级须验证 checkpoint 格式与工具语义兼容。
 
 ## 当前限制
 
@@ -89,7 +91,7 @@ Redis Stream 使用事件 seq 作为显式 ID。Lua 在插入前查询该 ID，�
 
 ## 应用与 Agent 定义
 
-Writing、Coding 等应用都引用平台的已发布 Agent。应用提交业务输入与 scope，运行时解析不可变版本并保存快照。通用 Worker 无应用类型分支；应用专属工具通过发布配置的 HTTP/MCP/OpenAPI 工具装配。
+Writing、Coding 等应用都引用平台的已发布 Agent。应用提交业务输入与 scope，运行时解析不可变版本并保存快照。通用 Worker 无应用类型分支；应用专属工具通过发布配置的 HTTP 工具装配。
 
 应用任务通过 owner/tenant/project/task 确定会话归属。首次创建会话前使用该身份的事务锁，之后锁定 Session 并拒绝活动 Run 重叠。幂等检查先于版本与活动任务检查。发布新版本和网络重试不改变已接受执行。
 

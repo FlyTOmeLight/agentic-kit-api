@@ -40,7 +40,7 @@ func (cfg Service) ValidateDatabase() error {
 	}
 	if cfg.DB.AutoMigrate {
 		return errors.New(
-			"DB.AutoMigrate must be false; schema initialization is managed outside the API lifecycle",
+			"DB.AutoMigrate must be false; schema initialization is managed by service.Build",
 		)
 	}
 	if strings.TrimSpace(cfg.DB.DSN) == "" {

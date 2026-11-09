@@ -6,7 +6,7 @@ import (
 
 	"github.com/FlyTOmeLight/server-go/app"
 	"github.com/FlyTOmeLight/server-go/conf"
-	"github.com/FlyTOmeLight/server-go/db"
+	frameworkdb "github.com/FlyTOmeLight/server-go/db"
 	"github.com/FlyTOmeLight/server-go/swagger"
 
 	_ "github.com/FlyTOmeLight/agentic-kit-api/doc/openapi"
@@ -24,13 +24,16 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 		return err
 	}
 	runtime.Config.Subscribe(prepareHTTPConfig)
-	database := &db.Module{Config: &cfg.DB}
+	database := &frameworkdb.Module{Config: &cfg.DB}
 	cache := &notificationCache{config: &cfg.Redis}
 	if err := runtime.Initialize(ctx, database, cache); err != nil {
 		return err
 	}
 	store, err := durable.New(database.DB)
 	if err != nil {
+		return err
+	}
+	if err = store.InitSchema(ctx); err != nil {
 		return err
 	}
 	api, err := New(*cfg, runtime.Log, store, cache.client)

@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -139,8 +142,33 @@ func TestApplicationExecutionSnapshotAndFencing(t *testing.T) {
 		t.Fatal("canceled lease accepted")
 	}
 	for range 2 {
-		if e = s.Migrate(ctx); e != nil {
+		if e = s.InitSchema(ctx); e != nil {
 			t.Fatal(e)
 		}
+	}
+}
+
+func TestCheckExecutionLeaseEnforcesDeadline(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	createRun(t, s)
+	claimed := claim(t, s, "worker")
+	ok, err := s.CheckExecutionLease(ctx, "owner", claimed.ID, claimed.Epoch)
+	if err != nil || !ok {
+		t.Fatalf("active lease rejected: ok=%v err=%v", ok, err)
+	}
+	if err := s.db.WithContext(ctx).
+		Model(&table.Run{}).
+		Where("id = ?", claimed.ID).
+		Update("deadline", gorm.Expr("clock_timestamp()-interval '1 second'")).
+		Error; err != nil {
+		t.Fatal(err)
+	}
+	ok, err = s.CheckExecutionLease(ctx, "owner", claimed.ID, claimed.Epoch)
+	if err != nil {
+		t.Fatalf("deadline-expired lease surfaced error: %v", err)
+	}
+	if ok {
+		t.Fatal("lease accepted after deadline expired")
 	}
 }

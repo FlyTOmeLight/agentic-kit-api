@@ -12,9 +12,8 @@ import (
 	"time"
 
 	"github.com/FlyTOmeLight/server-go/app"
+	frameworkdb "github.com/FlyTOmeLight/server-go/db"
 	"github.com/FlyTOmeLight/server-go/httpintegration"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
@@ -29,7 +28,7 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	admin, err := frameworkdb.NewDB(ctx, &frameworkdb.Config{Driver: frameworkdb.DriverPostgreSQL, DSN: dsn})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +79,7 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.Migrate(ctx); err != nil {
+	if err := store.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	runCtx, stop := context.WithCancel(ctx)

@@ -15,13 +15,12 @@ import (
 
 	"github.com/FlyTOmeLight/server-go/conf"
 	"github.com/FlyTOmeLight/server-go/constants"
+	frameworkdb "github.com/FlyTOmeLight/server-go/db"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 	"github.com/FlyTOmeLight/server-go/host"
 	"github.com/FlyTOmeLight/server-go/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
@@ -286,7 +285,7 @@ func integrationStore(t *testing.T) *durable.Store {
 		t.Skip("TEST_DATABASE_URL required")
 	}
 	ctx := context.Background()
-	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	admin, err := frameworkdb.NewDB(ctx, &frameworkdb.Config{Driver: frameworkdb.DriverPostgreSQL, DSN: dsn})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,10 +312,26 @@ func integrationStore(t *testing.T) *durable.Store {
 		pool, _ := admin.DB()
 		_ = pool.Close()
 	})
-	if err = store.Migrate(ctx); err != nil {
+	if err = store.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	return store
+}
+
+func TestGinRejectsContextBudgetBeforeQueueing(t *testing.T) {
+	store := integrationStore(t)
+	router := NewRouter(t, store, nil, map[string]string{testToken: "owner"})
+	session := createHTTPConversation(t, router)
+	path := "/v1/sessions/" + session.ID + "/messages"
+	body, err := json.Marshal(map[string]string{"query": strings.Repeat("x", 128*1024)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertError(t, request(router, "POST", path, string(body), testToken, "budget"), 400, "ContextBudgetExceeded")
+	response := request(router, "POST", path, `{"query":"small"}`, testToken, "budget")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("retry after rejected input: %d %s", response.Code, response.Body.String())
+	}
 }
 
 func TestGinRunLifecycleAndSSE(t *testing.T) {
@@ -352,18 +367,19 @@ func TestGinRunLifecycleAndSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = store.BeginStep(ctx, active.Lease(), "clarify", "question", durable.ReadOnly); err != nil {
+	if _, err = store.BeginStep(ctx, active.Lease(), durable.StepIntent{
+		ID:     "clarify",
+		Input:  "question",
+		Policy: durable.ReadOnly,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.Save(
-		ctx,
-		active.Lease(),
-		json.RawMessage(`{"waitingStep":"clarify"}`),
-		durable.WaitingClarification,
-		"",
-		"question",
-		"ClarificationRequested",
-	); err != nil {
+	if err = store.CommitBoundary(ctx, active.Lease(), durable.Boundary{
+		Kind:        durable.BoundaryAwaitClarification,
+		State:       json.RawMessage(`{}`),
+		Detail:      "question",
+		WaitingStep: "clarify",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	w = request(
@@ -381,14 +397,10 @@ func TestGinRunLifecycleAndSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.Save(
+	if err = store.CommitBoundary(
 		ctx,
 		active.Lease(),
-		json.RawMessage(`{}`),
-		durable.Completed,
-		"final\nanswer",
-		"",
-		"RunCompleted",
+		durable.Boundary{Kind: durable.BoundaryComplete, State: json.RawMessage(`{}`), Output: "final\nanswer"},
 	); err != nil {
 		t.Fatal(err)
 	}

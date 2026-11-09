@@ -1,7 +1,6 @@
 package run
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -11,16 +10,8 @@ import (
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
-	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
-
-type ExecutionService interface {
-	SubmitExecution(context.Context, string, string, sdk.ExecutionSpec, time.Duration) (*durable.Run, bool, error)
-	CheckExecutionLease(context.Context, string, string, int64) (bool, error)
-}
-
-var _ ExecutionService = (*durable.Store)(nil)
 
 func (h *Controller) RegisterExecutionRoutes(router core.Router) {
 	group := router.Group("/internal/v1")
@@ -73,7 +64,7 @@ func (h *Controller) submitExecution(c *core.Context) {
 		return
 	}
 	req.IdempotencyKey = headers.IdempotencyKey
-	r, created, err := h.execution.SubmitExecution(
+	r, created, err := h.execution.SubmitApplication(
 		c.Request.Context(),
 		auth.UserID(c),
 		req.IdempotencyKey,
@@ -88,7 +79,7 @@ func (h *Controller) submitExecution(c *core.Context) {
 	if created {
 		status = http.StatusAccepted
 	}
-	c.JSON(status, r.Response())
+	c.JSON(status, r)
 }
 
 // executionLease 校验任务执行权。

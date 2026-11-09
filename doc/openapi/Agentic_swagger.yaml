@@ -1,11 +1,87 @@
 basePath: /
 definitions:
+  agent.Agent:
+    properties:
+      createdAt:
+        type: string
+      draft:
+        $ref: '#/definitions/agent.AgentConfig'
+      id:
+        type: string
+      name:
+        type: string
+      publishedVersion:
+        type: integer
+      revision:
+        type: integer
+      updatedAt:
+        type: string
+    type: object
+  agent.AgentConfig:
+    properties:
+      maxTurns:
+        type: integer
+      model:
+        $ref: '#/definitions/agent.ModelSpec'
+      systemPrompt:
+        type: string
+      tools:
+        items:
+          $ref: '#/definitions/agent.ToolSpec'
+        type: array
+      toolsets:
+        items:
+          type: string
+        type: array
+    type: object
+  agent.ModelSpec:
+    properties:
+      apiKeyEnv:
+        type: string
+      baseURL:
+        type: string
+      contextWindow:
+        type: integer
+      maxTokens:
+        type: integer
+      name:
+        type: string
+      temperature:
+        type: number
+      topP:
+        type: number
+    type: object
+  agent.ToolSpec:
+    properties:
+      description:
+        type: string
+      endRun:
+        type: boolean
+      kind:
+        type: string
+      name:
+        type: string
+      parameters:
+        type: object
+      policy:
+        type: string
+      resourceID:
+        type: string
+      returnDirectly:
+        type: boolean
+      tokenEnv:
+        type: string
+      toolID:
+        type: string
+      url:
+        type: string
+    type: object
   agenticv1.Agent:
     properties:
       createdAt:
         type: string
       draft:
-        $ref: '#/definitions/agenticv1.AgentConfig'
+        $ref: '#/definitions/agent.AgentConfig'
       id:
         type: string
       name:
@@ -22,12 +98,12 @@ definitions:
       maxTurns:
         type: integer
       model:
-        $ref: '#/definitions/agenticv1.ModelSpec'
+        $ref: '#/definitions/agent.ModelSpec'
       systemPrompt:
         type: string
       tools:
         items:
-          $ref: '#/definitions/agenticv1.ToolSpec'
+          $ref: '#/definitions/agent.ToolSpec'
         type: array
       toolsets:
         items:
@@ -39,7 +115,7 @@ definitions:
       agentID:
         type: string
       config:
-        $ref: '#/definitions/agenticv1.AgentConfig'
+        $ref: '#/definitions/agent.AgentConfig'
       createdAt:
         type: string
       number:
@@ -66,19 +142,6 @@ definitions:
     required:
     - agentID
     type: object
-  agenticv1.Event:
-    properties:
-      createdAt:
-        type: string
-      kind:
-        type: string
-      payload:
-        type: object
-      runID:
-        type: string
-      seq:
-        type: integer
-    type: object
   agenticv1.ExecutionSpec:
     properties:
       agentID:
@@ -86,147 +149,43 @@ definitions:
       agentVersion:
         type: integer
       filesystem:
-        $ref: '#/definitions/agenticv1.FilesystemBinding'
+        $ref: '#/definitions/execution.FilesystemBinding'
       query:
         type: string
       scope:
-        $ref: '#/definitions/agenticv1.Scope'
-    type: object
-  agenticv1.FilesystemBinding:
-    properties:
-      provider:
-        type: string
-      tokenEnv:
-        type: string
-      url:
-        type: string
-      workspace:
-        type: string
+        $ref: '#/definitions/workspace.Scope'
     type: object
   agenticv1.LeaseCheck:
     properties:
       allowed:
         type: boolean
     type: object
-  agenticv1.ModelSpec:
-    properties:
-      apiKeyEnv:
-        type: string
-      baseURL:
-        type: string
-      maxTokens:
-        type: integer
-      name:
-        type: string
-      temperature:
-        type: number
-      topP:
-        type: number
-    type: object
   agenticv1.Page-agenticv1_Agent:
     properties:
       items:
         items:
-          properties:
-            createdAt:
-              type: string
-            draft:
-              $ref: '#/definitions/agenticv1.AgentConfig'
-            id:
-              type: string
-            name:
-              type: string
-            publishedVersion:
-              type: integer
-            revision:
-              type: integer
-            updatedAt:
-              type: string
-          type: object
+          $ref: '#/definitions/agent.Agent'
         type: array
     type: object
   agenticv1.Page-agenticv1_Run:
     properties:
       items:
         items:
-          properties:
-            agentID:
-              type: string
-            attempt:
-              type: integer
-            configVersion:
-              type: string
-            deadline:
-              type: string
-            epoch:
-              type: integer
-            error:
-              type: string
-            eventSeq:
-              type: integer
-            id:
-              type: string
-            output:
-              type: string
-            ownerID:
-              type: string
-            scope:
-              $ref: '#/definitions/agenticv1.Scope'
-            sessionID:
-              type: string
-            status:
-              type: string
-            waitingStep:
-              type: string
-          type: object
+          $ref: '#/definitions/execution.Run'
         type: array
     type: object
   agenticv1.Page-agenticv1_Session:
     properties:
       items:
         items:
-          properties:
-            agentID:
-              type: string
-            createdAt:
-              type: string
-            id:
-              type: string
-            messageSeq:
-              type: integer
-            title:
-              type: string
-            updatedAt:
-              type: string
-          type: object
+          $ref: '#/definitions/execution.Session'
         type: array
     type: object
   agenticv1.Page-agenticv1_SessionMessage:
     properties:
       items:
         items:
-          properties:
-            content:
-              type: string
-            createdAt:
-              type: string
-            kind:
-              type: string
-            role:
-              type: string
-            runID:
-              type: string
-            seq:
-              type: integer
-            sessionID:
-              type: string
-            toolCallID:
-              type: string
-            toolCalls:
-              items:
-                $ref: '#/definitions/agenticv1.ToolCall'
-              type: array
-          type: object
+          $ref: '#/definitions/execution.SessionMessage'
         type: array
     type: object
   agenticv1.PublishAgentRequest:
@@ -258,10 +217,12 @@ definitions:
       ownerID:
         type: string
       scope:
-        $ref: '#/definitions/agenticv1.Scope'
+        $ref: '#/definitions/workspace.Scope'
       sessionID:
         type: string
       status:
+        type: string
+      waitingKind:
         type: string
       waitingStep:
         type: string
@@ -270,29 +231,16 @@ definitions:
     properties:
       events:
         items:
-          $ref: '#/definitions/agenticv1.Event'
+          $ref: '#/definitions/execution.Event'
         type: array
       hasMore:
         type: boolean
       latestEvent:
-        $ref: '#/definitions/agenticv1.Event'
+        $ref: '#/definitions/execution.Event'
       nextSeq:
         type: integer
       run:
-        $ref: '#/definitions/agenticv1.Run'
-    type: object
-  agenticv1.Scope:
-    properties:
-      actorID:
-        type: string
-      projectID:
-        type: string
-      roundID:
-        type: string
-      taskID:
-        type: string
-      tenantID:
-        type: string
+        $ref: '#/definitions/execution.Run'
     type: object
   agenticv1.SendMessageRequest:
     properties:
@@ -336,40 +284,6 @@ definitions:
     - result
     - stepID
     type: object
-  agenticv1.ToolCall:
-    properties:
-      arguments:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-    type: object
-  agenticv1.ToolSpec:
-    properties:
-      description:
-        type: string
-      endRun:
-        type: boolean
-      kind:
-        type: string
-      name:
-        type: string
-      parameters:
-        type: object
-      policy:
-        type: string
-      resourceID:
-        type: string
-      returnDirectly:
-        type: boolean
-      tokenEnv:
-        type: string
-      toolID:
-        type: string
-      url:
-        type: string
-    type: object
   agenticv1.UpdateAgentRequest:
     properties:
       config:
@@ -397,6 +311,123 @@ definitions:
       statusCode:
         description: StatusCode 状态码，推荐6位数字
         type: integer
+    type: object
+  execution.Event:
+    properties:
+      createdAt:
+        type: string
+      kind:
+        type: string
+      payload:
+        type: object
+      runID:
+        type: string
+      seq:
+        type: integer
+    type: object
+  execution.FilesystemBinding:
+    properties:
+      provider:
+        type: string
+      tokenEnv:
+        type: string
+      url:
+        type: string
+      workspace:
+        type: string
+    type: object
+  execution.Run:
+    properties:
+      agentID:
+        type: string
+      attempt:
+        type: integer
+      configVersion:
+        type: string
+      deadline:
+        type: string
+      epoch:
+        type: integer
+      error:
+        type: string
+      eventSeq:
+        type: integer
+      id:
+        type: string
+      output:
+        type: string
+      ownerID:
+        type: string
+      scope:
+        $ref: '#/definitions/workspace.Scope'
+      sessionID:
+        type: string
+      status:
+        type: string
+      waitingKind:
+        type: string
+      waitingStep:
+        type: string
+    type: object
+  execution.Session:
+    properties:
+      agentID:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      messageSeq:
+        type: integer
+      title:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  execution.SessionMessage:
+    properties:
+      content:
+        type: string
+      createdAt:
+        type: string
+      kind:
+        type: string
+      role:
+        type: string
+      runID:
+        type: string
+      seq:
+        type: integer
+      sessionID:
+        type: string
+      toolCallID:
+        type: string
+      toolCalls:
+        items:
+          $ref: '#/definitions/execution.ToolCall'
+        type: array
+    type: object
+  execution.ToolCall:
+    properties:
+      arguments:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  workspace.Scope:
+    properties:
+      actorID:
+        type: string
+      projectID:
+        type: string
+      roundID:
+        type: string
+      taskID:
+        type: string
+      tenantID:
+        type: string
     type: object
 info:
   contact: {}

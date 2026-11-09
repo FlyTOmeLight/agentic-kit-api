@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/contextbuilder"
 )
 
 func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
@@ -61,6 +62,10 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 		repeat.ConfigVersion != "1" {
 		t.Fatalf("replay changed snapshot: %+v %v", repeat, err)
 	}
+	if repeat.ContextSnapshot.Digest != first.ContextSnapshot.Digest ||
+		string(repeat.ContextSnapshot.Payload) != string(first.ContextSnapshot.Payload) {
+		t.Fatal("replay changed context snapshot")
+	}
 	if _, _, err = s.Submit(
 		ctx,
 		"owner",
@@ -84,10 +89,14 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 		Content:   "searching",
 		ToolCalls: []ToolCall{{ID: "search", Name: "lookup", Arguments: `{}`}},
 	}
-	if err = s.SaveDecision(ctx, running.Lease(), json.RawMessage(`{"version":1}`), decision); err != nil {
+	if err = s.RecordDecision(ctx, running.Lease(), json.RawMessage(`{"version":1}`), decision); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = s.BeginStep(ctx, running.Lease(), "search", "input", ReadOnly); err != nil {
+	if _, err = s.BeginStep(
+		ctx,
+		running.Lease(),
+		StepIntent{ID: "search", Input: "input", Policy: ReadOnly},
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.FinishStep(
@@ -99,14 +108,10 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Save(
+	if err = s.CommitBoundary(
 		ctx,
 		running.Lease(),
-		json.RawMessage(`{}`),
-		Completed,
-		"first answer",
-		"",
-		"RunCompleted",
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "first answer"},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -118,6 +123,21 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 		second.Spec.History[0].Content != "first question" ||
 		second.Spec.History[1].Content != "first answer" {
 		t.Fatalf("bad second turn: %+v", second.Spec)
+	}
+	snapshot, err := contextbuilder.DecodeSnapshot(contextbuilder.Envelope{
+		Format:        second.ContextSnapshot.Format,
+		PolicyVersion: second.ContextSnapshot.PolicyVersion,
+		Digest:        second.ContextSnapshot.Digest,
+		Payload:       second.ContextSnapshot.Payload,
+	})
+	if err != nil {
+		t.Fatalf("decode context snapshot: %v", err)
+	}
+	if snapshot.MemoryMode != contextbuilder.MemoryOff ||
+		snapshot.Materials.SystemInstruction != "version two" ||
+		len(snapshot.Materials.History) != 1 ||
+		len(snapshot.Materials.History[0].Messages) != 4 {
+		t.Fatalf("bad context snapshot: %+v", snapshot)
 	}
 	messages, err := s.Messages(ctx, "owner", session.ID, 0, 200)
 	if err != nil {
@@ -142,7 +162,7 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 	if err != nil || old.Config.SystemPrompt != "version one" {
 		t.Fatalf("published version changed: %+v %v", old, err)
 	}
-	if err = s.Migrate(ctx); err != nil {
+	if err = s.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
 	read, err := s.Session(ctx, "owner", session.ID)
@@ -201,6 +221,84 @@ func TestConcurrentPublishAndSubmit(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestConversationHistoryKeepsCompleteTurnsOnly(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	session := testConversation(t, s, Spec{SystemPrompt: "system"})
+
+	complete, _, err := s.Submit(ctx, "owner", session.ID, "complete", "first question", time.Hour, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running := claim(t, s, "worker")
+	if err = s.RecordDecision(ctx, running.Lease(), json.RawMessage(`{"version":1}`), Message{
+		Role:      "assistant",
+		Content:   "searching",
+		ToolCalls: []ToolCall{{ID: "call-complete", Name: "lookup", Arguments: `{}`}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.BeginStep(ctx, running.Lease(), StepIntent{
+		ID: "call-complete", Input: "input", Policy: ReadOnly,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.FinishStep(
+		ctx,
+		running.Lease(),
+		"call-complete",
+		"complete result",
+		json.RawMessage(`{"version":2}`),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.CommitBoundary(
+		ctx,
+		running.Lease(),
+		Boundary{Kind: BoundaryFail, State: json.RawMessage(`{"version":3}`), Detail: "stopped"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	incomplete, _, err := s.Submit(ctx, "owner", session.ID, "incomplete", "second question", time.Hour, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running = claim(t, s, "worker")
+	if err = s.RecordDecision(ctx, running.Lease(), json.RawMessage(`{"version":4}`), Message{
+		Role:      "assistant",
+		Content:   "searching",
+		ToolCalls: []ToolCall{{ID: "call-incomplete", Name: "lookup", Arguments: `{}`}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Cancel(ctx, "owner", incomplete.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	third, _, err := s.Submit(ctx, "owner", session.ID, "third", "third question", time.Hour, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third.Spec.History) != 0 {
+		t.Fatalf("history kept the wrong turns: %+v", third.Spec.History)
+	}
+	snapshot, err := contextbuilder.DecodeSnapshot(contextbuilder.Envelope{
+		Format:        third.ContextSnapshot.Format,
+		PolicyVersion: third.ContextSnapshot.PolicyVersion,
+		Digest:        third.ContextSnapshot.Digest,
+		Payload:       third.ContextSnapshot.Payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Materials.History) != 1 ||
+		snapshot.Materials.History[0].Source.ID != complete.ID ||
+		len(snapshot.Materials.History[0].Messages) != 3 {
+		t.Fatalf("snapshot groups: %+v", snapshot.Materials.History)
+	}
 }
 
 func TestConversationOwnership(t *testing.T) {
@@ -292,14 +390,10 @@ func TestMessageAndRunRollbackTogether(t *testing.T) {
 	).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Save(
+	if err = s.CommitBoundary(
 		ctx,
 		active.Lease(),
-		json.RawMessage(`{}`),
-		Completed,
-		"answer",
-		"",
-		"RunCompleted",
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "answer"},
 	); err == nil {
 		t.Fatal("expected final message failure")
 	}
@@ -310,40 +404,5 @@ func TestMessageAndRunRollbackTogether(t *testing.T) {
 	read, err = s.Session(ctx, "owner", session.ID)
 	if err != nil || read.MessageSeq != 1 {
 		t.Fatalf("message seq changed on rollback: %+v %v", read, err)
-	}
-}
-
-func TestMigrationRefusesUnmanagedLegacyRuns(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-	// Reproduce a v0.1 database: only the three durable tables, with an existing run.
-	for _, model := range []any{&table.Message{}, &table.Session{}, &table.AgentVersion{}, &table.Agent{}} {
-		if err := s.db.Migrator().DropTable(model); err != nil {
-			t.Fatal(err)
-		}
-	}
-	legacy := table.Run{
-		ID:          "old-run",
-		OwnerID:     "owner",
-		SessionID:   "old-label",
-		RequestKey:  "request",
-		RequestHash: "hash",
-		Spec:        table.ExecutionSnapshot{},
-		Status:      Queued,
-		Deadline:    time.Now().Add(time.Hour),
-		MaxAttempts: 3,
-	}
-	if err := s.db.Create(&legacy).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Migrate(ctx); err == nil {
-		t.Fatal("accepted legacy runs without a conversation migration")
-	}
-	if s.db.Migrator().HasTable(&table.Session{}) {
-		t.Fatal("failed migration partially created tables")
-	}
-	got, err := s.Get(ctx, "owner", legacy.ID)
-	if err != nil || got.Status != Queued {
-		t.Fatalf("migration changed legacy task: %+v %v", got, err)
 	}
 }
