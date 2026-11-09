@@ -2,6 +2,8 @@
 
 状态：待实施。2026-10-16 的 Memory 版本存储修订为提案，详见 [Memory设计](memory-design.md)与[ADR-0008](adr/0008-memory-artifact-versions.md)，不将此次新增方向标为此前已确认。范围和决策见第14节，第10节为按正文契约校准的目标文件地图；实施前须核对第13节的技术事实和依赖能力。当前行为仍以代码、[HTTP契约](api.md)、[恢复设计](design.md)和[布局约束](layout.md)为准。
 
+2026-11-09 进度：`pkg/contextbuilder` 首版（完整消息组、Memory 优先级、预算裁剪、版本化快照与 digest）和 Run 的 `ContextSnapshot` 同事务冻结已实现；历史装配在快照中保留 assistant/tool 完整链并跳过缺失结果的消息组，`Spec.History` 仍只投影 User 与最终 Assistant 文本以兼容现有 worker。Memory 召回、模型窗口预算元数据、提交前预算预检和 worker 每轮 `Build` 接入仍待实施。
+
 设计基线：2026-10-14 的当前工作树，Go 1.27.1、server-go v0.9.0。本文依据当前方法实现、数据库模型、API/SDK 测试及相邻 worker 调用编写。实施时先核对工作树变化，不把本地框架 main 的接口当作发布版能力。
 
 阅读入口：[代码问题](#2-重构起点的代码问题)、[功能与类型](#3-功能模型与所有权)、[访问与入口](#4-身份权限与入口统一)、[执行事务](#6-对话提交与持久执行核心)、[文件地图](#10-文件级实施地图)、[方法清单](#11-原方法重写与删除清单)、[实施与验收](#12-实施顺序与验收)。
@@ -250,6 +252,8 @@ func Build(in BuildInput) (BuildResult, error)
 // BuildInput: FrozenMaterials、CurrentTurn、Policy、Budget。
 // BuildResult: Messages、Usage、OmittedSources；消息含role和tool call关联。
 ```
+
+当前实现范围：`pkg/contextbuilder`提供`Build`、`ValidateGroup`、`EncodeSnapshot`和`DecodeSnapshot`；`pkg/durable/prepare.go`按Run聚合完整历史组，把系统指令、工具定义、历史组、策略与预算编码进`ContextSnapshot`，并与Run、User消息和事件同事务提交。`Spec.History`保持旧的User/Final扁平视图，工具链只在快照中。首版Memory模式固定为Off，预算在模型窗口尚未进入Agent配置前保持未约束；worker adapter、RecallTx和提交前超限拒绝仍待实施。
 
 执行核心在durable/context.go中保存带格式/策略版本及digest的ContextSnapshot信封，payload由上下文模块编码与解释；durable不导入Memory或builder实现。Run与快照同事务提交，回放读取原记录。Memory、context_builder、execution之间不双向导入；类型转换集中在准备编排和worker adapter，后续更换检索或构建策略不重写租约、步骤和状态协议。
 

@@ -57,25 +57,35 @@ type Spec struct {
 type Run struct {
 	Scope *workspace.Scope `json:"scope,omitempty"`
 
-	AgentID       string          `json:"agentID"`
-	ConfigVersion string          `json:"configVersion"`
-	ID            string          `json:"id"`
-	OwnerID       string          `json:"ownerID"`
-	SessionID     string          `json:"sessionID"`
-	Spec          Spec            `json:"-"`
-	State         json.RawMessage `json:"-"`
-	Status        Status          `json:"status"`
-	WorkerID      string          `json:"-"`
-	Epoch         int64           `json:"epoch"`
-	LeaseUntil    *time.Time      `json:"-"`
-	Deadline      time.Time       `json:"deadline"`
-	Attempt       int             `json:"attempt"`
-	MaxAttempts   int             `json:"-"`
-	EventSeq      int64           `json:"eventSeq"`
-	Output        string          `json:"output,omitempty"`
-	WaitingStep   string          `json:"waitingStep,omitempty"`
-	WaitingKind   InteractionKind `json:"waitingKind,omitempty"`
-	Error         string          `json:"error,omitempty"`
+	AgentID         string          `json:"agentID"`
+	ConfigVersion   string          `json:"configVersion"`
+	ID              string          `json:"id"`
+	OwnerID         string          `json:"ownerID"`
+	SessionID       string          `json:"sessionID"`
+	Spec            Spec            `json:"-"`
+	ContextSnapshot ContextSnapshot `json:"-"`
+	State           json.RawMessage `json:"-"`
+	Status          Status          `json:"status"`
+	WorkerID        string          `json:"-"`
+	Epoch           int64           `json:"epoch"`
+	LeaseUntil      *time.Time      `json:"-"`
+	Deadline        time.Time       `json:"deadline"`
+	Attempt         int             `json:"attempt"`
+	MaxAttempts     int             `json:"-"`
+	EventSeq        int64           `json:"eventSeq"`
+	Output          string          `json:"output,omitempty"`
+	WaitingStep     string          `json:"waitingStep,omitempty"`
+	WaitingKind     InteractionKind `json:"waitingKind,omitempty"`
+	Error           string          `json:"error,omitempty"`
+}
+
+// ContextSnapshot is an opaque, versioned envelope. Execution stores and
+// verifies the envelope but never interprets Payload.
+type ContextSnapshot struct {
+	Format        string          `json:"format"`
+	PolicyVersion string          `json:"policyVersion"`
+	Digest        string          `json:"digest"`
+	Payload       json.RawMessage `json:"payload"`
 }
 
 type Lease struct {

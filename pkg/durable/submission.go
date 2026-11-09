@@ -93,19 +93,27 @@ func (tx *Tx) Submit(
 		if err != nil {
 			return err
 		}
+		if err = validateContextSnapshot(prepared.ContextSnapshot); err != nil {
+			return err
+		}
+		snapshotData, err := json.Marshal(prepared.ContextSnapshot)
+		if err != nil {
+			return err
+		}
 		data, err := json.Marshal(prepared.Spec)
 		if err != nil {
 			return err
 		}
 		id := NewID()
 		if err = tx.db.Model(&table.Run{}).Create(map[string]any{
-			"id":           id,
-			"owner_id":     cmd.Owner,
-			"session_id":   sessionID,
-			"request_key":  cmd.RequestKey,
-			"request_hash": cmd.RequestHash,
-			"spec":         string(data),
-			"status":       Queued,
+			"id":               id,
+			"owner_id":         cmd.Owner,
+			"session_id":       sessionID,
+			"request_key":      cmd.RequestKey,
+			"request_hash":     cmd.RequestHash,
+			"spec":             string(data),
+			"context_snapshot": string(snapshotData),
+			"status":           Queued,
 			"deadline": gorm.Expr(
 				"clock_timestamp()+?*interval '1 millisecond'",
 				cmd.TTL.Milliseconds(),

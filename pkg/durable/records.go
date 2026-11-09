@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 func Hash(data []byte) string { h := sha256.Sum256(data); return hex.EncodeToString(h[:]) }
@@ -19,26 +20,27 @@ func (s *Store) Get(ctx context.Context, owner, id string) (*Run, error) {
 
 func runFromRow(r table.Run) *Run {
 	return &Run{
-		Scope:         r.Spec.Scope,
-		AgentID:       r.Spec.AgentID,
-		ConfigVersion: r.Spec.ConfigVersion,
-		ID:            r.ID,
-		OwnerID:       r.OwnerID,
-		SessionID:     r.SessionID,
-		Spec:          Spec(r.Spec),
-		State:         r.State,
-		Status:        r.Status,
-		WorkerID:      r.WorkerID,
-		Epoch:         r.Epoch,
-		LeaseUntil:    r.LeaseUntil,
-		Deadline:      r.Deadline,
-		Attempt:       r.Attempt,
-		MaxAttempts:   r.MaxAttempts,
-		EventSeq:      r.EventSeq,
-		Output:        r.Output,
-		Error:         r.Error,
-		WaitingStep:   r.WaitingStep,
-		WaitingKind:   r.WaitingKind,
+		Scope:           r.Spec.Scope,
+		AgentID:         r.Spec.AgentID,
+		ConfigVersion:   r.Spec.ConfigVersion,
+		ID:              r.ID,
+		OwnerID:         r.OwnerID,
+		SessionID:       r.SessionID,
+		Spec:            Spec(r.Spec),
+		ContextSnapshot: execution.ContextSnapshot(r.ContextSnapshot),
+		State:           r.State,
+		Status:          r.Status,
+		WorkerID:        r.WorkerID,
+		Epoch:           r.Epoch,
+		LeaseUntil:      r.LeaseUntil,
+		Deadline:        r.Deadline,
+		Attempt:         r.Attempt,
+		MaxAttempts:     r.MaxAttempts,
+		EventSeq:        r.EventSeq,
+		Output:          r.Output,
+		Error:           r.Error,
+		WaitingStep:     r.WaitingStep,
+		WaitingKind:     r.WaitingKind,
 	}
 }
 

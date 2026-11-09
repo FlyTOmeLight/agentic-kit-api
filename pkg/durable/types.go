@@ -40,6 +40,8 @@ type Spec = execution.Spec
 
 type Run = execution.Run
 
+type ContextSnapshot = execution.ContextSnapshot
+
 type Lease = execution.Lease
 
 type Event = execution.Event

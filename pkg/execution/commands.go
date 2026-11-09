@@ -45,8 +45,9 @@ type SubmissionFacts struct {
 
 // PreparedSubmission is the compiled snapshot ready to persist.
 type PreparedSubmission struct {
-	Spec        Spec
-	UserMessage Message
+	Spec            Spec
+	UserMessage     Message
+	ContextSnapshot ContextSnapshot
 }
 
 // Submission is the accept result.

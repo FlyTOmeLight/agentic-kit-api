@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/contextbuilder"
 )
 
 func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
@@ -60,6 +61,10 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 	if err != nil || created || repeat.ID != first.ID || repeat.Spec.SystemPrompt != "version one" ||
 		repeat.ConfigVersion != "1" {
 		t.Fatalf("replay changed snapshot: %+v %v", repeat, err)
+	}
+	if repeat.ContextSnapshot.Digest != first.ContextSnapshot.Digest ||
+		string(repeat.ContextSnapshot.Payload) != string(first.ContextSnapshot.Payload) {
+		t.Fatal("replay changed context snapshot")
 	}
 	if _, _, err = s.Submit(
 		ctx,
@@ -118,6 +123,21 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 		second.Spec.History[0].Content != "first question" ||
 		second.Spec.History[1].Content != "first answer" {
 		t.Fatalf("bad second turn: %+v", second.Spec)
+	}
+	snapshot, err := contextbuilder.DecodeSnapshot(contextbuilder.Envelope{
+		Format:        second.ContextSnapshot.Format,
+		PolicyVersion: second.ContextSnapshot.PolicyVersion,
+		Digest:        second.ContextSnapshot.Digest,
+		Payload:       second.ContextSnapshot.Payload,
+	})
+	if err != nil {
+		t.Fatalf("decode context snapshot: %v", err)
+	}
+	if snapshot.MemoryMode != contextbuilder.MemoryOff ||
+		snapshot.Materials.SystemInstruction != "version two" ||
+		len(snapshot.Materials.History) != 1 ||
+		len(snapshot.Materials.History[0].Messages) != 4 {
+		t.Fatalf("bad context snapshot: %+v", snapshot)
 	}
 	messages, err := s.Messages(ctx, "owner", session.ID, 0, 200)
 	if err != nil {
@@ -201,6 +221,84 @@ func TestConcurrentPublishAndSubmit(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestConversationHistoryKeepsCompleteTurnsOnly(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	session := testConversation(t, s, Spec{SystemPrompt: "system"})
+
+	complete, _, err := s.Submit(ctx, "owner", session.ID, "complete", "first question", time.Hour, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running := claim(t, s, "worker")
+	if err = s.RecordDecision(ctx, running.Lease(), json.RawMessage(`{"version":1}`), Message{
+		Role:      "assistant",
+		Content:   "searching",
+		ToolCalls: []ToolCall{{ID: "call-complete", Name: "lookup", Arguments: `{}`}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.BeginStep(ctx, running.Lease(), StepIntent{
+		ID: "call-complete", Input: "input", Policy: ReadOnly,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.FinishStep(
+		ctx,
+		running.Lease(),
+		"call-complete",
+		"complete result",
+		json.RawMessage(`{"version":2}`),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.CommitBoundary(
+		ctx,
+		running.Lease(),
+		Boundary{Kind: BoundaryFail, State: json.RawMessage(`{"version":3}`), Detail: "stopped"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	incomplete, _, err := s.Submit(ctx, "owner", session.ID, "incomplete", "second question", time.Hour, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running = claim(t, s, "worker")
+	if err = s.RecordDecision(ctx, running.Lease(), json.RawMessage(`{"version":4}`), Message{
+		Role:      "assistant",
+		Content:   "searching",
+		ToolCalls: []ToolCall{{ID: "call-incomplete", Name: "lookup", Arguments: `{}`}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Cancel(ctx, "owner", incomplete.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	third, _, err := s.Submit(ctx, "owner", session.ID, "third", "third question", time.Hour, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third.Spec.History) != 0 {
+		t.Fatalf("history kept the wrong turns: %+v", third.Spec.History)
+	}
+	snapshot, err := contextbuilder.DecodeSnapshot(contextbuilder.Envelope{
+		Format:        third.ContextSnapshot.Format,
+		PolicyVersion: third.ContextSnapshot.PolicyVersion,
+		Digest:        third.ContextSnapshot.Digest,
+		Payload:       third.ContextSnapshot.Payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Materials.History) != 1 ||
+		snapshot.Materials.History[0].Source.ID != complete.ID ||
+		len(snapshot.Materials.History[0].Messages) != 3 {
+		t.Fatalf("snapshot groups: %+v", snapshot.Materials.History)
+	}
 }
 
 func TestConversationOwnership(t *testing.T) {

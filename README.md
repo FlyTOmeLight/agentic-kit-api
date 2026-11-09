@@ -4,7 +4,7 @@
 
 本仓库只提供通用 Agent 能力。项目工作台、项目权限政策、产品模板、数据集、评测实验和场景发布审批由调用方应用负责，不在 API 中实现。执行请求可以携带 tenant、project、actor、task 等上下文，核心只据此隔离任务和保存快照，不查询或管理项目业务。
 
-当前执行链路支持 worker 重启后接管已提交任务。Memory 的[技术设计](docs/memory-design.md)已提出复用 artifact-go 版本服务，仍待实施。[通用框架重构设计](docs/refactoring-design.md)中的访问对象、新表结构和上下文管线也仍待实施；本次删除平台业务不代表整套重构已经完成。
+当前执行链路支持 worker 重启后接管已提交任务。上下文构建首版已实现：`pkg/contextbuilder` 负责完整消息组选择、Memory 优先级和预算裁剪，Run 接受时把完整历史组、系统指令、工具定义及 Off/Recall 模式冻结为 `ContextSnapshot`；历史中缺少配对工具结果的消息组不会注入。Memory 的[技术设计](docs/memory-design.md)已提出复用 artifact-go 版本服务，召回与冻结仍待实施；worker 也尚未改为每轮调用构建器，当前 `Spec.History` 仍只投影 User 和最终 Assistant 文本，以保持现有 worker 兼容。[通用框架重构设计](docs/refactoring-design.md)中的访问对象和新表结构仍待实施，本次删除平台业务不代表整套重构已经完成。
 
 ## 功能与代码分层
 
@@ -14,6 +14,7 @@
 | Session / Message | 多轮会话、有序消息、冻结提交时的配置与历史、消息幂等 |
 | Run / Execution | 提交、查询、取消、澄清回答、人工确认、执行权校验、trace 与 SSE 回放 |
 | Durable / Outbox | API 与 worker 共享执行事务、租约、步骤存档、状态与事件一致提交、通知投递 |
+| Context | 完整历史组与 Memory 材料的稳定选择、预算裁剪、版本化 `ContextSnapshot` 冻结 |
 
 ```text
 agentic-kit-api/
@@ -29,6 +30,7 @@ agentic-kit-api/
 │   ├── schema/               # 空库目标表结构初始化
 │   └── table/                # Agent、Session、Run、Step、Event、Message 表模型
 ├── pkg/durable/              # API/worker 共享持久化事务与执行契约
+├── pkg/contextbuilder/       # 纯上下文构建、预算裁剪与快照编码
 ├── sdk/go/agenticv1/          # 通用 HTTP 请求/响应、Go SDK 与 SSE 消费
 ├── doc/openapi/              # 由 Controller 与 SDK 生成的 OpenAPI
 ├── conf/server/config.toml   # 默认配置与环境占位符

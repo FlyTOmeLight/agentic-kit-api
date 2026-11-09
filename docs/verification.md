@@ -178,3 +178,11 @@ worker 通过其 go.work 指向本地 API 工作树，完整 make integration（
 在 deploy/compose.yaml 提供的隔离 PostgreSQL 17.6、Redis 7.2.10 上通过 GOWORK=off `go test -race -count=1 -timeout=120s ./...`（`TEST_DATABASE_URL`、`TEST_REDIS_URL`）。`go test -json` 统计 **186** 个用例通过、**0** 失败、**0** 跳过；`GOWORK=off CGO_ENABLED=0 make build` 与 `make doc` 通过（OpenAPI Run 增加 `waitingKind`）。
 
 worker 通过 go.work 指向本地 API 工作树，`TEST_DATABASE_URL` 下 `go test -race -count=1 -timeout=120s ./...`：**52** 通过、**0** 失败、**1** 跳过（需 AIO 环境的公开 SDK 测试）；包含 TestProcessKillResumesWithoutRepeatingTool、TestUnsafeErrorPausesInsteadOfRetrying（断言公开 Run 的 `waitingStep`/`waitingKind`）。worker `go.mod` 仍 pin 已发布 API 版本且无 replace；**GOWORK=off** 独立构建 worker 需等 API 发布含本阶段符号的版本，联合验证以 go.work 为准。
+
+## 框架重构阶段 4：上下文构建与快照冻结
+
+2026-11-09：新增 `pkg/contextbuilder` 首版，提供完整消息组校验、Memory 优先级、token/byte 预算裁剪、`ContextBudgetExceeded` 稳定错误，以及带格式版本、Policy 版本和 SHA-256 digest 的 `ContextSnapshot` 编解码。`pkg/durable/prepare.go` 改为按 Run 聚合历史：快照保留 User、Assistant（含 tool calls）、Tool、Final 的完整链，跳过缺少配对工具结果的消息组；`Spec.History` 仍只投影 User 与最终 Assistant 文本，避免改变当前 worker 的输入形状。系统指令、工具定义、历史组、Policy 和 Budget 与 Run 同事务写入 `durable_run.context_snapshot`。快照列使用 text 保存原始 envelope 字节，避免 jsonb 重排导致 digest 失配。
+
+验证范围：`GOWORK=off go test -count=1 ./...`（`TEST_DATABASE_URL` 指向 deploy/compose.yaml 的隔离 PostgreSQL）通过；`GOWORK=off go test -race -count=1 ./pkg/contextbuilder/ ./pkg/durable/` 通过；`GOWORK=off go build ./...` 通过。新增用例覆盖快照往返、篡改与不一致 Memory 模式、工具链保留、失败但完整的上一轮进入历史、取消留下的不完整轮次被跳过，以及回放不改变快照。
+
+未验证：worker 未接入每轮 `Build`，未验证动态工具结果超限后的 Fail 边界；Memory RecallTx 和模型窗口预算元数据尚未实现，因此当前冻结的 Budget 是未约束值。
