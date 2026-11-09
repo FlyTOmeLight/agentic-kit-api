@@ -56,6 +56,10 @@ type Boundary = execution.Boundary
 
 type BoundaryKind = execution.BoundaryKind
 
+type ContextInfo = execution.ContextInfo
+
+type Source = execution.Source
+
 type InteractionKind = execution.InteractionKind
 
 type StepIntent = execution.StepIntent

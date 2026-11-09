@@ -59,13 +59,17 @@ func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 			return err
 		}
 	}
-	if err = emit(ctx, tx, l.RunID, kind, map[string]any{
+	payload := map[string]any{
 		"status":      status,
 		"output":      b.Output,
 		"detail":      b.Detail,
 		"waitingStep": b.WaitingStep,
 		"waitingKind": b.Kind.Interaction(),
-	}); err != nil {
+	}
+	if b.Context != nil {
+		payload["context"] = b.Context
+	}
+	if err = emit(ctx, tx, l.RunID, kind, payload); err != nil {
 		return err
 	}
 	return tx.Commit().Error
