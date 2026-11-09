@@ -5,8 +5,10 @@ package contextbuilder
 
 import "encoding/json"
 
-// PolicyVersionV1 is the only context composition policy implemented today.
-const PolicyVersionV1 = "context-v1"
+const (
+	PolicyVersionV1 = "context-v1"
+	PolicyVersionV2 = "context-v2"
+)
 
 type Role string
 
@@ -81,15 +83,14 @@ type FrozenMaterials struct {
 	History           []MessageGroup   `json:"history,omitempty"`
 }
 
-// Policy versions composition, ordering and omission rules. Version must be
-// PolicyVersionV1.
+// Policy versions composition, ordering and omission rules.
 type Policy struct {
 	Version string `json:"version"`
 }
 
-// Budget freezes the input limits and counting policy for one Run. MaxInputTokens
-// wins when set; otherwise the input limit is ContextWindow minus OutputReserve.
-// Zero means that dimension is unconstrained.
+// Budget freezes the input limits and counting policy for one Run. The input
+// token limit is the smaller of MaxInputTokens and ContextWindow minus
+// OutputReserve when both are set. Zero means that dimension is unconstrained.
 type Budget struct {
 	ContextWindow          int64  `json:"contextWindow,omitempty"`
 	OutputReserve          int64  `json:"outputReserve,omitempty"`
@@ -97,16 +98,18 @@ type Budget struct {
 	MaxInputBytes          int64  `json:"maxInputBytes,omitempty"`
 	ProtocolOverheadTokens int64  `json:"protocolOverheadTokens,omitempty"`
 	CounterVersion         string `json:"counterVersion,omitempty"`
+	MaxToolResultBytes     int64  `json:"maxToolResultBytes,omitempty"`
 }
 
 func (b Budget) InputTokenLimit() int64 {
-	if b.MaxInputTokens > 0 {
-		return b.MaxInputTokens
-	}
+	limit := b.MaxInputTokens
 	if b.ContextWindow > 0 {
-		return b.ContextWindow - b.OutputReserve
+		windowLimit := b.ContextWindow - b.OutputReserve
+		if limit == 0 || windowLimit < limit {
+			limit = windowLimit
+		}
 	}
-	return 0
+	return limit
 }
 
 func (b Budget) InputByteLimit() int64 { return b.MaxInputBytes }
@@ -142,7 +145,8 @@ type OmittedSource struct {
 }
 
 type BuildResult struct {
-	Messages       []Message       `json:"messages"`
-	Usage          Usage           `json:"usage"`
-	OmittedSources []OmittedSource `json:"omittedSources,omitempty"`
+	Messages         []Message       `json:"messages"`
+	Usage            Usage           `json:"usage"`
+	OmittedSources   []OmittedSource `json:"omittedSources,omitempty"`
+	CollapsedSources []Source        `json:"collapsedSources,omitempty"`
 }

@@ -7,24 +7,35 @@ import (
 )
 
 var (
+	ErrUnsupportedCounter = errors.New("unsupported context counter version")
+
 	// ErrInvalidInput rejects malformed messages, sources, tools or options.
 	ErrInvalidInput = errors.New("invalid context builder input")
+
 	// ErrIncompleteGroup rejects a turn whose tool calls and results do not pair.
 	ErrIncompleteGroup = errors.New("incomplete message group")
+
 	// ErrUnsupportedPolicy rejects a policy version this builder cannot apply.
 	ErrUnsupportedPolicy = errors.New("unsupported context policy")
+
 	// ErrCounterRequired rejects a token budget without a token counter.
 	ErrCounterRequired = errors.New("token counter required")
+
 	// ErrCounterVersionRequired keeps the counting policy in the frozen budget.
 	ErrCounterVersionRequired = errors.New("token counter version required")
+
 	// ErrInvalidBudget rejects negative or impossible budget values.
 	ErrInvalidBudget = errors.New("invalid context budget")
+
 	// ErrBudgetExceeded marks required or selected input above the frozen budget.
 	ErrBudgetExceeded = errors.New("context budget exceeded")
+
 	// ErrInvalidSnapshot rejects an inconsistent frozen snapshot payload.
 	ErrInvalidSnapshot = errors.New("invalid context snapshot")
+
 	// ErrUnsupportedSnapshotFormat rejects an unknown snapshot format.
 	ErrUnsupportedSnapshotFormat = errors.New("unsupported context snapshot format")
+
 	// ErrSnapshotDigest rejects a snapshot whose payload changed after encoding.
 	ErrSnapshotDigest = errors.New("context snapshot digest mismatch")
 )

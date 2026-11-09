@@ -143,7 +143,11 @@ func TestConcurrentClaimAndFence(t *testing.T) {
 	if next.Epoch <= old.Epoch {
 		t.Fatal("epoch did not increase")
 	}
-	if err := s.CommitBoundary(ctx, old.Lease(), Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "stale"}); !errors.Is(
+	if err := s.CommitBoundary(
+		ctx,
+		old.Lease(),
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "stale"},
+	); !errors.Is(
 		err,
 		ErrLeaseLost,
 	) {
@@ -152,7 +156,11 @@ func TestConcurrentClaimAndFence(t *testing.T) {
 	if err := s.Renew(ctx, old.Lease(), time.Minute); !errors.Is(err, ErrLeaseLost) {
 		t.Fatalf("stale renewal accepted: %v", err)
 	}
-	if err := s.CommitBoundary(ctx, next.Lease(), Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "correct"}); err != nil {
+	if err := s.CommitBoundary(
+		ctx,
+		next.Lease(),
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "correct"},
+	); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Get(ctx, "owner", r.ID)
@@ -186,7 +194,11 @@ func TestIdempotencyOwnershipAndCancellation(t *testing.T) {
 	if err = s.Cancel(ctx, "owner", r.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.CommitBoundary(ctx, active.Lease(), Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "wrong"}); !errors.Is(
+	if err = s.CommitBoundary(
+		ctx,
+		active.Lease(),
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "wrong"},
+	); !errors.Is(
 		err,
 		ErrLeaseLost,
 	) {
@@ -202,11 +214,19 @@ func TestUnsafeStepAndHumanResolution(t *testing.T) {
 	ctx := context.Background()
 	createRun(t, s)
 	r := claim(t, s, "a")
-	if d, err := s.BeginStep(ctx, r.Lease(), StepIntent{ID: "submit", Input: "arguments", Policy: Unsafe}); err != nil ||
+	if d, err := s.BeginStep(
+		ctx,
+		r.Lease(),
+		StepIntent{ID: "submit", Input: "arguments", Policy: Unsafe},
+	); err != nil ||
 		d.Outcome != StepExecute {
 		t.Fatalf("first step: %+v %v", d, err)
 	}
-	if d, err := s.BeginStep(ctx, r.Lease(), StepIntent{ID: "submit", Input: "arguments", Policy: Unsafe}); err != nil ||
+	if d, err := s.BeginStep(
+		ctx,
+		r.Lease(),
+		StepIntent{ID: "submit", Input: "arguments", Policy: Unsafe},
+	); err != nil ||
 		d.Outcome != StepUncertain {
 		t.Fatalf("unsafe repeated: %+v %v", d, err)
 	}
@@ -244,7 +264,11 @@ func TestResultAndEventCommitTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = s.CommitBoundary(ctx, r.Lease(), Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "should roll back"})
+	err = s.CommitBoundary(
+		ctx,
+		r.Lease(),
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "should roll back"},
+	)
 	if err == nil {
 		t.Fatal("expected transaction failure")
 	}
@@ -303,7 +327,11 @@ func TestSessionHistoryAndSingleActiveRun(t *testing.T) {
 	if running.ID != first.ID {
 		t.Fatal("wrong task")
 	}
-	if err = s.CommitBoundary(ctx, running.Lease(), Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "first answer"}); err != nil {
+	if err = s.CommitBoundary(
+		ctx,
+		running.Lease(),
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`), Output: "first answer"},
+	); err != nil {
 		t.Fatal(err)
 	}
 	second, _, err := s.Submit(ctx, "owner", session.ID, "second", "second question", time.Hour, 3)
@@ -373,7 +401,11 @@ func TestJSONRoundTripAndRepeatedSchemaInit(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.CommitBoundary(ctx, active.Lease(), Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`)}); err != nil {
+	if err = s.CommitBoundary(
+		ctx,
+		active.Lease(),
+		Boundary{Kind: BoundaryComplete, State: json.RawMessage(`{}`)},
+	); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.Get(ctx, "owner", run.ID)

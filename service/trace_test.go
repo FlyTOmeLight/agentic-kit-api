@@ -111,7 +111,11 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 	}
 	// Fill two pages to prove reconnect is ordered and latest progress is independent of cursor.
 	for i := 0; i < 55; i++ {
-		if err = store.CommitBoundary(ctx, lease, durable.Boundary{Kind: durable.BoundaryModelStarted, State: state}); err != nil {
+		if err = store.CommitBoundary(
+			ctx,
+			lease,
+			durable.Boundary{Kind: durable.BoundaryModelStarted, State: state},
+		); err != nil {
 			t.Fatal(err)
 		}
 	}

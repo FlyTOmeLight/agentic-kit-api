@@ -7,11 +7,14 @@ import (
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 	core "github.com/FlyTOmeLight/server-go/pkg"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/contextbuilder"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
 func Respond(c *core.Context, err error) {
 	switch {
+	case errors.Is(err, contextbuilder.ErrBudgetExceeded):
+		serrors.Abort(c, http.StatusBadRequest, "ContextBudgetExceeded", err.Error())
 	case errors.Is(err, durable.ErrInvalid):
 		serrors.Abort(c, 400, "InvalidParameter", "invalid input")
 	case errors.Is(err, durable.ErrNotFound):

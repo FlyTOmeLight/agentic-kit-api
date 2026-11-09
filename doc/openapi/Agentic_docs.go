@@ -1562,6 +1562,9 @@ const docTemplateAgentic = `{
                 "baseURL": {
                     "type": "string"
                 },
+                "contextWindow": {
+                    "type": "integer"
+                },
                 "maxTokens": {
                     "type": "integer"
                 },

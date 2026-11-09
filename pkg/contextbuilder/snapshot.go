@@ -77,7 +77,7 @@ func DecodeSnapshot(envelope Envelope) (Snapshot, error) {
 }
 
 func validateSnapshot(snapshot Snapshot) error {
-	if snapshot.Policy.Version != PolicyVersionV1 {
+	if snapshot.Policy.Version != PolicyVersionV1 && snapshot.Policy.Version != PolicyVersionV2 {
 		return ErrUnsupportedPolicy
 	}
 	if err := validateBudget(snapshot.Budget); err != nil {

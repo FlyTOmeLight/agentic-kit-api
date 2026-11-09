@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 type byteTokenCounter struct{}
@@ -36,9 +37,13 @@ func messagesMeasure(messages []Message) measurement {
 }
 
 func TestBuildTrimsOldestCompleteGroup(t *testing.T) {
-	first := historyGroup("run-1",
+	first := historyGroup(
+		"run-1",
 		Message{Role: RoleUser, Content: "question one"},
-		Message{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call-1", Name: "lookup", Arguments: `{"q":"one"}`}}},
+		Message{
+			Role:      RoleAssistant,
+			ToolCalls: []ToolCall{{ID: "call-1", Name: "lookup", Arguments: `{"q":"one"}`}},
+		},
 		Message{Role: RoleTool, ToolCallID: "call-1", Content: "result one"},
 		Message{Role: RoleAssistant, Content: "answer one"},
 	)
@@ -304,7 +309,7 @@ func TestBuildCounterRequirements(t *testing.T) {
 }
 
 func TestBuildRejectsUnsupportedPolicy(t *testing.T) {
-	for _, policy := range []Policy{{}, {Version: "context-v2"}} {
+	for _, policy := range []Policy{{}, {Version: "context-v3"}} {
 		in := BuildInput{
 			CurrentTurn: []Message{{Role: RoleUser, Content: "question"}},
 			Policy:      policy,
@@ -337,5 +342,76 @@ func TestBuildIsDeterministic(t *testing.T) {
 	second := mustBuild(t, in)
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("results differ:\n%+v\n%+v", first, second)
+	}
+}
+
+func TestBuildPreviewsOversizedToolResults(t *testing.T) {
+	largeOutput := strings.Repeat("结果片段αβγ-", 40)
+	historyTurn := historyGroup("run-1",
+		Message{Role: RoleUser, Content: "first question"},
+		Message{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call-1", Name: "lookup", Arguments: `{}`}}},
+		Message{Role: RoleTool, ToolCallID: "call-1", Content: largeOutput},
+		Message{Role: RoleAssistant, Content: "first answer"},
+	)
+	currentTurn := []Message{
+		{Role: RoleUser, Content: "second question"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call-2", Name: "lookup", Arguments: `{}`}}},
+		{Role: RoleTool, ToolCallID: "call-2", Content: largeOutput},
+	}
+	in := BuildInput{
+		FrozenMaterials: FrozenMaterials{
+			SystemInstruction: "system",
+			History:           []MessageGroup{historyTurn},
+		},
+		CurrentTurn: currentTurn,
+		Policy:      Policy{Version: PolicyVersionV1},
+		Budget: Budget{
+			MaxInputTokens:     900,
+			MaxToolResultBytes: 200,
+			CounterVersion:     ByteEstimateVersion,
+		},
+		Counter: byteTokenCounter{},
+	}
+
+	result := mustBuild(t, in)
+	previewCount := 0
+	for _, msg := range result.Messages {
+		if msg.Role != RoleTool {
+			continue
+		}
+		if int64(len(msg.Content)) > in.Budget.MaxToolResultBytes {
+			t.Fatalf(
+				"tool content length %d exceeds limit %d",
+				len(msg.Content),
+				in.Budget.MaxToolResultBytes,
+			)
+		}
+		if !strings.Contains(msg.Content, "[Tool result preview: middle omitted;") {
+			t.Fatalf("expected preview marker in %q", msg.Content)
+		}
+		if !utf8.ValidString(msg.Content) {
+			t.Fatalf("preview split UTF-8 rune: %q", msg.Content)
+		}
+		previewCount++
+	}
+	if previewCount != 2 {
+		t.Fatalf("previewed %d tool results, want 2", previewCount)
+	}
+	if historyTurn.Messages[2].Content != largeOutput || currentTurn[2].Content != largeOutput {
+		t.Fatal("previewToolMessages mutated input slices")
+	}
+}
+
+func TestResolveCounter(t *testing.T) {
+	c, err := ResolveCounter("")
+	if err != nil || c != nil {
+		t.Fatalf("empty counter version: got (%v, %v), want (nil, nil)", c, err)
+	}
+	c, err = ResolveCounter(ByteEstimateVersion)
+	if err != nil || c == nil || c.Count("hello") != 5 {
+		t.Fatalf("ByteEstimateVersion: got (%v, %v)", c, err)
+	}
+	if _, err := ResolveCounter("unknown-v1"); !errors.Is(err, ErrUnsupportedCounter) {
+		t.Fatalf("unknown counter version: got %v, want ErrUnsupportedCounter", err)
 	}
 }

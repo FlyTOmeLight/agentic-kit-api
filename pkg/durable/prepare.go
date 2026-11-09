@@ -168,6 +168,15 @@ func completeHistoryGroup(runID string, messages []execution.Message) (contextbu
 	if err := contextbuilder.ValidateGroup(group.Messages); err != nil {
 		return contextbuilder.MessageGroup{}, false
 	}
+	for index := range group.Messages {
+		message := &group.Messages[index]
+		if message.ToolCallID != "" {
+			message.ToolCallID = runID + ":" + message.ToolCallID
+		}
+		for callIndex := range message.ToolCalls {
+			message.ToolCalls[callIndex].ID = runID + ":" + message.ToolCalls[callIndex].ID
+		}
+	}
 	return group, true
 }
 
@@ -198,19 +207,42 @@ func legacyHistory(groups []contextbuilder.MessageGroup) []execution.Message {
 }
 
 func freezeContext(spec execution.Spec, history []contextbuilder.MessageGroup) (execution.ContextSnapshot, error) {
-	// Memory is explicitly Off until the recall pipeline is implemented. The
-	// budget is frozen unconstrained because published Agent configs do not yet
-	// carry a model context window; the worker applies the same frozen policy.
-	envelope, err := contextbuilder.EncodeSnapshot(contextbuilder.Snapshot{
+	budget := contextbuilder.Budget{MaxInputBytes: 128 * 1024, MaxToolResultBytes: 16 * 1024}
+	if spec.Model.ContextWindow > 0 {
+		if spec.Model.MaxTokens == nil {
+			return execution.ContextSnapshot{}, ErrInvalid
+		}
+		budget.ContextWindow = spec.Model.ContextWindow
+		budget.OutputReserve = int64(*spec.Model.MaxTokens)
+		budget.MaxInputBytes = 0
+		budget.ProtocolOverheadTokens = 256
+		budget.CounterVersion = contextbuilder.ByteEstimateVersion
+		budget.MaxToolResultBytes = max(128, min(budget.MaxToolResultBytes, budget.InputTokenLimit()/4))
+	}
+	snapshot := contextbuilder.Snapshot{
 		MemoryMode: contextbuilder.MemoryOff,
 		Materials: contextbuilder.FrozenMaterials{
 			SystemInstruction: spec.SystemPrompt,
 			Tools:             contextTools(spec.Tools),
 			History:           history,
 		},
-		Policy: contextbuilder.Policy{Version: contextbuilder.PolicyVersionV1},
-		Budget: contextbuilder.Budget{},
-	})
+		Policy: contextbuilder.Policy{Version: contextbuilder.PolicyVersionV2},
+		Budget: budget,
+	}
+	counter, err := contextbuilder.ResolveCounter(budget.CounterVersion)
+	if err != nil {
+		return execution.ContextSnapshot{}, err
+	}
+	if _, err = contextbuilder.Build(contextbuilder.BuildInput{
+		FrozenMaterials: snapshot.Materials,
+		CurrentTurn:     []contextbuilder.Message{{Role: contextbuilder.RoleUser, Content: spec.Query}},
+		Policy:          snapshot.Policy,
+		Budget:          budget,
+		Counter:         counter,
+	}); err != nil {
+		return execution.ContextSnapshot{}, err
+	}
+	envelope, err := contextbuilder.EncodeSnapshot(snapshot)
 	if err != nil {
 		return execution.ContextSnapshot{}, err
 	}

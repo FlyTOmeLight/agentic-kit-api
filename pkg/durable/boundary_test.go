@@ -67,7 +67,8 @@ func TestCommitBoundaryRejectsInvalidCombinations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Status != before.Status || after.EventSeq != before.EventSeq || string(after.State) != string(before.State) ||
+	if after.Status != before.Status || after.EventSeq != before.EventSeq ||
+		string(after.State) != string(before.State) ||
 		after.WaitingStep != "" ||
 		after.WaitingKind != "" {
 		t.Fatalf("invalid boundary wrote state: %+v", after)
@@ -145,7 +146,8 @@ func TestCommitBoundaryDerivesStatusMessageEvent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Status != tc.status || got.Output != tc.boundary.Output || got.Error != tc.boundary.Detail ||
+			if got.Status != tc.status || got.Output != tc.boundary.Output ||
+				got.Error != tc.boundary.Detail ||
 				got.WaitingStep != tc.boundary.WaitingStep ||
 				got.WaitingKind != tc.boundary.Kind.Interaction() {
 				t.Fatalf("run=%+v", got)

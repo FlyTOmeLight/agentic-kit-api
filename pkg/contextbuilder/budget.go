@@ -34,7 +34,8 @@ func measureText(counter Counter, text string) measurement {
 
 func validateBudget(b Budget) error {
 	if b.ContextWindow < 0 || b.OutputReserve < 0 || b.MaxInputTokens < 0 ||
-		b.MaxInputBytes < 0 || b.ProtocolOverheadTokens < 0 {
+		b.MaxInputBytes < 0 || b.ProtocolOverheadTokens < 0 || b.MaxToolResultBytes < 0 ||
+		(b.MaxToolResultBytes > 0 && b.MaxToolResultBytes < 128) {
 		return ErrInvalidBudget
 	}
 	if b.ContextWindow > 0 && b.OutputReserve >= b.ContextWindow {

@@ -242,7 +242,7 @@ worker 的 checkpoint middleware 负责把 Eino 决策/暂停/结果转换为类
 - 会话与执行存储保存输入、回复、工具调用/结果、失败原因和状态变化等完整事实，按身份与 ResultScope 提供一致快照；它不决定哪些内容最值得给模型看。
 - Memory 负责跨轮、跨任务可复用的事实、偏好和操作经验，包括版本、来源、有效性、权限范围与召回。失败和纠正也可能提供有价值经验，Run.Completed 不等于业务目标成功。
 - context_builder 根据当前任务、已授权会话事实、冻结记忆和工具/模型配置，选择相关材料、处理消息配对、安排优先级与长度预算并渲染模型输入。状态可以作为选择依据之一，不作为统一硬过滤。
-- worker 的 Eino adapter 将构建结果放入既有 GenModelInput；当前 Run 中的迭代状态和未完成工具调用仍由 Eino checkpoint 恢复，Memory 不替代执行 checkpoint，context_builder 不建立第二套消息循环。
+- worker 的 Eino adapter 在 `boundaryModel.Generate` 内构建本次模型输入，不把裁剪结果写回 Eino state；当前 Run 的迭代状态和未完成工具调用仍由 Eino checkpoint 恢复，Memory 不替代执行 checkpoint，context_builder 不建立第二套消息循环。
 
 首版采用独立数据契约组合：Memory从本地完整生效投影返回固定版本内容和来源，调用方将其映射为ContextBlock；context_builder只接收规范化材料、策略、预算和本轮消息，不直接调用Memory、数据库、SDK或模型网络接口。app/execution的context.go负责结果可见范围、传入事实映射及调用app/memory的同事务召回；worker的Eino adapter负责格式转换与注入。
 
@@ -250,10 +250,10 @@ worker 的 checkpoint middleware 负责把 Eino 决策/暂停/结果转换为类
 // 纯构建器采用自有的规范化输入/输出，不暴露Memory表模型或Eino类型。
 func Build(in BuildInput) (BuildResult, error)
 // BuildInput: FrozenMaterials、CurrentTurn、Policy、Budget。
-// BuildResult: Messages、Usage、OmittedSources；消息含role和tool call关联。
+// BuildResult: Messages、Usage、OmittedSources、CollapsedSources；消息含role和tool call关联。
 ```
 
-当前实现范围：`pkg/contextbuilder`提供`Build`、`ValidateGroup`、`EncodeSnapshot`和`DecodeSnapshot`；`pkg/durable/prepare.go`按Run聚合完整历史组，把系统指令、工具定义、历史组、策略与预算编码进`ContextSnapshot`，并与Run、User消息和事件同事务提交。`Spec.History`保持旧的User/Final扁平视图，工具链只在快照中。首版Memory模式固定为Off，预算在模型窗口尚未进入Agent配置前保持未约束；worker adapter、RecallTx和提交前超限拒绝仍待实施。
+当前实现范围：`pkg/contextbuilder`提供`Build`、`ValidateGroup`、`EncodeSnapshot`和`DecodeSnapshot`；`pkg/durable/prepare.go`按Run聚合完整历史组，把系统指令、工具定义、历史组、策略与预算编码进`ContextSnapshot`，并与Run、User消息和事件同事务提交。`Spec.History`保持旧的User/Final扁平视图，工具链保存在快照中。接受前已做预算预检；配套worker分支每次调用模型前使用构建器，按实际工具schema计数。新Run冻结`context-v2`；历史`context-v1`快照仍可执行，保留旧裁剪顺序。Memory模式固定为Off，RecallTx尚待实施。跨仓库验证使用本地go.work，正式发布依赖尚未更新。
 
 执行核心在durable/context.go中保存带格式/策略版本及digest的ContextSnapshot信封，payload由上下文模块编码与解释；durable不导入Memory或builder实现。Run与快照同事务提交，回放读取原记录。Memory、context_builder、execution之间不双向导入；类型转换集中在准备编排和worker adapter，后续更换检索或构建策略不重写租约、步骤和状态协议。
 
@@ -261,13 +261,15 @@ func Build(in BuildInput) (BuildResult, error)
 
 启用Memory但没有匹配项时保存明确的空快照；召回失败使整次接受事务失败，不能静默把失败当空记忆。快照同时保存检索/构建策略版本和预算参数，恢复不套用最新策略；worker不支持所需版本时明确报告无法执行，不重召回或替换材料。首版范围与这条冻结规则见 [ADR-0005](adr/0005-context-and-memory-foundation.md)。
 
-预算由context_builder统筹，token与字节明确区分，不把字节换算当准确token计数。模型窗口、输出预留、工具定义计入每轮计数输入，窗口/输出预留及序列化计数政策进入冻结Budget，计数策略按实际模型/协议核实，不在事务中请求模型元信息。首版不调用LLM摘要；后续提炼也不在提交事务内持锁调用模型。
+预算由context_builder统筹，token与字节明确区分。`ModelSpec.ContextWindow`非零时必须提供正数且小于窗口的`MaxTokens`，分别冻结为窗口和输出预留；当前采用`utf8-byte-estimate-v1`（每UTF-8字节估算一个token）及256 token协议预留，`Usage.InputTokens`表示估算值，不是模型真实计费token数，也不承诺适配所有供应商协议。窗口未配置时冻结128 KiB输入字节上限。工具定义参与每轮计数，worker按实际绑定工具替换定义后复检；API无法在接受期核算尚未装配的动态工具schema。不在事务中请求模型元信息或调用LLM摘要。
 
 worker每次请求模型前，将冻结材料与本轮Eino消息映射为规范输入，再使用同一Policy/Budget构建；检查范围包含动态工具输出，不能只在接受Run时检查一次。构建器不修改checkpoint或原消息切片，裁剪不破坏tool call/result配对。缺失结果的历史组不注入，当前工具链不作为已完成历史删除。
 
-Q16确认首版只做材料选择与裁剪，不做摘要式压缩，也不截断当前工具结果正文。必需输入包括实际system instructions、工具定义/协议开销、当前用户输入及本轮完整的assistant/tool调用结果链，输出预留计入Budget。超过输入预算时先移除最低相关/优先级的Memory条目，再按从旧到新的顺序移除完整历史轮次；稳定次序和来源ID用于保证相同材料/Policy/Budget得到相同结果。Memory或历史按整项/完整组移除，不留下孤立tool消息。裁剪仅影响此次模型输入，数据库事实、冻结材料和checkpoint保持完整，BuildResult记录被省略来源。
+2026-11-09按确认的阶段一、阶段二扩展Q16：模型输入允许对过大的工具结果保留首尾预览，并插入明确的省略提示；默认单条16 KiB，配置窗口时取16 KiB与输入预算四分之一中的较小值，最低128字节，按UTF-8边界截取。完整工具正文仍保存于步骤和消息。必需输入包含system instructions、实际工具定义/协议开销、当前用户输入及本轮全部assistant/tool关联；本轮消息不能作为历史轮次淘汰。
 
-必需输入仍超限时返回明确的ContextBudgetExceeded，不调用模型，也不以同样输入自动Retry。接受前对可确定材料预检，已确定必需材料超限则提交失败、不创建Run；worker以实际工具定义和当前完整模型输入再检查，执行中因模型输入或新的工具结果超限则保留已存步骤与checkpoint，按Fail边界结束该Run并公开稳定失败原因。调用方可以调整输入或预算后以新请求提交；首版不自动生成摘要、改写工具结果或重新开始执行。
+`context-v2`超预算时先移除最低优先级Memory，再从旧到新折叠历史工具过程，只保留首条User和最终无工具调用的Assistant；没有最终答复或包含额外User输入的组不折叠，避免丢掉人工补充。折叠后仍超限，再从旧到新删除整轮。`context-v1`保持Memory后直接整轮删除的规则。构建过程不调用模型生成摘要、不修改输入材料；相同材料/Policy/Budget/Counter产生相同结果。`OmittedSources`只记录完整删除的来源，`CollapsedSources`只记录最终保留但已折叠的历史来源，二者不重叠。
+
+必需输入在工具结果预览后仍超限时返回明确的ContextBudgetExceeded，不调用模型，也不以同样输入自动Retry。接受前对可确定材料预检，超限则提交失败、不创建Run，HTTP返回400与`ContextBudgetExceeded`；worker以实际工具定义和当前模型输入再次检查，运行中仍超限则保留已存步骤与checkpoint，按Fail边界结束该Run。单条工具预览不能保证本轮不断累积的调用参数、结果及用户输入永不超限。调用方可调整输入或预算后重新提交。
 
 输入材料还须遵守结果可见性：项目私有结果不能借上下文召回读取其他项目内容，私人Memory不能仅因actor有读取权限就注入项目成员共同可见的输出。[Memory设计](memory-design.md)规定版本存储与生效边界；维护、召回和外部协议不进入共享执行核心。
 

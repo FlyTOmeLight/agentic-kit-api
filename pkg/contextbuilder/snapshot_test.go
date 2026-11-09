@@ -143,14 +143,14 @@ func TestSnapshotRejectsUnknownFormatAndPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	unknownPolicy := envelope
-	unknownPolicy.PolicyVersion = "context-v2"
+	unknownPolicy.PolicyVersion = "context-v3"
 	if _, err := DecodeSnapshot(unknownPolicy); !errors.Is(err, ErrInvalidSnapshot) {
 		t.Fatalf("error %v, want ErrInvalidSnapshot", err)
 	}
 
 	if _, err := EncodeSnapshot(Snapshot{
 		MemoryMode: MemoryOff,
-		Policy:     Policy{Version: "context-v2"},
+		Policy:     Policy{Version: "context-v3"},
 	}); !errors.Is(err, ErrUnsupportedPolicy) {
 		t.Fatalf("error %v, want ErrUnsupportedPolicy", err)
 	}

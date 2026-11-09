@@ -54,7 +54,13 @@ func (s *Store) BeginStep(ctx context.Context, l Lease, intent StepIntent) (Step
 	if err != nil {
 		return StepDecision{}, err
 	}
-	if err = emit(ctx, tx, l.RunID, "ToolStarted", map[string]any{"stepID": intent.ID, "policy": intent.Policy}); err != nil {
+	if err = emit(
+		ctx,
+		tx,
+		l.RunID,
+		"ToolStarted",
+		map[string]any{"stepID": intent.ID, "policy": intent.Policy},
+	); err != nil {
 		return StepDecision{}, err
 	}
 	return StepDecision{Outcome: StepExecute}, tx.Commit().Error

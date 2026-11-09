@@ -42,7 +42,8 @@ func TestWaitingMetadataLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.WaitingStep != "ask" || got.WaitingKind != InteractionClarification || got.Status != WaitingClarification {
+	if got.WaitingStep != "ask" || got.WaitingKind != InteractionClarification ||
+		got.Status != WaitingClarification {
 		t.Fatalf("waiting metadata: %+v", got)
 	}
 	if err := s.SupplyResult(ctx, "owner", r.ID, "ask", "answer", InteractionReview); !errors.Is(err, ErrConflict) {
@@ -99,7 +100,17 @@ func TestWaitingMetadataRejectsExpiredDeadline(t *testing.T) {
 		Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SupplyResult(ctx, "owner", r.ID, "unsafe", "receipt", InteractionReview); !errors.Is(err, ErrConflict) {
+	if err := s.SupplyResult(
+		ctx,
+		"owner",
+		r.ID,
+		"unsafe",
+		"receipt",
+		InteractionReview,
+	); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("expired deadline: %v", err)
 	}
 }

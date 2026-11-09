@@ -6,7 +6,7 @@ import "sort"
 // frozen policy and budget. Required input is the system instruction, tool
 // definitions and protocol overhead, and the complete current turn.
 func Build(in BuildInput) (BuildResult, error) {
-	if in.Policy.Version != PolicyVersionV1 {
+	if in.Policy.Version != PolicyVersionV1 && in.Policy.Version != PolicyVersionV2 {
 		return BuildResult{}, ErrUnsupportedPolicy
 	}
 	if err := validateBudget(in.Budget); err != nil {
@@ -37,7 +37,8 @@ func Build(in BuildInput) (BuildResult, error) {
 	history := append([]MessageGroup(nil), in.FrozenMaterials.History...)
 	historyMeasures := make([]measurement, len(history))
 	for i, group := range history {
-		for _, message := range group.Messages {
+		history[i].Messages = previewToolMessages(group.Messages, in.Budget.MaxToolResultBytes)
+		for _, message := range history[i].Messages {
 			historyMeasures[i].add(measureText(in.Counter, messageText(message)))
 		}
 	}
@@ -56,7 +57,8 @@ func Build(in BuildInput) (BuildResult, error) {
 	}
 
 	var currentMeasure measurement
-	for _, message := range in.CurrentTurn {
+	currentTurn := previewToolMessages(in.CurrentTurn, in.Budget.MaxToolResultBytes)
+	for _, message := range currentTurn {
 		currentMeasure.add(measureText(in.Counter, messageText(message)))
 	}
 
@@ -78,6 +80,7 @@ func Build(in BuildInput) (BuildResult, error) {
 	}
 
 	omitted := make([]OmittedSource, 0)
+	collapsed := make([]bool, len(history))
 	for overBudget(total, tokenLimit, byteLimit) && len(memory) > 0 {
 		removed := memory[len(memory)-1]
 		memory = memory[:len(memory)-1]
@@ -86,11 +89,32 @@ func Build(in BuildInput) (BuildResult, error) {
 		total.add(systemMeasure)
 		omitted = append(omitted, OmittedSource{Source: removed.Source, Reason: OmitBudget})
 	}
+	if in.Policy.Version == PolicyVersionV2 {
+		for index := range history {
+			if !overBudget(total, tokenLimit, byteLimit) {
+				break
+			}
+			messages := collapseHistory(history[index].Messages)
+			if messages == nil {
+				continue
+			}
+			var reduced measurement
+			for _, message := range messages {
+				reduced.add(measureText(in.Counter, messageText(message)))
+			}
+			total.sub(historyMeasures[index])
+			total.add(reduced)
+			history[index].Messages = messages
+			historyMeasures[index] = reduced
+			collapsed[index] = true
+		}
+	}
 	for overBudget(total, tokenLimit, byteLimit) && len(history) > 0 {
 		removed := history[0]
 		history = history[1:]
 		total.sub(historyMeasures[0])
 		historyMeasures = historyMeasures[1:]
+		collapsed = collapsed[1:]
 		omitted = append(omitted, OmittedSource{Source: removed.Source, Reason: OmitBudget})
 	}
 	if overBudget(total, tokenLimit, byteLimit) {
@@ -98,10 +122,14 @@ func Build(in BuildInput) (BuildResult, error) {
 	}
 
 	messages := make([]Message, 0, 1+len(in.CurrentTurn))
-	for _, group := range history {
+	var collapsedSources []Source
+	for index, group := range history {
 		messages = appendMessages(messages, group.Messages)
+		if collapsed[index] {
+			collapsedSources = append(collapsedSources, group.Source)
+		}
 	}
-	messages = appendMessages(messages, in.CurrentTurn)
+	messages = appendMessages(messages, currentTurn)
 	if in.FrozenMaterials.SystemInstruction != "" || len(memory) > 0 {
 		messages = append([]Message{{
 			Role:    RoleSystem,
@@ -118,8 +146,30 @@ func Build(in BuildInput) (BuildResult, error) {
 			ByteLimit:     byteLimit,
 			OutputReserve: in.Budget.OutputReserve,
 		},
-		OmittedSources: omitted,
+		OmittedSources:   omitted,
+		CollapsedSources: collapsedSources,
 	}, nil
+}
+
+func collapseHistory(messages []Message) []Message {
+	if len(messages) < 4 || messages[0].Role != RoleUser {
+		return nil
+	}
+	final := messages[len(messages)-1]
+	if final.Role != RoleAssistant || len(final.ToolCalls) != 0 {
+		return nil
+	}
+	hasTools := false
+	for _, message := range messages[1 : len(messages)-1] {
+		if message.Role == RoleUser {
+			return nil
+		}
+		hasTools = hasTools || message.Role == RoleTool
+	}
+	if !hasTools {
+		return nil
+	}
+	return []Message{messages[0], final}
 }
 
 // ValidateGroup reports whether messages form one complete assistant/tool

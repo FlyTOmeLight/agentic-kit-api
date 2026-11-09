@@ -26,6 +26,10 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 
 config 包括 systemPrompt、model、tools、maxTurns，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)；maxTurns 为 1～100。工具名称不能重复，parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`；该工具成功时，worker 直接返回工具结果并结束本轮，不再调用模型；错误结果返回给模型处理。此设置随 Agent 发布版本和 Run 快照冻结。工具 `kind` 仅接受空字符串或 `HTTP`；`AppForgeMCP`、`AppForgeOpenAPI` 及其他未知 kind 一律拒绝；ask_for_clarification 必须 `ReadOnly` 且 kind 为空或 `HTTP`，URL 字段可不填。
 
+`model.contextWindow`为可选非负整数。非零时必须同时配置正数`model.maxTokens`且小于窗口，输入预算为窗口减输出预留；`maxTokens`一旦提供就必须为正数。当前采用版本化UTF-8字节估算，并预留256 token协议开销，不是精确tokenizer计数。未配置窗口时冻结128 KiB输入字节上限。单条工具结果以有界首尾预览进入模型输入，完整结果仍持久保存。预算、预览上限和裁剪策略随Run冻结，发布新配置不改变已有Run。
+
+提交消息及应用执行时，对已知必需材料预检；超限返回HTTP 400、错误码`ContextBudgetExceeded`，不创建Run、消息或事件，也不占用本次幂等键。worker调用模型前再核算动态工具schema与当前工具链；超限以Failed结束Run，错误详情包含`context budget exceeded`。裁剪顺序及限制见[上下文设计](refactoring-design.md#66-上下文管线与-memory-基础版)。
+
 Agent 创建时 revision=1，编辑成功递增 revision。编辑或发布携带旧 revision 返回 409。同一 revision 重复发布返回同一个版本，版本 number 从 1 开始。仅已发布 Agent 可以创建会话。每次提交消息使用当时最新的发布版本，并把配置写入 Run 快照；恢复时不重新读取草稿或最新版本。Run 响应中的 agentID、configVersion 可用于定位版本。
 
 提交消息返回 202 和 Run；同一 owner 的相同请求编号、相同 session/query 重试返回 200 和原任务，不重复保存用户消息。发布新版本不改变该行为。请求编号重复但输入不同、同一会话已有活动任务、无效状态转换返回 409。

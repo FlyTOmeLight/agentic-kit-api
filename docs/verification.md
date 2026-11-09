@@ -186,3 +186,17 @@ worker 通过 go.work 指向本地 API 工作树，`TEST_DATABASE_URL` 下 `go t
 验证范围：`GOWORK=off go test -count=1 ./...`（`TEST_DATABASE_URL` 指向 deploy/compose.yaml 的隔离 PostgreSQL）通过；`GOWORK=off go test -race -count=1 ./pkg/contextbuilder/ ./pkg/durable/` 通过；`GOWORK=off go build ./...` 通过。新增用例覆盖快照往返、篡改与不一致 Memory 模式、工具链保留、失败但完整的上一轮进入历史、取消留下的不完整轮次被跳过，以及回放不改变快照。
 
 未验证：worker 未接入每轮 `Build`，未验证动态工具结果超限后的 Fail 边界；Memory RecallTx 和模型窗口预算元数据尚未实现，因此当前冻结的 Budget 是未约束值。
+
+## 上下文增强阶段一、阶段二：预算保护与历史两级裁剪
+
+2026-11-09：在 API `feat/context-builder` 与 worker `feat/context-worker-adapter` 的隔离工作树完成，未改动两个根工作树。该记录更新上节的 worker 接入、预算元数据及超限边界状态。
+
+- 阶段一：`ModelSpec.ContextWindow` 与 `MaxTokens` 校验；接受期冻结输入预算并预检，超限返回 HTTP 400 `ContextBudgetExceeded` 且不创建 Run、消息或事件。未配置窗口时使用 128 KiB 字节上限，配置窗口时使用 `utf8-byte-estimate-v1` 和输出预留；估算不是精确 tokenizer 计数。单条工具正文只对模型做 UTF-8 安全首尾预览。
+- 阶段二：新 Run 冻结 `context-v2`，先移除低优先级 Memory，再从旧到新保留历史问答、折叠工具过程，仍超限才删除整轮。没有最终答复或包含额外 User 输入的历史不折叠。`context-v1` 保持旧的整轮裁剪规则。构建结果分别记录完整省略与保留但已折叠的来源。
+- worker 在真实模型调用边界按实际工具 schema 构建输入，构建失败发生于 `ModelStarted` 之前，不自动重试；不通过 `BeforeModelRewriteState` 写回预览。原始步骤、消息与 checkpoint 保持完整。历史工具关联 ID 加 Run 前缀，避免与其他历史轮次或当前轮次冲突。
+
+验证使用 README 指定的本机 PostgreSQL/Redis，测试分别创建独立 schema。API 在 `GOWORK=off` 下执行全仓 `go test -json -race -count=1 -timeout=120s ./...`：**256** 个测试及子测试通过、**0** 失败、**0** 测试跳过。随后补充 token cap 与预览下限边界用例，`go test -race -count=1 ./pkg/contextbuilder`：**56** 通过。API `go vet ./...`、`go build ./...` 和 `make doc` 通过，OpenAPI 新增 `contextWindow`。
+
+worker 通过本地 `go.work` 指向 API 隔离树执行全仓 race：**63** 个测试及子测试通过、**0** 失败、**1** 跳过（`TestAIOPublicSDKAndEinoTools` 需要真实 AIO 环境）。`go vet ./...`、`go build ./...` 通过。新增用例覆盖实际工具定义超限、空实际工具集替换冻结定义、历史折叠与整轮淘汰，以及模型收到预览但下一工具边界 checkpoint 和持久消息保留完整正文。`TestProcessKillResumesWithoutRepeatingTool` 通过，验证强杀后接管且工具不重复调用。
+
+独立只读审查由 1 个子代理完成，主代理核实并修复 checkpoint 写回和工具 ID 冲突。Memory 维护、召回与 artifact 接入仍未实现，提交固定 Off；没有实现 LLM 摘要。本次跨仓库结果是本地联合验证，worker 正式依赖版本尚未发布或升级，未进行生产部署或性能容量测试。

@@ -21,12 +21,13 @@ const (
 )
 
 type ModelSpec struct {
-	Temperature *float32 `json:"temperature,omitempty"`
-	TopP        *float32 `json:"topP,omitempty"`
-	MaxTokens   *int     `json:"maxTokens,omitempty"`
-	Name        string   `json:"name"`
-	BaseURL     string   `json:"baseURL"`
-	APIKeyEnv   string   `json:"apiKeyEnv"`
+	Temperature   *float32 `json:"temperature,omitempty"`
+	TopP          *float32 `json:"topP,omitempty"`
+	MaxTokens     *int     `json:"maxTokens,omitempty"`
+	ContextWindow int64    `json:"contextWindow,omitempty"`
+	Name          string   `json:"name"`
+	BaseURL       string   `json:"baseURL"`
+	APIKeyEnv     string   `json:"apiKeyEnv"`
 }
 
 type ToolSpec struct {
