@@ -91,13 +91,14 @@ type Boundary struct {
 // It helps operators diagnose budget trimming and source omission without
 // parsing the executor's opaque checkpoint state.
 type ContextInfo struct {
-	InputTokens      int64    `json:"inputTokens"`
-	InputBytes       int64    `json:"inputBytes"`
-	TokenLimit       int64    `json:"tokenLimit,omitempty"`
-	ByteLimit        int64    `json:"byteLimit,omitempty"`
-	OutputReserve    int64    `json:"outputReserve,omitempty"`
-	OmittedSources   []Source `json:"omittedSources,omitempty"`
-	CollapsedSources []Source `json:"collapsedSources,omitempty"`
+	InputTokens          int64    `json:"inputTokens"`
+	InputBytes           int64    `json:"inputBytes"`
+	TokenLimit           int64    `json:"tokenLimit,omitempty"`
+	ByteLimit            int64    `json:"byteLimit,omitempty"`
+	OutputReserve        int64    `json:"outputReserve,omitempty"`
+	OmittedSources       []Source `json:"omittedSources,omitempty"`
+	CollapsedSources     []Source `json:"collapsedSources,omitempty"`
+	ProjectedToolResults int      `json:"projectedToolResults,omitempty"`
 }
 
 // Source identifies one frozen material for stable ordering and omission

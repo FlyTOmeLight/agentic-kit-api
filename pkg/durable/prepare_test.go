@@ -33,8 +33,10 @@ func TestFreezeContextDefaultAndModelWindowBudgets(t *testing.T) {
 	if decodedDefault.Budget.MaxInputBytes != 128*1024 || decodedDefault.Budget.MaxToolResultBytes != 16*1024 {
 		t.Fatalf("unexpected default budget: %+v", decodedDefault.Budget)
 	}
-	if decodedDefault.Policy.Version != contextbuilder.PolicyVersionV2 {
-		t.Fatalf("new run policy = %s, want context-v2", decodedDefault.Policy.Version)
+	if decodedDefault.Policy.Version != contextbuilder.PolicyVersionV3 ||
+		decodedDefault.Policy.KeepRecentToolResults != contextbuilder.DefaultKeepRecentToolResults {
+		t.Fatalf("new run policy = %+v, want context-v3 with %d recent results",
+			decodedDefault.Policy, contextbuilder.DefaultKeepRecentToolResults)
 	}
 
 	maxTokens := 1000
