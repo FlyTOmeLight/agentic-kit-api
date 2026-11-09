@@ -8,7 +8,13 @@ import "encoding/json"
 const (
 	PolicyVersionV1 = "context-v1"
 	PolicyVersionV2 = "context-v2"
+	PolicyVersionV3 = "context-v3"
 )
+
+// DefaultKeepRecentToolResults is the number of newest tool results kept in
+// full when the current turn must be folded under budget. Older results remain
+// paired with their calls but are replaced by a short projection marker.
+const DefaultKeepRecentToolResults = 3
 
 type Role string
 
@@ -83,9 +89,11 @@ type FrozenMaterials struct {
 	History           []MessageGroup   `json:"history,omitempty"`
 }
 
-// Policy versions composition, ordering and omission rules.
+// Policy versions composition, ordering and omission rules. KeepRecentToolResults
+// applies to context-v3 and is frozen with the Run; zero means the default.
 type Policy struct {
-	Version string `json:"version"`
+	Version               string `json:"version"`
+	KeepRecentToolResults int    `json:"keepRecentToolResults,omitempty"`
 }
 
 // Budget freezes the input limits and counting policy for one Run. The input
@@ -145,8 +153,9 @@ type OmittedSource struct {
 }
 
 type BuildResult struct {
-	Messages         []Message       `json:"messages"`
-	Usage            Usage           `json:"usage"`
-	OmittedSources   []OmittedSource `json:"omittedSources,omitempty"`
-	CollapsedSources []Source        `json:"collapsedSources,omitempty"`
+	Messages             []Message       `json:"messages"`
+	Usage                Usage           `json:"usage"`
+	OmittedSources       []OmittedSource `json:"omittedSources,omitempty"`
+	CollapsedSources     []Source        `json:"collapsedSources,omitempty"`
+	ProjectedToolResults int             `json:"projectedToolResults,omitempty"`
 }

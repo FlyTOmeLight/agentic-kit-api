@@ -309,7 +309,7 @@ func TestBuildCounterRequirements(t *testing.T) {
 }
 
 func TestBuildRejectsUnsupportedPolicy(t *testing.T) {
-	for _, policy := range []Policy{{}, {Version: "context-v3"}} {
+	for _, policy := range []Policy{{}, {Version: "context-v9"}} {
 		in := BuildInput{
 			CurrentTurn: []Message{{Role: RoleUser, Content: "question"}},
 			Policy:      policy,

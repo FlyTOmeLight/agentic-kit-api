@@ -3,6 +3,7 @@ package contextbuilder
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -208,5 +209,145 @@ func TestBuildNeverCollapsesCurrentTurn(t *testing.T) {
 	in.Budget.MaxInputBytes = mustBuild(t, in).Usage.InputBytes - 1
 	if _, err := Build(in); !errors.Is(err, ErrBudgetExceeded) {
 		t.Fatalf("current turn must fail without reduction: %v", err)
+	}
+}
+
+func currentToolTurn(count int, content string) []Message {
+	messages := []Message{{Role: RoleUser, Content: "question"}}
+	for index := 0; index < count; index++ {
+		id := fmt.Sprintf("call-%d", index)
+		messages = append(messages,
+			Message{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: id, Name: "read"}}},
+			Message{Role: RoleTool, ToolCallID: id, Content: content},
+		)
+	}
+	return messages
+}
+
+func TestBuildV3ProjectsOlderCurrentToolResults(t *testing.T) {
+	content := strings.Repeat("result ", 50)
+	turn := currentToolTurn(5, content)
+	in := BuildInput{
+		CurrentTurn: turn,
+		Policy:      Policy{Version: PolicyVersionV3, KeepRecentToolResults: 2},
+		Budget:      Budget{CounterVersion: ByteEstimateVersion},
+		Counter:     byteTokenCounter{},
+	}
+	all := mustBuild(t, in)
+	if all.ProjectedToolResults != 0 || all.Usage.InputBytes == 0 {
+		t.Fatalf("unlimited build projected results: %+v", all)
+	}
+	folded, projected := projectToolResults(turn, 2)
+	if projected != 3 {
+		t.Fatalf("projected %d, want 3", projected)
+	}
+	in.Budget.MaxInputBytes = messagesMeasure(folded).bytes
+	result := mustBuild(t, in)
+	if result.ProjectedToolResults != 3 {
+		t.Fatalf("projected %d, want 3", result.ProjectedToolResults)
+	}
+	if len(result.OmittedSources) != 0 || len(result.CollapsedSources) != 0 {
+		t.Fatalf("unexpected sources: %+v", result)
+	}
+	if result.Usage.InputBytes != in.Budget.MaxInputBytes {
+		t.Fatalf("usage %+v, want %d bytes", result.Usage, in.Budget.MaxInputBytes)
+	}
+	var markers, intact int
+	for _, message := range result.Messages {
+		if message.Role != RoleTool {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(message.Content, "[Tool result projected:"):
+			markers++
+			if !strings.Contains(message.Content, fmt.Sprintf("%d bytes", len(content))) {
+				t.Fatalf("marker lost original size: %q", message.Content)
+			}
+		case message.Content == content:
+			intact++
+		default:
+			t.Fatalf("unexpected tool content: %q", message.Content)
+		}
+	}
+	if markers != 3 || intact != 2 {
+		t.Fatalf("markers=%d intact=%d, want 3 and 2", markers, intact)
+	}
+	if err := ValidateGroup(result.Messages); err != nil {
+		t.Fatalf("projection broke tool pairing: %v", err)
+	}
+	for _, message := range turn {
+		if message.Role == RoleTool && message.Content != content {
+			t.Fatal("projection mutated input messages")
+		}
+	}
+	if again := mustBuild(t, in); !reflect.DeepEqual(result, again) {
+		t.Fatal("repeated build changed result")
+	}
+}
+
+func TestBuildV3DefaultKeepRecentToolResults(t *testing.T) {
+	content := strings.Repeat("x", 400)
+	turn := currentToolTurn(5, content)
+	in := BuildInput{
+		CurrentTurn: turn,
+		Policy:      Policy{Version: PolicyVersionV3},
+		Budget:      Budget{CounterVersion: ByteEstimateVersion},
+		Counter:     byteTokenCounter{},
+	}
+	folded, _ := projectToolResults(turn, DefaultKeepRecentToolResults)
+	in.Budget.MaxInputBytes = messagesMeasure(folded).bytes
+	result := mustBuild(t, in)
+	if result.ProjectedToolResults != 2 {
+		t.Fatalf("projected %d, want 2", result.ProjectedToolResults)
+	}
+	var intact int
+	for _, message := range result.Messages {
+		if message.Role == RoleTool && message.Content == content {
+			intact++
+		}
+	}
+	if intact != DefaultKeepRecentToolResults {
+		t.Fatalf("intact results %d, want %d", intact, DefaultKeepRecentToolResults)
+	}
+}
+
+func TestBuildV3FailsWhenProjectionStillExceeds(t *testing.T) {
+	turn := currentToolTurn(5, strings.Repeat("x", 400))
+	in := BuildInput{
+		CurrentTurn: turn,
+		Policy:      Policy{Version: PolicyVersionV3, KeepRecentToolResults: 2},
+		Budget:      Budget{CounterVersion: ByteEstimateVersion},
+		Counter:     byteTokenCounter{},
+	}
+	folded, _ := projectToolResults(turn, 2)
+	in.Budget.MaxInputBytes = messagesMeasure(folded).bytes - 1
+	if _, err := Build(in); !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("error %v, want ErrBudgetExceeded", err)
+	}
+}
+
+func TestBuildV3LeavesCurrentTurnWhenItFits(t *testing.T) {
+	turn := currentToolTurn(5, "small result")
+	result := mustBuild(t, BuildInput{
+		CurrentTurn: turn,
+		Policy:      Policy{Version: PolicyVersionV3, KeepRecentToolResults: 2},
+		Budget:      Budget{CounterVersion: ByteEstimateVersion},
+		Counter:     byteTokenCounter{},
+	})
+	if result.ProjectedToolResults != 0 {
+		t.Fatalf("projected %d results without budget pressure", result.ProjectedToolResults)
+	}
+	if !reflect.DeepEqual(result.Messages, turn) {
+		t.Fatalf("messages %+v, want %+v", result.Messages, turn)
+	}
+}
+
+func TestBuildV3RejectsNegativeKeepCount(t *testing.T) {
+	_, err := Build(BuildInput{
+		CurrentTurn: []Message{{Role: RoleUser, Content: "question"}},
+		Policy:      Policy{Version: PolicyVersionV3, KeepRecentToolResults: -1},
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("error %v, want ErrInvalidInput", err)
 	}
 }

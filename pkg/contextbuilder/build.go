@@ -4,10 +4,17 @@ import "sort"
 
 // Build selects complete history groups and whole memory entries under the
 // frozen policy and budget. Required input is the system instruction, tool
-// definitions and protocol overhead, and the complete current turn.
+// definitions and protocol overhead, and the current turn. Under context-v3,
+// when reduction is still needed after history is exhausted, older current-turn
+// tool results are projected while the newest KeepRecentToolResults stay full.
 func Build(in BuildInput) (BuildResult, error) {
-	if in.Policy.Version != PolicyVersionV1 && in.Policy.Version != PolicyVersionV2 {
+	switch in.Policy.Version {
+	case PolicyVersionV1, PolicyVersionV2, PolicyVersionV3:
+	default:
 		return BuildResult{}, ErrUnsupportedPolicy
+	}
+	if in.Policy.KeepRecentToolResults < 0 {
+		return BuildResult{}, ErrInvalidInput
 	}
 	if err := validateBudget(in.Budget); err != nil {
 		return BuildResult{}, err
@@ -61,6 +68,19 @@ func Build(in BuildInput) (BuildResult, error) {
 	for _, message := range currentTurn {
 		currentMeasure.add(measureText(in.Counter, messageText(message)))
 	}
+	var foldedTurn []Message
+	var foldedMeasure measurement
+	projectedCount := 0
+	if in.Policy.Version == PolicyVersionV3 {
+		keep := in.Policy.KeepRecentToolResults
+		if keep == 0 {
+			keep = DefaultKeepRecentToolResults
+		}
+		foldedTurn, projectedCount = projectToolResults(currentTurn, keep)
+		for _, message := range foldedTurn {
+			foldedMeasure.add(measureText(in.Counter, messageText(message)))
+		}
+	}
 
 	systemMeasure := measureText(in.Counter, renderSystem(in.FrozenMaterials.SystemInstruction, memory))
 	required := measurement{tokens: in.Budget.ProtocolOverheadTokens}
@@ -68,7 +88,14 @@ func Build(in BuildInput) (BuildResult, error) {
 	required.add(toolsMeasure)
 	required.add(currentMeasure)
 	if overBudget(required, tokenLimit, byteLimit) {
-		return BuildResult{}, exceeded(required, tokenLimit, byteLimit)
+		if projectedCount == 0 {
+			return BuildResult{}, exceeded(required, tokenLimit, byteLimit)
+		}
+		required.sub(currentMeasure)
+		required.add(foldedMeasure)
+		if overBudget(required, tokenLimit, byteLimit) {
+			return BuildResult{}, exceeded(required, tokenLimit, byteLimit)
+		}
 	}
 
 	total := measurement{tokens: in.Budget.ProtocolOverheadTokens}
@@ -89,7 +116,7 @@ func Build(in BuildInput) (BuildResult, error) {
 		total.add(systemMeasure)
 		omitted = append(omitted, OmittedSource{Source: removed.Source, Reason: OmitBudget})
 	}
-	if in.Policy.Version == PolicyVersionV2 {
+	if in.Policy.Version == PolicyVersionV2 || in.Policy.Version == PolicyVersionV3 {
 		for index := range history {
 			if !overBudget(total, tokenLimit, byteLimit) {
 				break
@@ -116,6 +143,15 @@ func Build(in BuildInput) (BuildResult, error) {
 		historyMeasures = historyMeasures[1:]
 		collapsed = collapsed[1:]
 		omitted = append(omitted, OmittedSource{Source: removed.Source, Reason: OmitBudget})
+	}
+	appliedProjected := 0
+	if in.Policy.Version == PolicyVersionV3 && projectedCount > 0 &&
+		overBudget(total, tokenLimit, byteLimit) {
+		total.sub(currentMeasure)
+		total.add(foldedMeasure)
+		currentTurn = foldedTurn
+		currentMeasure = foldedMeasure
+		appliedProjected = projectedCount
 	}
 	if overBudget(total, tokenLimit, byteLimit) {
 		return BuildResult{}, exceeded(total, tokenLimit, byteLimit)
@@ -146,8 +182,9 @@ func Build(in BuildInput) (BuildResult, error) {
 			ByteLimit:     byteLimit,
 			OutputReserve: in.Budget.OutputReserve,
 		},
-		OmittedSources:   omitted,
-		CollapsedSources: collapsedSources,
+		OmittedSources:       omitted,
+		CollapsedSources:     collapsedSources,
+		ProjectedToolResults: appliedProjected,
 	}, nil
 }
 

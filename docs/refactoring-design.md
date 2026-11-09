@@ -253,7 +253,7 @@ func Build(in BuildInput) (BuildResult, error)
 // BuildResult: Messages、Usage、OmittedSources、CollapsedSources；消息含role和tool call关联。
 ```
 
-当前实现范围：`pkg/contextbuilder`提供`Build`、`ValidateGroup`、`EncodeSnapshot`和`DecodeSnapshot`；`pkg/durable/prepare.go`按Run聚合完整历史组，把系统指令、工具定义、历史组、策略与预算编码进`ContextSnapshot`，并与Run、User消息和事件同事务提交。`Spec.History`保持旧的User/Final扁平视图，工具链保存在快照中。接受前已做预算预检；配套worker分支每次调用模型前使用构建器，按实际工具schema计数。新Run冻结`context-v2`；历史`context-v1`快照仍可执行，保留旧裁剪顺序。Memory模式固定为Off，RecallTx尚待实施。跨仓库验证使用本地go.work，正式发布依赖尚未更新。
+当前实现范围：`pkg/contextbuilder`提供`Build`、`ValidateGroup`、`EncodeSnapshot`和`DecodeSnapshot`；`pkg/durable/prepare.go`按Run聚合完整历史组，把系统指令、工具定义、历史组、策略与预算编码进`ContextSnapshot`，并与Run、User消息和事件同事务提交。`Spec.History`保持旧的User/Final扁平视图，工具链保存在快照中。接受前已做预算预检；配套worker每次调用模型前使用构建器，按实际工具schema计数。新Run冻结`context-v3`；历史`context-v1`、`context-v2`快照仍可执行，保留各自旧裁剪顺序。Memory模式固定为Off，RecallTx尚待实施。worker正式依赖已固定到含`context-v3`的API提交。
 
 执行核心在durable/context.go中保存带格式/策略版本及digest的ContextSnapshot信封，payload由上下文模块编码与解释；durable不导入Memory或builder实现。Run与快照同事务提交，回放读取原记录。Memory、context_builder、execution之间不双向导入；类型转换集中在准备编排和worker adapter，后续更换检索或构建策略不重写租约、步骤和状态协议。
 
@@ -265,11 +265,13 @@ func Build(in BuildInput) (BuildResult, error)
 
 worker每次请求模型前，将冻结材料与本轮Eino消息映射为规范输入，再使用同一Policy/Budget构建；检查范围包含动态工具输出，不能只在接受Run时检查一次。构建器不修改checkpoint或原消息切片，裁剪不破坏tool call/result配对。缺失结果的历史组不注入，当前工具链不作为已完成历史删除。
 
-2026-11-09按确认的阶段一、阶段二扩展Q16：模型输入允许对过大的工具结果保留首尾预览，并插入明确的省略提示；默认单条16 KiB，配置窗口时取16 KiB与输入预算四分之一中的较小值，最低128字节，按UTF-8边界截取。完整工具正文仍保存于步骤和消息。必需输入包含system instructions、实际工具定义/协议开销、当前用户输入及本轮全部assistant/tool关联；本轮消息不能作为历史轮次淘汰。
+2026-11-09按确认的阶段一、阶段二扩展Q16：模型输入允许对过大的工具结果保留首尾预览，并插入明确的省略提示；默认单条16 KiB，配置窗口时取16 KiB与输入预算四分之一中的较小值，最低128字节，按UTF-8边界截取。完整工具正文仍保存于步骤和消息。`context-v1`/`context-v2`的必需输入包含system instructions、实际工具定义/协议开销、当前用户输入及本轮全部assistant/tool关联；本轮消息不能作为历史轮次淘汰。
 
 `context-v2`超预算时先移除最低优先级Memory，再从旧到新折叠历史工具过程，只保留首条User和最终无工具调用的Assistant；没有最终答复或包含额外User输入的组不折叠，避免丢掉人工补充。折叠后仍超限，再从旧到新删除整轮。`context-v1`保持Memory后直接整轮删除的规则。构建过程不调用模型生成摘要、不修改输入材料；相同材料/Policy/Budget/Counter产生相同结果。`OmittedSources`只记录完整删除的来源，`CollapsedSources`只记录最终保留但已折叠的历史来源，二者不重叠。
 
-必需输入在工具结果预览后仍超限时返回明确的ContextBudgetExceeded，不调用模型，也不以同样输入自动Retry。接受前对可确定材料预检，超限则提交失败、不创建Run，HTTP返回400与`ContextBudgetExceeded`；worker以实际工具定义和当前模型输入再次检查，运行中仍超限则保留已存步骤与checkpoint，按Fail边界结束该Run。单条工具预览不能保证本轮不断累积的调用参数、结果及用户输入永不超限。调用方可调整输入或预算后重新提交。
+`context-v3`沿用`context-v2`的Memory与历史裁剪顺序；当历史已耗尽仍超预算时，再把当前轮较旧的工具结果替换为投影标记，保留最近`Policy.KeepRecentToolResults`条完整结果（默认3条）。投影不删除assistant/tool关联，不修改checkpoint或原消息，`BuildResult.ProjectedToolResults`记录实际投影条数；投影后仍超限才返回`ContextBudgetExceeded`。`context-v1`/`context-v2`不投影当前工具链。
+
+必需输入在工具结果预览及适用的当前轮折叠后仍超限时返回明确的ContextBudgetExceeded，不调用模型，也不以同样输入自动Retry。接受前对可确定材料预检，超限则提交失败、不创建Run，HTTP返回400与`ContextBudgetExceeded`；worker以实际工具定义和当前模型输入再次检查，运行中仍超限则保留已存步骤与checkpoint，按Fail边界结束该Run。单条工具预览和当前轮折叠都不能保证调用参数、结果及用户输入永不超限。调用方可调整输入或预算后重新提交。
 
 输入材料还须遵守结果可见性：项目私有结果不能借上下文召回读取其他项目内容，私人Memory不能仅因actor有读取权限就注入项目成员共同可见的输出。[Memory设计](memory-design.md)规定版本存储与生效边界；维护、召回和外部协议不进入共享执行核心。
 

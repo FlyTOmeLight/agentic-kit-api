@@ -11,3 +11,5 @@ Q16确认首版不做摘要式上下文压缩：每轮模型请求前先裁低�
 2026-10-16 补充：复用artifact-go内容版本的修订提案见 [ADR-0008](0008-memory-artifact-versions.md)。它调整内容存储与维护事务边界，保留本文的人工维护首版、默认Off、Run完整冻结及裁剪规则；接入前提与实施状态由[Memory设计](../memory-design.md)说明。
 
 2026-11-09 补充：用户确认先实施模型预算与工具大输出保护，再实施历史两级折叠。新Run使用`context-v2`，允许工具结果首尾预览；历史先保留问答、折叠工具过程，仍超限才整轮淘汰。旧`context-v1`快照保留原策略。该变更扩展Q16的模型输入投影规则，原始步骤、消息和冻结材料仍完整保存，不引入LLM摘要。具体预算、折叠条件及状态见[框架设计§6.6](../refactoring-design.md#66-上下文管线与-memory-基础版)。
+
+2026-11-09 补充（阶段三）：新Run改用`context-v3`，在`context-v2`基础上增加当前轮工具链折叠。历史耗尽后仍超预算时，只投影较旧的当前轮工具结果，保留最近`KeepRecentToolResults`条完整结果；assistant/tool关联、checkpoint、原消息和工具步骤不变。`context-v1`/`context-v2`快照保持原策略。投影数量随`ModelStarted`事件的`context.projectedToolResults`公开。

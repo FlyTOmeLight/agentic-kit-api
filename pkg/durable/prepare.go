@@ -226,7 +226,10 @@ func freezeContext(spec execution.Spec, history []contextbuilder.MessageGroup) (
 			Tools:             contextTools(spec.Tools),
 			History:           history,
 		},
-		Policy: contextbuilder.Policy{Version: contextbuilder.PolicyVersionV2},
+		Policy: contextbuilder.Policy{
+			Version:               contextbuilder.PolicyVersionV3,
+			KeepRecentToolResults: contextbuilder.DefaultKeepRecentToolResults,
+		},
 		Budget: budget,
 	}
 	counter, err := contextbuilder.ResolveCounter(budget.CounterVersion)

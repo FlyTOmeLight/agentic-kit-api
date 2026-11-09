@@ -202,3 +202,13 @@ worker 通过本地 `go.work` 指向 API 隔离树执行全仓 race：**63** 个
 独立只读审查由 1 个子代理完成，主代理核实并修复 checkpoint 写回和工具 ID 冲突。Memory 维护、召回与 artifact 接入仍未实现，提交固定 Off；没有实现 LLM 摘要。本次跨仓库结果是本地联合验证，worker 正式依赖版本尚未发布或升级，未进行生产部署或性能容量测试。
 
 同日收口复验：API 在 `GOWORK=off` 下执行 `make integration`（全仓 race 与 vet）及 `CGO_ENABLED=0 make build` 通过；worker 使用隔离树 `go.work` 执行相同检查与构建通过，正式依赖独立构建仍待 API 发布后验证。两仓同时运行集成检查时，worker 的强杀恢复用例曾因 API 未在 5 秒内就绪而失败，日志包含预期离线 Redis 的连接重试；该用例单独复跑及 worker 全仓串行复跑均通过。该次就绪超时的原因尚未定位，未修改测试期限或宣称已修复。
+
+## 上下文增强阶段三 A：当前轮工具链折叠
+
+2026-11-09：新增 `context-v3`。它沿用 `context-v2` 的 Memory 与历史裁剪顺序；历史耗尽后仍超预算时，把当前轮较旧的工具结果替换为投影标记，保留最近 `Policy.KeepRecentToolResults` 条完整结果（默认 3 条）。投影只影响本次模型输入，不删除 assistant/tool 关联，不修改 Eino checkpoint、冻结材料、已存消息或工具步骤。`BuildResult.ProjectedToolResults` 记录实际投影条数，worker 将其写入 `ModelStarted` 事件的 `context.projectedToolResults`。新 Run 冻结 `context-v3`，`context-v1`/`context-v2` 快照保持原有规则。
+
+验证：API `GOWORK=off make integration`（全仓 race 与 vet）通过；`GOWORK=off go test -count=1 ./...` 统计 **267** 个测试通过、0 失败。新增用例覆盖仅投影较旧结果、默认保留条数、投影后仍超限报 `ContextBudgetExceeded`、预算充足时不投影、负保留数拒绝、v3 快照往返以及原有 v1/v2 行为不变。`go build ./...` 与 `make doc` 通过且 OpenAPI 无变化。
+
+worker 在隔离工作树通过本地 replace 指向 API 改动，`GOWORK=off make integration`（全仓 race 与 vet）通过；新增 `TestBuildContextProjectsOlderCurrentToolResults` 验证真实 Eino 状态消息中旧结果被投影、最近 2 条完整保留、用量下降且原消息未被修改。
+
+未验证：当前轮折叠后的模型输出质量与摘要收益未做线上评估；投影标记的措辞可能影响模型行为，尚无对比实验。Memory 召回、artifact 接入与 LLM 摘要仍未实现。
