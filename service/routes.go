@@ -6,6 +6,7 @@ import (
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/agent"
 	appexec "github.com/FlyTOmeLight/agentic-kit-api/internal/app/execution"
+	appmemory "github.com/FlyTOmeLight/agentic-kit-api/internal/app/memory"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/run"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/session"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
@@ -15,6 +16,7 @@ type routes struct {
 	agent   *agent.Controller
 	session *session.Controller
 	run     *run.Controller
+	memory  *appmemory.Controller
 }
 
 func newRoutes(
@@ -22,10 +24,17 @@ func newRoutes(
 	cache frameworkredis.Redis,
 ) *routes {
 	exec := appexec.NewService(store)
+	var memoryCtrl *appmemory.Controller
+	if store != nil {
+		memorySvc := appmemory.NewService(store.DB())
+		memoryCtrl = appmemory.NewController(memorySvc)
+		exec = exec.WithMemoryRecaller(memorySvc)
+	}
 	return &routes{
 		agent:   agent.NewController(store),
 		session: session.NewController(session.NewService(store, exec)),
 		run:     run.NewController(store, exec, cache),
+		memory:  memoryCtrl,
 	}
 }
 
@@ -38,4 +47,7 @@ func (r *routes) register(router *core.RouterGroup) {
 	r.agent.RegisterRoutes(v1)
 	r.session.RegisterRoutes(v1)
 	r.run.RegisterRoutes(v1)
+	if r.memory != nil {
+		r.memory.RegisterRoutes(v1)
+	}
 }

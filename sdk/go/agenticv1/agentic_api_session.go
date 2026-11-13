@@ -15,7 +15,8 @@ type SendMessageRequest struct {
 	SessionID      string `json:"-" uri:"id" binding:"required,max=128"`
 	IdempotencyKey string `json:"-" form:"-" uri:"-" header:"Idempotency-Key" binding:"omitempty,max=128"`
 
-	Query string `json:"query" binding:"required"`
+	Query  string `json:"query" binding:"required"`
+	Memory string `json:"memory,omitempty" binding:"omitempty,oneof=Off Recall"`
 }
 
 type ListSessionsOptions struct {

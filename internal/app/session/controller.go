@@ -12,6 +12,7 @@ import (
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -215,6 +216,7 @@ func (h *Controller) submitMessage(c *core.Context) {
 		req.Query,
 		runLifetime,
 		maxRunAttempts,
+		memory.Selection(req.Memory),
 	)
 	if err != nil {
 		apperror.Respond(c, err)

@@ -15,6 +15,7 @@ type Client struct {
 	Agents     AgentAPI
 	Sessions   SessionAPI
 	Runs       RunAPI
+	Memories   MemoryAPI
 }
 
 // NewClient constructs framework-backed services with a 20-second JSON timeout.
@@ -41,6 +42,7 @@ func NewClient(baseURL, token string, httpClient *http.Client) (*Client, error) 
 		Agents:     &agentClient{transport: httpTransport},
 		Sessions:   &sessionClient{transport: httpTransport},
 		Runs:       &runClient{transport: httpTransport},
+		Memories:   &memoryClient{transport: httpTransport},
 	}, nil
 }
 

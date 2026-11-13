@@ -7,6 +7,7 @@ import (
 	appexec "github.com/FlyTOmeLight/agentic-kit-api/internal/app/execution"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	execpkg "github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
 // Service is the transactional behavior required by this HTTP module.
@@ -21,6 +22,7 @@ type Service interface {
 		owner, session, key, query string,
 		ttl time.Duration,
 		maxAttempts int,
+		memory memory.Selection,
 	) (*execpkg.Run, bool, error)
 }
 
@@ -63,6 +65,7 @@ func (s *service) Submit(
 	owner, session, key, query string,
 	ttl time.Duration,
 	maxAttempts int,
+	memory memory.Selection,
 ) (*execpkg.Run, bool, error) {
-	return s.exec.SubmitChat(ctx, owner, session, key, query, ttl, maxAttempts)
+	return s.exec.SubmitChat(ctx, owner, session, key, query, ttl, maxAttempts, memory)
 }
