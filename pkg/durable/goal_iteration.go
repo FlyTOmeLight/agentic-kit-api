@@ -138,9 +138,11 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 		return nil, err
 	}
 	spec.History = nil
-	if err = loadConversationHistory(tx, goal.OwnerID, goal.SessionID, &spec); err != nil {
+	history, err := loadConversationHistory(tx, goal.OwnerID, goal.SessionID)
+	if err != nil {
 		return nil, err
 	}
+	spec.History = legacyHistory(history)
 	spec.Query = fmt.Sprintf(
 		"Continue working toward this goal:\n%s\n\nThe previous run failed acceptance. Address this feedback before completing:\n%s",
 		goal.Objective,

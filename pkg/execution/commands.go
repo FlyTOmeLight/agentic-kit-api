@@ -49,8 +49,9 @@ type SubmissionFacts struct {
 
 // PreparedSubmission is the compiled snapshot ready to persist.
 type PreparedSubmission struct {
-	Spec        Spec
-	UserMessage Message
+	Spec            Spec
+	UserMessage     Message
+	ContextSnapshot ContextSnapshot
 }
 
 // Submission is the accept result.
@@ -89,6 +90,31 @@ type Boundary struct {
 	Detail      string
 	WaitingStep string
 	ExternalRef string
+	Context     *ContextInfo
+}
+
+// ContextInfo exposes the observable facts about model input construction.
+// It helps operators diagnose budget trimming and source omission without
+// parsing the executor's opaque checkpoint state.
+type ContextInfo struct {
+	InputTokens          int64    `json:"inputTokens"`
+	InputBytes           int64    `json:"inputBytes"`
+	TokenLimit           int64    `json:"tokenLimit,omitempty"`
+	ByteLimit            int64    `json:"byteLimit,omitempty"`
+	OutputReserve        int64    `json:"outputReserve,omitempty"`
+	OmittedSources       []Source `json:"omittedSources,omitempty"`
+	CollapsedSources     []Source `json:"collapsedSources,omitempty"`
+	ProjectedToolResults int      `json:"projectedToolResults,omitempty"`
+}
+
+// Source identifies one frozen material for stable ordering and omission
+// reporting. This is a lightweight alias to avoid coupling the execution
+// domain to contextbuilder types.
+type Source struct {
+	Kind     string `json:"kind"`
+	ID       string `json:"id"`
+	Revision int64  `json:"revision,omitempty"`
+	Version  string `json:"version,omitempty"`
 }
 
 // StepIntent is the recorded intent of a tool call, stable across retries.

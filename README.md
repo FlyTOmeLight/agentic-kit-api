@@ -6,7 +6,9 @@ Agent 草稿保存在本地，已发布配置正文存入 artifact-go，本地�
 
 本仓库只提供通用 Agent 能力。项目工作台、项目权限政策、产品模板、数据集、评测实验和场景发布审批由调用方应用负责，不在 API 中实现。执行请求可以携带 tenant、project、actor、task 等上下文，核心只据此隔离任务和保存快照，不查询或管理项目业务。
 
-当前执行链路支持 worker 重启后接管已提交任务。Memory 的[技术设计](docs/memory-design.md)已提出复用 artifact-go 版本服务，仍待实施。[通用框架重构设计](docs/refactoring-design.md)中的访问对象、新表结构和上下文管线也仍待实施；本次删除平台业务不代表整套重构已经完成。
+当前执行链路支持 worker 重启后接管已提交任务。上下文构建已实现预算预检、工具结果有界预览、历史两级裁剪和当前轮工具链折叠：Run 接受时冻结完整材料、策略与预算，配套 worker 每次模型调用前重新构建输入。新 Run 使用 `context-v3`，超限先移除低优先级 Memory，再从旧到新折叠历史工具过程、保留问答，仍超限才删除整轮；历史耗尽后仍超限时，把当前轮较旧的工具结果替换为投影标记，只保留最近 3 条完整结果。旧 `context-v1`、`context-v2` 快照保持各自原有裁剪规则。原始消息、工具结果和快照继续完整保存。Memory 的[技术设计](docs/memory-design.md)提出复用 artifact-go，当前真实提交仍固定为 Off，维护与召回尚未实现。[通用框架重构设计](docs/refactoring-design.md)中的访问对象和新表结构仍待实施。
+
+Agent 的 `model.contextWindow` 可配置模型窗口；设置后必须同时设置正数 `model.maxTokens`，且小于窗口。输入预算取两者之差，使用版本化 UTF-8 字节估算与 256 token 协议预留；这是偏保守的估算，不是模型 tokenizer 的精确计数。不配置窗口时使用 128 KiB 输入字节上限。单条工具结果默认最多向模型展示 16 KiB，配置窗口时再限制为输入预算的四分之一（最低 128 字节）。提交期对已知材料预检，超限返回 HTTP 400 `ContextBudgetExceeded`；worker 按实际工具 schema 和当前工具链复检，必需内容仍超限则结束为 Failed。
 
 ## 功能与代码分层
 
@@ -16,6 +18,7 @@ Agent 草稿保存在本地，已发布配置正文存入 artifact-go，本地�
 | Session / Message | 多轮会话、有序消息、冻结提交时的配置与历史、消息幂等 |
 | Run / Execution | 提交、查询、取消、澄清回答、人工确认、执行权校验、trace 与 SSE 回放 |
 | Durable / Outbox | API 与 worker 共享执行事务、租约、步骤存档、状态与事件一致提交、通知投递 |
+| Context | 完整历史组与 Memory 材料的稳定选择、预算裁剪、版本化 `ContextSnapshot` 冻结 |
 
 ```text
 agentic-kit-api/
@@ -33,6 +36,7 @@ agentic-kit-api/
 │   ├── schema/               # 空库目标表结构初始化
 │   └── table/                # Agent、Session、Run、Step、Event、Message 表模型
 ├── pkg/durable/              # API/worker 共享持久化事务与执行契约
+├── pkg/contextbuilder/       # 纯上下文构建、预算裁剪与快照编码
 ├── sdk/go/agenticv1/          # 通用 HTTP 请求/响应、Go SDK 与 SSE 消费
 ├── doc/openapi/              # 由 Controller 与 SDK 生成的 OpenAPI
 ├── conf/server/config.toml   # 默认配置与环境占位符

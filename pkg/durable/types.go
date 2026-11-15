@@ -40,6 +40,8 @@ type Spec = execution.Spec
 
 type Run = execution.Run
 
+type ContextSnapshot = execution.ContextSnapshot
+
 type Lease = execution.Lease
 
 type Event = execution.Event
@@ -55,6 +57,10 @@ type RunAuthorization = execution.RunAuthorization
 type Boundary = execution.Boundary
 
 type BoundaryKind = execution.BoundaryKind
+
+type ContextInfo = execution.ContextInfo
+
+type Source = execution.Source
 
 type InteractionKind = execution.InteractionKind
 

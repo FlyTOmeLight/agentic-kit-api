@@ -195,3 +195,37 @@ worker 通过其 go.work 指向本地 API 工作树，完整 make integration（
 在 deploy/compose.yaml 提供的隔离 PostgreSQL 17.6、Redis 7.2.10 上通过 GOWORK=off `go test -race -count=1 -timeout=120s ./...`（`TEST_DATABASE_URL`、`TEST_REDIS_URL`）。`go test -json` 统计 **186** 个用例通过、**0** 失败、**0** 跳过；`GOWORK=off CGO_ENABLED=0 make build` 与 `make doc` 通过（OpenAPI Run 增加 `waitingKind`）。
 
 worker 通过 go.work 指向本地 API 工作树，`TEST_DATABASE_URL` 下 `go test -race -count=1 -timeout=120s ./...`：**52** 通过、**0** 失败、**1** 跳过（需 AIO 环境的公开 SDK 测试）；包含 TestProcessKillResumesWithoutRepeatingTool、TestUnsafeErrorPausesInsteadOfRetrying（断言公开 Run 的 `waitingStep`/`waitingKind`）。worker `go.mod` 仍 pin 已发布 API 版本且无 replace；**GOWORK=off** 独立构建 worker 需等 API 发布含本阶段符号的版本，联合验证以 go.work 为准。
+
+## 框架重构阶段 4：上下文构建与快照冻结
+
+2026-11-09：新增 `pkg/contextbuilder` 首版，提供完整消息组校验、Memory 优先级、token/byte 预算裁剪、`ContextBudgetExceeded` 稳定错误，以及带格式版本、Policy 版本和 SHA-256 digest 的 `ContextSnapshot` 编解码。`pkg/durable/prepare.go` 改为按 Run 聚合历史：快照保留 User、Assistant（含 tool calls）、Tool、Final 的完整链，跳过缺少配对工具结果的消息组；`Spec.History` 仍只投影 User 与最终 Assistant 文本，避免改变当前 worker 的输入形状。系统指令、工具定义、历史组、Policy 和 Budget 与 Run 同事务写入 `durable_run.context_snapshot`。快照列使用 text 保存原始 envelope 字节，避免 jsonb 重排导致 digest 失配。
+
+验证范围：`GOWORK=off go test -count=1 ./...`（`TEST_DATABASE_URL` 指向 deploy/compose.yaml 的隔离 PostgreSQL）通过；`GOWORK=off go test -race -count=1 ./pkg/contextbuilder/ ./pkg/durable/` 通过；`GOWORK=off go build ./...` 通过。新增用例覆盖快照往返、篡改与不一致 Memory 模式、工具链保留、失败但完整的上一轮进入历史、取消留下的不完整轮次被跳过，以及回放不改变快照。
+
+未验证：worker 未接入每轮 `Build`，未验证动态工具结果超限后的 Fail 边界；Memory RecallTx 和模型窗口预算元数据尚未实现，因此当前冻结的 Budget 是未约束值。
+
+## 上下文增强阶段一、阶段二：预算保护与历史两级裁剪
+
+2026-11-09：在 API `feat/context-builder` 与 worker `feat/context-worker-adapter` 的隔离工作树完成，未改动两个根工作树。该记录更新上节的 worker 接入、预算元数据及超限边界状态。
+
+- 阶段一：`ModelSpec.ContextWindow` 与 `MaxTokens` 校验；接受期冻结输入预算并预检，超限返回 HTTP 400 `ContextBudgetExceeded` 且不创建 Run、消息或事件。未配置窗口时使用 128 KiB 字节上限，配置窗口时使用 `utf8-byte-estimate-v1` 和输出预留；估算不是精确 tokenizer 计数。单条工具正文只对模型做 UTF-8 安全首尾预览。
+- 阶段二：新 Run 冻结 `context-v2`，先移除低优先级 Memory，再从旧到新保留历史问答、折叠工具过程，仍超限才删除整轮。没有最终答复或包含额外 User 输入的历史不折叠。`context-v1` 保持旧的整轮裁剪规则。构建结果分别记录完整省略与保留但已折叠的来源。
+- worker 在真实模型调用边界按实际工具 schema 构建输入，构建失败发生于 `ModelStarted` 之前，不自动重试；不通过 `BeforeModelRewriteState` 写回预览。原始步骤、消息与 checkpoint 保持完整。历史工具关联 ID 加 Run 前缀，避免与其他历史轮次或当前轮次冲突。
+
+验证使用 README 指定的本机 PostgreSQL/Redis，测试分别创建独立 schema。API 在 `GOWORK=off` 下执行全仓 `go test -json -race -count=1 -timeout=120s ./...`：**256** 个测试及子测试通过、**0** 失败、**0** 测试跳过。随后补充 token cap 与预览下限边界用例，`go test -race -count=1 ./pkg/contextbuilder`：**56** 通过。API `go vet ./...`、`go build ./...` 和 `make doc` 通过，OpenAPI 新增 `contextWindow`。
+
+worker 通过本地 `go.work` 指向 API 隔离树执行全仓 race：**63** 个测试及子测试通过、**0** 失败、**1** 跳过（`TestAIOPublicSDKAndEinoTools` 需要真实 AIO 环境）。`go vet ./...`、`go build ./...` 通过。新增用例覆盖实际工具定义超限、空实际工具集替换冻结定义、历史折叠与整轮淘汰，以及模型收到预览但下一工具边界 checkpoint 和持久消息保留完整正文。`TestProcessKillResumesWithoutRepeatingTool` 通过，验证强杀后接管且工具不重复调用。
+
+独立只读审查由 1 个子代理完成，主代理核实并修复 checkpoint 写回和工具 ID 冲突。Memory 维护、召回与 artifact 接入仍未实现，提交固定 Off；没有实现 LLM 摘要。本次跨仓库结果是本地联合验证，worker 正式依赖版本尚未发布或升级，未进行生产部署或性能容量测试。
+
+同日收口复验：API 在 `GOWORK=off` 下执行 `make integration`（全仓 race 与 vet）及 `CGO_ENABLED=0 make build` 通过；worker 使用隔离树 `go.work` 执行相同检查与构建通过，正式依赖独立构建仍待 API 发布后验证。两仓同时运行集成检查时，worker 的强杀恢复用例曾因 API 未在 5 秒内就绪而失败，日志包含预期离线 Redis 的连接重试；该用例单独复跑及 worker 全仓串行复跑均通过。该次就绪超时的原因尚未定位，未修改测试期限或宣称已修复。
+
+## 上下文增强阶段三 A：当前轮工具链折叠
+
+2026-11-09：新增 `context-v3`。它沿用 `context-v2` 的 Memory 与历史裁剪顺序；历史耗尽后仍超预算时，把当前轮较旧的工具结果替换为投影标记，保留最近 `Policy.KeepRecentToolResults` 条完整结果（默认 3 条）。投影只影响本次模型输入，不删除 assistant/tool 关联，不修改 Eino checkpoint、冻结材料、已存消息或工具步骤。`BuildResult.ProjectedToolResults` 记录实际投影条数，worker 将其写入 `ModelStarted` 事件的 `context.projectedToolResults`。新 Run 冻结 `context-v3`，`context-v1`/`context-v2` 快照保持原有规则。
+
+验证：API `GOWORK=off make integration`（全仓 race 与 vet）通过；`GOWORK=off go test -count=1 ./...` 统计 **267** 个测试通过、0 失败。新增用例覆盖仅投影较旧结果、默认保留条数、投影后仍超限报 `ContextBudgetExceeded`、预算充足时不投影、负保留数拒绝、v3 快照往返以及原有 v1/v2 行为不变。`go build ./...` 与 `make doc` 通过且 OpenAPI 无变化。
+
+worker 在隔离工作树通过本地 replace 指向 API 改动，`GOWORK=off make integration`（全仓 race 与 vet）通过；新增 `TestBuildContextProjectsOlderCurrentToolResults` 验证真实 Eino 状态消息中旧结果被投影、最近 2 条完整保留、用量下降且原消息未被修改。
+
+未验证：当前轮折叠后的模型输出质量与摘要收益未做线上评估；投影标记的措辞可能影响模型行为，尚无对比实验。Memory 召回、artifact 接入与 LLM 摘要仍未实现。

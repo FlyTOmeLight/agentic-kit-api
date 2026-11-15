@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 func Hash(data []byte) string { h := sha256.Sum256(data); return hex.EncodeToString(h[:]) }
@@ -42,6 +43,7 @@ func runFromRow(r table.Run) *Run {
 		OwnerID:                 r.OwnerID,
 		SessionID:               r.SessionID,
 		Spec:                    Spec(r.Spec),
+		ContextSnapshot:         execution.ContextSnapshot(r.ContextSnapshot),
 		State:                   r.State,
 		Status:                  r.Status,
 		WorkerID:                r.WorkerID,

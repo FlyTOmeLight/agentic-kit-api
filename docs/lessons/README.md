@@ -10,6 +10,8 @@
 | 框架接管数据库后，Store 关闭连接或丢失约束错误 | [数据库所有权](resource-and-recovery.md#借用数据库时保留所有权与事务语义) |
 | 更新 `serializer:json` 字段报无法编码结构体 | [JSON 字段更新](resource-and-recovery.md#json-字段更新不能用-map) |
 | Redis 断开，API 无法启动或无法回放事件 | [通知连接与数据库事件](resource-and-recovery.md#通知连接不能成为数据库回放的前置条件) |
+| 带 digest 的 JSON payload 经 `jsonb` 往返后校验失败 | [上下文快照存储](context-snapshot-storage.md#带-digest-的不透明-payload-不要存-jsonb) |
+| 上下文裁剪污染 checkpoint，或多个历史 Run 的工具 ID 冲突 | [上下文投影与完整事实](context-projection.md) |
 | 测试通过，但外部依赖用例被跳过，或未覆盖真实恢复 | [验证范围](verification.md) |
 | Steering 消费后进程退出丢指令，或签名正文被 Query 覆盖 | [长任务边界](long-task-boundaries.md) |
 | Goal 续跑时文件丢失，或 Release 成功被误认为保存完成 | [跨 Run 工作区恢复](long-task-boundaries.md#跨-run-续跑必须等待工作区保存确认) |

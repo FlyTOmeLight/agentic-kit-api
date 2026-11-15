@@ -15,8 +15,12 @@ func validEndpoint(raw string) bool {
 // ValidateAgentConfig applies generic model, tool and policy rules. It does
 // not classify configurations by product scenario.
 func ValidateAgentConfig(c AgentConfig) error {
-	if strings.TrimSpace(c.Model.Name) == "" || !validEndpoint(c.Model.BaseURL) || c.MaxTurns < 1 ||
-		c.MaxTurns > 100 ||
+	model := c.Model
+	if strings.TrimSpace(model.Name) == "" || !validEndpoint(model.BaseURL) || model.ContextWindow < 0 ||
+		(model.MaxTokens != nil && *model.MaxTokens <= 0) ||
+		(model.ContextWindow > 0 &&
+			(model.MaxTokens == nil || int64(*model.MaxTokens) >= model.ContextWindow)) ||
+		c.MaxTurns < 1 || c.MaxTurns > 100 ||
 		len(c.Tools) > 128 {
 		return ErrInvalidConfig
 	}

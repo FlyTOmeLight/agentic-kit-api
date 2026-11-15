@@ -2,7 +2,9 @@
 package table
 
 import (
+	"database/sql/driver"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
@@ -33,6 +35,7 @@ type Run struct {
 	RequestKey              string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:2"`
 	RequestHash             string                    `gorm:"type:text;not null"`
 	Spec                    ExecutionSnapshot         `gorm:"serializer:json;type:jsonb;not null"`
+	ContextSnapshot         ContextSnapshot           `gorm:"type:text;not null;default:'{}'"`
 	State                   json.RawMessage           `gorm:"serializer:json;type:jsonb;not null;default:'{}'"`
 	Status                  execution.Status          `gorm:"type:text;not null;check:durable_run_status_check,status IN ('Queued','Running','WaitingClarification','NeedsReview','WaitingExternal','Blocked','Completed','Failed','Canceled')"`
 	WorkerID                string                    `gorm:"type:text;not null;default:''"`
@@ -68,6 +71,28 @@ type Run struct {
 }
 
 func (Run) TableName() string { return "durable_run" }
+
+// ContextSnapshot stores the opaque context envelope as JSON text so the
+// payload bytes and digest stay exactly as frozen.
+type ContextSnapshot execution.ContextSnapshot
+
+func (s *ContextSnapshot) Scan(value any) error {
+	switch v := value.(type) {
+	case nil:
+		*s = ContextSnapshot{}
+		return nil
+	case []byte:
+		return json.Unmarshal(v, (*execution.ContextSnapshot)(s))
+	case string:
+		return json.Unmarshal([]byte(v), (*execution.ContextSnapshot)(s))
+	default:
+		return fmt.Errorf("unsupported context snapshot type %T", value)
+	}
+}
+
+func (s ContextSnapshot) Value() (driver.Value, error) {
+	return json.Marshal(execution.ContextSnapshot(s))
+}
 
 type Step struct {
 	RunID       string       `gorm:"type:text;primaryKey;not null"`

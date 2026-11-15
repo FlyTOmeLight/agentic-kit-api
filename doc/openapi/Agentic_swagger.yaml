@@ -40,6 +40,8 @@ definitions:
         type: string
       baseURL:
         type: string
+      contextWindow:
+        type: integer
       maxTokens:
         type: integer
       name:

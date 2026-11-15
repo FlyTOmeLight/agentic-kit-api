@@ -71,6 +71,7 @@ type Run struct {
 	OwnerID                 string          `json:"ownerID"`
 	SessionID               string          `json:"sessionID"`
 	Spec                    Spec            `json:"-"`
+	ContextSnapshot         ContextSnapshot `json:"-"`
 	State                   json.RawMessage `json:"-"`
 	Status                  Status          `json:"status"`
 	WorkerID                string          `json:"-"`
@@ -102,6 +103,15 @@ type Run struct {
 	TokensUsed       int64   `json:"tokensUsed,omitempty"`
 	CostUSD          float64 `json:"costUSD,omitempty"`
 	Error            string  `json:"error,omitempty"`
+}
+
+// ContextSnapshot is an opaque, versioned envelope. Execution stores and
+// verifies the envelope but never interprets Payload.
+type ContextSnapshot struct {
+	Format        string          `json:"format"`
+	PolicyVersion string          `json:"policyVersion"`
+	Digest        string          `json:"digest"`
+	Payload       json.RawMessage `json:"payload"`
 }
 
 type Lease struct {

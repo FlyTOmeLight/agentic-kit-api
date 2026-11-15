@@ -507,6 +507,22 @@ func integrationStore(t *testing.T) *durable.Store {
 	return store
 }
 
+func TestGinRejectsContextBudgetBeforeQueueing(t *testing.T) {
+	store := integrationStore(t)
+	router := NewRouter(t, store, nil, map[string]string{testToken: "owner"})
+	session := createHTTPConversation(t, router)
+	path := "/v1/sessions/" + session.ID + "/messages"
+	body, err := json.Marshal(map[string]string{"query": strings.Repeat("x", 128*1024)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertError(t, request(router, "POST", path, string(body), testToken, "budget"), 400, "ContextBudgetExceeded")
+	response := request(router, "POST", path, `{"query":"small"}`, testToken, "budget")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("retry after rejected input: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestGinRunLifecycleAndSSE(t *testing.T) {
 	store := integrationStore(t)
 	router := NewRouter(
