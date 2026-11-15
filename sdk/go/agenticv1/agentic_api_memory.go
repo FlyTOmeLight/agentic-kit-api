@@ -12,13 +12,13 @@ type CreateMemoryRequest struct {
 }
 
 type UpdateMemoryRequest struct {
-	IdempotencyKey  string         `json:"-" header:"Idempotency-Key" binding:"required,max=128"`
-	ExpectedRevision int64         `json:"expectedRevision" binding:"required,min=1"`
-	Document        MemoryDocument `json:"document" binding:"required"`
+	IdempotencyKey   string         `json:"-" header:"Idempotency-Key" binding:"required,max=128"`
+	ExpectedRevision int64          `json:"expectedRevision" binding:"required,min=1"`
+	Document         MemoryDocument `json:"document" binding:"required"`
 }
 
 type RetireMemoryRequest struct {
-	IdempotencyKey  string `json:"-" header:"Idempotency-Key" binding:"required,max=128"`
+	IdempotencyKey   string `json:"-" header:"Idempotency-Key" binding:"required,max=128"`
 	ExpectedRevision int64  `json:"expectedRevision" binding:"required,min=1"`
 }
 

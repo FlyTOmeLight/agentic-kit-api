@@ -100,7 +100,8 @@ func TestSubmitRecallFreezesMemoryMaterials(t *testing.T) {
 		t.Fatalf("memory materials len = %d", len(snapshot.Materials.Memory))
 	}
 	block := snapshot.Materials.Memory[0]
-	if block.Source.Kind != contextbuilder.SourceMemory || block.Source.ID != "mem_1" || block.Source.Revision != 1 {
+	if block.Source.Kind != contextbuilder.SourceMemory || block.Source.ID != "mem_1" ||
+		block.Source.Revision != 1 {
 		t.Fatalf("unexpected block source: %+v", block.Source)
 	}
 	if block.Content == "" || block.Priority != 2 {

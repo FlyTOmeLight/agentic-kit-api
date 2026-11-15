@@ -119,7 +119,15 @@ func (h *Controller) update(c *core.Context) {
 		return
 	}
 	owner := auth.UserID(c)
-	entry, err := h.service.Update(c.Request.Context(), owner, owner, req.IdempotencyKey, c.Param("id"), req.ExpectedRevision, req.Document)
+	entry, err := h.service.Update(
+		c.Request.Context(),
+		owner,
+		owner,
+		req.IdempotencyKey,
+		c.Param("id"),
+		req.ExpectedRevision,
+		req.Document,
+	)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
@@ -147,7 +155,14 @@ func (h *Controller) retire(c *core.Context) {
 		return
 	}
 	owner := auth.UserID(c)
-	entry, err := h.service.Retire(c.Request.Context(), owner, owner, req.IdempotencyKey, c.Param("id"), req.ExpectedRevision)
+	entry, err := h.service.Retire(
+		c.Request.Context(),
+		owner,
+		owner,
+		req.IdempotencyKey,
+		c.Param("id"),
+		req.ExpectedRevision,
+	)
 	if err != nil {
 		apperror.Respond(c, err)
 		return

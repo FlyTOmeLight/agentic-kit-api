@@ -123,7 +123,10 @@ func (s *Service) Update(
 		entry = entryFromDocument(&doc, owner)
 		entry.ID = row.ID
 		entry.Revision = row.Revision + 1
-		if err := tx.Model(&table.MemoryEntry{}).Where("id = ?", row.ID).Updates(table.MemoryEntryFromDomain(entry)).Error; err != nil {
+		if err := tx.Model(&table.MemoryEntry{}).
+			Where("id = ?", row.ID).
+			Updates(table.MemoryEntryFromDomain(entry)).
+			Error; err != nil {
 			return err
 		}
 		op := operationFromDocument(&doc, owner, actor, requestKey, memory.OperationUpdate, expectedRevision)
@@ -225,7 +228,10 @@ func (s *Service) Restore(
 		entry.ID = row.ID
 		entry.Revision = row.Revision + 1
 		entry.RetiredAt = nil
-		if err := tx.Model(&table.MemoryEntry{}).Where("id = ?", row.ID).Updates(table.MemoryEntryFromDomain(entry)).Error; err != nil {
+		if err := tx.Model(&table.MemoryEntry{}).
+			Where("id = ?", row.ID).
+			Updates(table.MemoryEntryFromDomain(entry)).
+			Error; err != nil {
 			return err
 		}
 		op := operationFromDocument(&doc, owner, actor, requestKey, memory.OperationRestore, expectedRevision)

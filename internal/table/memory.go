@@ -10,26 +10,26 @@ import (
 // MemoryEntry stores the local projection of one active memory. The complete
 // payload projection is stored alongside for local recall without a remote read.
 type MemoryEntry struct {
-	ID           string         `gorm:"type:text;primaryKey;not null"`
-	OwnerID      string         `gorm:"type:text;not null;index:memory_entry_owner,priority:1"`
-	ScopeKind    string         `gorm:"type:text;not null;check:memory_entry_scope_kind,scope_kind IN ('OwnerPrivate','ActorPrivate','ActorProject','ProjectShared')"`
-	TenantID     string         `gorm:"type:text;not null;default:''"`
-	ProjectID    string         `gorm:"type:text;not null;default:''"`
-	ActorID      string         `gorm:"type:text;not null;default:''"`
-	AgentID      string         `gorm:"type:text;not null;default:''"`
-	Kind         string         `gorm:"type:text;not null;check:memory_entry_kind,kind IN ('Fact','Preference','Procedure')"`
-	SubjectKey   string         `gorm:"type:text;not null;default:''"`
-	Summary      string         `gorm:"type:text;not null"`
-	Body         json.RawMessage `gorm:"serializer:json;type:jsonb;not null"`
-	Conditions   json.RawMessage `gorm:"serializer:json;type:jsonb;not null;default:'{}'"`
-	OutputVisibility string     `gorm:"type:text;not null;default:'Private';check:memory_entry_output_visibility,output_visibility IN ('Private','Project')"`
-	Source       json.RawMessage `gorm:"serializer:json;type:jsonb;not null"`
-	ValidUntil   *int64         `gorm:"type:bigint"`
+	ID               string          `gorm:"type:text;primaryKey;not null"`
+	OwnerID          string          `gorm:"type:text;not null;index:memory_entry_owner,priority:1"`
+	ScopeKind        string          `gorm:"type:text;not null;check:memory_entry_scope_kind,scope_kind IN ('OwnerPrivate','ActorPrivate','ActorProject','ProjectShared')"`
+	TenantID         string          `gorm:"type:text;not null;default:''"`
+	ProjectID        string          `gorm:"type:text;not null;default:''"`
+	ActorID          string          `gorm:"type:text;not null;default:''"`
+	AgentID          string          `gorm:"type:text;not null;default:''"`
+	Kind             string          `gorm:"type:text;not null;check:memory_entry_kind,kind IN ('Fact','Preference','Procedure')"`
+	SubjectKey       string          `gorm:"type:text;not null;default:''"`
+	Summary          string          `gorm:"type:text;not null"`
+	Body             json.RawMessage `gorm:"serializer:json;type:jsonb;not null"`
+	Conditions       json.RawMessage `gorm:"serializer:json;type:jsonb;not null;default:'{}'"`
+	OutputVisibility string          `gorm:"type:text;not null;default:'Private';check:memory_entry_output_visibility,output_visibility IN ('Private','Project')"`
+	Source           json.RawMessage `gorm:"serializer:json;type:jsonb;not null"`
+	ValidUntil       *int64          `gorm:"type:bigint"`
 	ActiveVersionRef json.RawMessage `gorm:"serializer:json;type:jsonb"`
-	Revision     int64          `gorm:"type:bigint;not null;default:1"`
-	RetiredAt    *int64         `gorm:"type:bigint"`
-	CreatedAt    time.Time      `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false"`
-	UpdatedAt    time.Time      `gorm:"type:timestamptz;not null;default:clock_timestamp();autoUpdateTime:false"`
+	Revision         int64           `gorm:"type:bigint;not null;default:1"`
+	RetiredAt        *int64          `gorm:"type:bigint"`
+	CreatedAt        time.Time       `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false"`
+	UpdatedAt        time.Time       `gorm:"type:timestamptz;not null;default:clock_timestamp();autoUpdateTime:false"`
 }
 
 func (MemoryEntry) TableName() string { return "memory_entry" }
@@ -45,21 +45,21 @@ WHERE subject_key != '' AND retired_at IS NULL;
 // MemoryOperation is a durable receipt for one write intent.
 // It enables idempotent replay and cross-service recovery.
 type MemoryOperation struct {
-	ID             string     `gorm:"type:text;primaryKey;not null"`
-	OwnerID        string     `gorm:"type:text;not null;index:memory_operation_owner,priority:1"`
-	RequestKey     string     `gorm:"type:text;not null;uniqueIndex:memory_operation_owner_key,priority:2"`
-	IntentDigest   string     `gorm:"type:text;not null"`
-	OpType         string     `gorm:"type:text;not null;check:memory_operation_op_type,op_type IN ('Create','Update','Restore','Retire')"`
-	EntryID        string     `gorm:"type:text;not null"`
-	ExpectedRevision int64    `gorm:"type:bigint;not null"`
-	ActorID        string     `gorm:"type:text;not null"`
-	Document       json.RawMessage `gorm:"serializer:json;type:jsonb"`
-	Status         string     `gorm:"type:text;not null;default:'Pending';check:memory_operation_status,status IN ('Pending','Applied','Rejected')"`
-	AppliedRevision *int64    `gorm:"type:bigint"`
-	AppliedAt      *int64     `gorm:"type:bigint"`
-	ErrorReason    string     `gorm:"type:text;not null;default:''"`
-	CreatedAt      time.Time  `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false"`
-	UpdatedAt      time.Time  `gorm:"type:timestamptz;not null;default:clock_timestamp();autoUpdateTime:false"`
+	ID               string          `gorm:"type:text;primaryKey;not null"`
+	OwnerID          string          `gorm:"type:text;not null;index:memory_operation_owner,priority:1"`
+	RequestKey       string          `gorm:"type:text;not null;uniqueIndex:memory_operation_owner_key,priority:2"`
+	IntentDigest     string          `gorm:"type:text;not null"`
+	OpType           string          `gorm:"type:text;not null;check:memory_operation_op_type,op_type IN ('Create','Update','Restore','Retire')"`
+	EntryID          string          `gorm:"type:text;not null"`
+	ExpectedRevision int64           `gorm:"type:bigint;not null"`
+	ActorID          string          `gorm:"type:text;not null"`
+	Document         json.RawMessage `gorm:"serializer:json;type:jsonb"`
+	Status           string          `gorm:"type:text;not null;default:'Pending';check:memory_operation_status,status IN ('Pending','Applied','Rejected')"`
+	AppliedRevision  *int64          `gorm:"type:bigint"`
+	AppliedAt        *int64          `gorm:"type:bigint"`
+	ErrorReason      string          `gorm:"type:text;not null;default:''"`
+	CreatedAt        time.Time       `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false"`
+	UpdatedAt        time.Time       `gorm:"type:timestamptz;not null;default:clock_timestamp();autoUpdateTime:false"`
 }
 
 func (MemoryOperation) TableName() string { return "memory_operation" }
@@ -102,8 +102,14 @@ func (r *MemoryEntry) ToDomain() *memory.Entry {
 		}
 	}
 	return &memory.Entry{
-		ID:               r.ID,
-		Scope:            memory.Scope{Kind: memory.ScopeKind(r.ScopeKind), Owner: r.OwnerID, Tenant: r.TenantID, Project: r.ProjectID, Actor: r.ActorID},
+		ID: r.ID,
+		Scope: memory.Scope{
+			Kind:    memory.ScopeKind(r.ScopeKind),
+			Owner:   r.OwnerID,
+			Tenant:  r.TenantID,
+			Project: r.ProjectID,
+			Actor:   r.ActorID,
+		},
 		AgentID:          r.AgentID,
 		Kind:             memory.Kind(r.Kind),
 		SubjectKey:       r.SubjectKey,
@@ -161,4 +167,3 @@ func (r *MemoryOperation) ToDomain() *memory.Operation {
 		ErrorReason:      r.ErrorReason,
 	}
 }
-
