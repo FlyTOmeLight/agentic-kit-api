@@ -17,7 +17,7 @@ func Init(ctx context.Context, db *gorm.DB) error {
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(7412101)").Error; err != nil {
 			return err
 		}
-		return tx.AutoMigrate(
+		if err := tx.AutoMigrate(
 			&table.Agent{},
 			&table.AgentVersion{},
 			&table.Session{},
@@ -25,6 +25,11 @@ func Init(ctx context.Context, db *gorm.DB) error {
 			&table.Step{},
 			&table.Event{},
 			&table.Message{},
-		)
+			&table.MemoryEntry{},
+			&table.MemoryOperation{},
+		); err != nil {
+			return err
+		}
+		return tx.Exec(table.MemoryEntrySubjectUnique).Error
 	})
 }

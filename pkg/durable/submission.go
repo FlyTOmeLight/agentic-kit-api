@@ -89,6 +89,7 @@ func (tx *Tx) Submit(
 			Kind:           cmd.Kind,
 			Query:          cmd.Query,
 			ExecutionSpec:  cmd.ExecutionSpec,
+			Memory:         cmd.Memory,
 		})
 		if err != nil {
 			return err

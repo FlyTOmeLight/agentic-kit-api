@@ -7,15 +7,23 @@ import (
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	execpkg "github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
 // Service accepts chat and application runs through the shared durable algorithm.
 type Service struct {
-	store *durable.Store
+	store    *durable.Store
+	recaller durable.MemoryRecaller
 }
 
 func NewService(store *durable.Store) *Service {
 	return &Service{store: store}
+}
+
+// WithMemoryRecaller returns the same service wired to recall memory inside
+// the accept transaction when a submission selects Recall.
+func (s *Service) WithMemoryRecaller(recaller durable.MemoryRecaller) *Service {
+	return &Service{store: s.store, recaller: recaller}
 }
 
 func (s *Service) SubmitChat(
@@ -23,8 +31,13 @@ func (s *Service) SubmitChat(
 	owner, session, key, query string,
 	ttl time.Duration,
 	maxAttempts int,
+	memorySelection memory.Selection,
 ) (*execpkg.Run, bool, error) {
-	input, _ := json.Marshal(struct{ Session, Query string }{Session: session, Query: query})
+	input, _ := json.Marshal(struct {
+		Session string
+		Query   string
+		Memory  memory.Selection
+	}{Session: session, Query: query, Memory: memorySelection})
 	return s.store.Accept(ctx, execpkg.SubmitCommand{
 		Owner:       owner,
 		RequestKey:  key,
@@ -34,7 +47,8 @@ func (s *Service) SubmitChat(
 		Kind:        execpkg.SubmitChat,
 		SessionID:   session,
 		Query:       query,
-	}, durable.PrepareChatSubmission)
+		Memory:      memorySelection,
+	}, durable.PrepareChatSubmissionWith(s.recaller))
 }
 
 func (s *Service) SubmitApplication(
@@ -55,7 +69,7 @@ func (s *Service) SubmitApplication(
 		MaxAttempts:   5,
 		Kind:          execpkg.SubmitApplication,
 		ExecutionSpec: spec,
-	}, durable.PrepareApplicationSubmission)
+	}, durable.PrepareApplicationSubmissionWith(s.recaller))
 }
 
 func (s *Service) CheckExecutionLease(ctx context.Context, owner, id string, epoch int64) (bool, error) {

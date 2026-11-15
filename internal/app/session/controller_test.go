@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
 type submittedMessage struct {
@@ -24,6 +25,7 @@ func (s *submittedMessage) Submit(
 	_, session, key, query string,
 	_ time.Duration,
 	_ int,
+	_ memory.Selection,
 ) (*durable.Run, bool, error) {
 	s.called = true
 	s.session, s.key, s.query = session, key, query
