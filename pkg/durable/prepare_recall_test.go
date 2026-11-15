@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ type stubRecaller struct {
 	entries []memory.Entry
 	err     error
 	called  bool
+	filter  memory.RecallFilter
 }
 
 func (s *stubRecaller) RecallTx(
@@ -26,8 +28,10 @@ func (s *stubRecaller) RecallTx(
 	_ memory.Scope,
 	_ string,
 	_ string,
+	filter memory.RecallFilter,
 ) ([]memory.Entry, error) {
 	s.called = true
+	s.filter = filter
 	return s.entries, s.err
 }
 
@@ -168,6 +172,36 @@ func TestSubmitRecallFailureRollsBack(t *testing.T) {
 	}
 	if len(runs) != 0 {
 		t.Fatalf("failed recall left %d runs behind", len(runs))
+	}
+}
+
+func TestSubmitRecallPassesFilter(t *testing.T) {
+	s := testStore(t)
+	session := testConversation(t, s, Spec{MaxTurns: 5})
+
+	recaller := &stubRecaller{}
+	input, _ := json.Marshal(struct{ Session, Query string }{Session: session.ID, Query: "question"})
+	filter := memory.RecallFilter{Terms: []string{"editor"}, MaxEntries: 2, MaxBytes: 512}
+	_, _, err := s.Accept(context.Background(), execution.SubmitCommand{
+		Owner:        "owner",
+		RequestKey:   NewID(),
+		RequestHash:  Hash(input),
+		TTL:          time.Hour,
+		MaxAttempts:  3,
+		Kind:         execution.SubmitChat,
+		SessionID:    session.ID,
+		Query:        "question",
+		Memory:       memory.SelectionRecall,
+		MemoryFilter: filter,
+	}, PrepareChatSubmissionWith(recaller))
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	if !recaller.called ||
+		!slices.Equal(recaller.filter.Terms, filter.Terms) ||
+		recaller.filter.MaxEntries != filter.MaxEntries ||
+		recaller.filter.MaxBytes != filter.MaxBytes {
+		t.Fatalf("recaller filter = %+v, want %+v", recaller.filter, filter)
 	}
 }
 

@@ -25,6 +25,7 @@ type MemoryRecaller interface {
 		scope memory.Scope,
 		agentID string,
 		query string,
+		filter memory.RecallFilter,
 	) ([]memory.Entry, error)
 }
 
@@ -311,7 +312,7 @@ func recallMaterials(
 		agentID = facts.ExecutionSpec.AgentID
 	}
 	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: facts.Owner}
-	entries, err := recaller.RecallTx(ctx, tx, scope, agentID, facts.Query)
+	entries, err := recaller.RecallTx(ctx, tx, scope, agentID, facts.Query, facts.MemoryFilter)
 	if err != nil {
 		return nil, err
 	}

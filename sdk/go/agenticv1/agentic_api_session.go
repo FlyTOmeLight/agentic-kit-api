@@ -15,8 +15,19 @@ type SendMessageRequest struct {
 	SessionID      string `json:"-" uri:"id" binding:"required,max=128"`
 	IdempotencyKey string `json:"-" form:"-" uri:"-" header:"Idempotency-Key" binding:"omitempty,max=128"`
 
-	Query  string `json:"query" binding:"required"`
-	Memory string `json:"memory,omitempty" binding:"omitempty,oneof=Off Recall"`
+	Query        string              `json:"query" binding:"required"`
+	Memory       string              `json:"memory,omitempty" binding:"omitempty,oneof=Off Recall"`
+	MemoryFilter *MemoryRecallFilter `json:"memoryFilter,omitempty"`
+}
+
+// MemoryRecallFilter narrows one explicit Recall submission. Terms must all
+// match the entry text; Tags must all appear in entry conditions. MaxEntries
+// and MaxBytes bound the frozen material; zero falls back to defaults.
+type MemoryRecallFilter struct {
+	Terms      []string `json:"terms,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	MaxEntries int      `json:"maxEntries,omitempty"`
+	MaxBytes   int      `json:"maxBytes,omitempty"`
 }
 
 type ListSessionsOptions struct {

@@ -178,7 +178,7 @@ func TestMemoryRecallTx(t *testing.T) {
 	}
 
 	err = store.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		entries, err := svc.RecallTx(ctx, tx, scope, "agent-1", "review")
+		entries, err := svc.RecallTx(ctx, tx, scope, "agent-1", "", memory.RecallFilter{})
 		if err != nil {
 			return err
 		}
@@ -199,7 +199,7 @@ func TestMemoryRecallTx(t *testing.T) {
 		t.Fatalf("Retire: %v", err)
 	}
 	err = store.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		entries, err := svc.RecallTx(ctx, tx, scope, "agent-1", "review")
+		entries, err := svc.RecallTx(ctx, tx, scope, "agent-1", "", memory.RecallFilter{})
 		if err != nil {
 			return err
 		}
@@ -213,8 +213,17 @@ func TestMemoryRecallTx(t *testing.T) {
 	}
 
 	err = store.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		entries, err := svc.RecallTx(ctx, tx,
-			memory.Scope{Kind: memory.ScopeProjectShared, Owner: "owner-a"}, "agent-1", "review")
+		entries, err := svc.RecallTx(
+			ctx,
+			tx,
+			memory.Scope{
+				Kind:  memory.ScopeProjectShared,
+				Owner: "owner-a",
+			},
+			"agent-1",
+			"",
+			memory.RecallFilter{},
+		)
 		if err != nil {
 			return err
 		}
@@ -240,7 +249,7 @@ func TestMemoryRecallTxExpiredSkipped(t *testing.T) {
 		t.Fatalf("Create expired: %v", err)
 	}
 	err := store.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		entries, err := svc.RecallTx(ctx, tx, scope, "", "anything")
+		entries, err := svc.RecallTx(ctx, tx, scope, "", "", memory.RecallFilter{})
 		if err != nil {
 			return err
 		}
@@ -251,5 +260,117 @@ func TestMemoryRecallTxExpiredSkipped(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("expired RecallTx: %v", err)
+	}
+}
+
+func recallInTx(
+	t *testing.T,
+	svc *Service,
+	store *durable.Store,
+	scope memory.Scope,
+	agentID string,
+	query string,
+	filter memory.RecallFilter,
+) []memory.Entry {
+	t.Helper()
+	var entries []memory.Entry
+	err := store.DB().WithContext(context.Background()).Transaction(func(tx *gorm.DB) error {
+		var err error
+		entries, err = svc.RecallTx(context.Background(), tx, scope, agentID, query, filter)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("RecallTx: %v", err)
+	}
+	return entries
+}
+
+func TestMemoryRecallTxTermMatching(t *testing.T) {
+	svc, store := testService(t)
+	ctx := context.Background()
+	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+
+	if _, err := svc.Create(ctx, "owner-a", "actor-a", "key-1",
+		factDocument(scope, "editor", "editor preference", "use tabs")); err != nil {
+		t.Fatalf("Create editor: %v", err)
+	}
+	if _, err := svc.Create(ctx, "owner-a", "actor-a", "key-2",
+		factDocument(scope, "shell", "shell preference", "use zsh")); err != nil {
+		t.Fatalf("Create shell: %v", err)
+	}
+
+	entries := recallInTx(t, svc, store, scope, "", "editor", memory.RecallFilter{})
+	if len(entries) != 1 || entries[0].SubjectKey != "editor" {
+		t.Fatalf("term recall: %+v", entries)
+	}
+
+	entries = recallInTx(t, svc, store, scope, "", "编辑器", memory.RecallFilter{})
+	if len(entries) != 0 {
+		t.Fatalf("unrelated Han query len = %d", len(entries))
+	}
+
+	entries = recallInTx(t, svc, store, scope, "", "", memory.RecallFilter{})
+	if len(entries) != 2 {
+		t.Fatalf("empty query len = %d, want all active", len(entries))
+	}
+}
+
+func TestMemoryRecallTxTagFilter(t *testing.T) {
+	svc, store := testService(t)
+	ctx := context.Background()
+	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+
+	goDoc := factDocument(scope, "vet", "vet procedure", "run go vet")
+	goDoc.Conditions.TaskTags = []string{"go"}
+	if _, err := svc.Create(ctx, "owner-a", "actor-a", "key-1", goDoc); err != nil {
+		t.Fatalf("Create go: %v", err)
+	}
+	pyDoc := factDocument(scope, "lint", "lint procedure", "run ruff")
+	pyDoc.Conditions.TaskTags = []string{"python"}
+	if _, err := svc.Create(ctx, "owner-a", "actor-a", "key-2", pyDoc); err != nil {
+		t.Fatalf("Create python: %v", err)
+	}
+
+	entries := recallInTx(t, svc, store, scope, "", "", memory.RecallFilter{Tags: []string{"GO"}})
+	if len(entries) != 1 || entries[0].SubjectKey != "vet" {
+		t.Fatalf("tag recall: %+v", entries)
+	}
+}
+
+func TestMemoryRecallTxBoundsAndOrdering(t *testing.T) {
+	svc, store := testService(t)
+	ctx := context.Background()
+	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+
+	first, err := svc.Create(ctx, "owner-a", "actor-a", "key-1",
+		factDocument(scope, "one", "first", "aaaa"))
+	if err != nil {
+		t.Fatalf("Create one: %v", err)
+	}
+	second, err := svc.Create(ctx, "owner-a", "actor-a", "key-2",
+		factDocument(scope, "two", "second", "bbbb"))
+	if err != nil {
+		t.Fatalf("Create two: %v", err)
+	}
+	updated, err := svc.Update(ctx, "owner-a", "actor-a", "key-3", first.ID, 1,
+		factDocument(scope, "one", "first revised", "aaaa"))
+	if err != nil {
+		t.Fatalf("Update one: %v", err)
+	}
+
+	entries := recallInTx(t, svc, store, scope, "", "", memory.RecallFilter{})
+	if len(entries) != 2 || entries[0].ID != updated.ID || entries[1].ID != second.ID {
+		t.Fatalf("stable ordering by revision desc: %+v", entries)
+	}
+
+	entries = recallInTx(t, svc, store, scope, "", "", memory.RecallFilter{MaxEntries: 1})
+	if len(entries) != 1 || entries[0].ID != updated.ID {
+		t.Fatalf("MaxEntries=1: %+v", entries)
+	}
+
+	entries = recallInTx(t, svc, store, scope, "", "",
+		memory.RecallFilter{MaxBytes: updated.MaterialBytes()})
+	if len(entries) != 1 || entries[0].ID != updated.ID {
+		t.Fatalf("MaxBytes keeps first, skips overflow: %+v", entries)
 	}
 }

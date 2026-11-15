@@ -23,6 +23,7 @@ type Service interface {
 		ttl time.Duration,
 		maxAttempts int,
 		memory memory.Selection,
+		filter memory.RecallFilter,
 	) (*execpkg.Run, bool, error)
 }
 
@@ -66,6 +67,7 @@ func (s *service) Submit(
 	ttl time.Duration,
 	maxAttempts int,
 	memory memory.Selection,
+	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
-	return s.exec.SubmitChat(ctx, owner, session, key, query, ttl, maxAttempts, memory)
+	return s.exec.SubmitChat(ctx, owner, session, key, query, ttl, maxAttempts, memory, filter)
 }
