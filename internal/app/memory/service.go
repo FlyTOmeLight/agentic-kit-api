@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"gorm.io/gorm"
@@ -254,6 +255,7 @@ func (s *Service) RecallTx(
 	scope memory.Scope,
 	agentID string,
 	query string,
+	filter memory.RecallFilter,
 ) ([]memory.Entry, error) {
 	if scope.Owner == "" {
 		return nil, memory.ErrInvalid
@@ -279,7 +281,47 @@ func (s *Service) RecallTx(
 		}
 		entries = append(entries, *entry)
 	}
-	return entries, nil
+	return selectEntries(entries, query, filter), nil
+}
+
+// selectEntries applies tag and term matching, stable ordering and the
+// entry/byte bounds of one recall. The query text is tokenized and every
+// query term plus every explicit filter term must appear in the entry text;
+// an empty query without explicit terms matches every active entry in scope.
+func selectEntries(entries []memory.Entry, query string, filter memory.RecallFilter) []memory.Entry {
+	terms := append(memory.MatchTerms(query), filter.Terms...)
+	maxEntries := filter.MaxEntries
+	if maxEntries == 0 {
+		maxEntries = memory.DefaultRecallMaxEntries
+	}
+	maxBytes := filter.MaxBytes
+	if maxBytes == 0 {
+		maxBytes = memory.DefaultRecallMaxBytes
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Revision != entries[j].Revision {
+			return entries[i].Revision > entries[j].Revision
+		}
+		return entries[i].ID < entries[j].ID
+	})
+	selected := make([]memory.Entry, 0, len(entries))
+	bytes := 0
+	for i := range entries {
+		entry := &entries[i]
+		if !entry.Matches(terms, filter.Tags) {
+			continue
+		}
+		if maxEntries >= 0 && len(selected) >= maxEntries {
+			break
+		}
+		size := entry.MaterialBytes()
+		if maxBytes >= 0 && bytes+size > maxBytes {
+			continue
+		}
+		selected = append(selected, *entry)
+		bytes += size
+	}
+	return selected
 }
 
 func validateDocument(doc *memory.Document) error {

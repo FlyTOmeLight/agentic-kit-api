@@ -32,6 +32,7 @@ func (s *Service) SubmitChat(
 	ttl time.Duration,
 	maxAttempts int,
 	memorySelection memory.Selection,
+	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
 	input, _ := json.Marshal(struct {
 		Session string
@@ -39,15 +40,16 @@ func (s *Service) SubmitChat(
 		Memory  memory.Selection
 	}{Session: session, Query: query, Memory: memorySelection})
 	return s.store.Accept(ctx, execpkg.SubmitCommand{
-		Owner:       owner,
-		RequestKey:  key,
-		RequestHash: durable.Hash(input),
-		TTL:         ttl,
-		MaxAttempts: maxAttempts,
-		Kind:        execpkg.SubmitChat,
-		SessionID:   session,
-		Query:       query,
-		Memory:      memorySelection,
+		Owner:        owner,
+		RequestKey:   key,
+		RequestHash:  durable.Hash(input),
+		TTL:          ttl,
+		MaxAttempts:  maxAttempts,
+		Kind:         execpkg.SubmitChat,
+		SessionID:    session,
+		Query:        query,
+		Memory:       memorySelection,
+		MemoryFilter: filter,
 	}, durable.PrepareChatSubmissionWith(s.recaller))
 }
 

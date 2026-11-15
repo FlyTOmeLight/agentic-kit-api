@@ -208,6 +208,25 @@ func (h *Controller) submitMessage(c *core.Context) {
 		return
 	}
 	owner := auth.UserID(c)
+	selection := memory.Selection(req.Memory)
+	var filter memory.RecallFilter
+	if req.MemoryFilter != nil {
+		if selection != memory.SelectionRecall {
+			serrors.Abort(
+				c,
+				http.StatusBadRequest,
+				"InvalidParameter",
+				"memoryFilter requires memory=Recall",
+			)
+			return
+		}
+		filter = memory.RecallFilter{
+			Terms:      req.MemoryFilter.Terms,
+			Tags:       req.MemoryFilter.Tags,
+			MaxEntries: req.MemoryFilter.MaxEntries,
+			MaxBytes:   req.MemoryFilter.MaxBytes,
+		}
+	}
 	run, created, err := h.service.Submit(
 		c.Request.Context(),
 		owner,
@@ -216,7 +235,8 @@ func (h *Controller) submitMessage(c *core.Context) {
 		req.Query,
 		runLifetime,
 		maxRunAttempts,
-		memory.Selection(req.Memory),
+		selection,
+		filter,
 	)
 	if err != nil {
 		apperror.Respond(c, err)

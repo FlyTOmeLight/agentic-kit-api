@@ -33,7 +33,8 @@ type SubmitCommand struct {
 	// Application: immutable version and trusted scope/bindings.
 	ExecutionSpec ExecutionSpec
 
-	Memory memory.Selection
+	Memory       memory.Selection
+	MemoryFilter memory.RecallFilter
 }
 
 // SubmissionFacts are passed to prepare after session locks succeed.
@@ -45,6 +46,7 @@ type SubmissionFacts struct {
 	Query          string
 	ExecutionSpec  ExecutionSpec
 	Memory         memory.Selection
+	MemoryFilter   memory.RecallFilter
 }
 
 // PreparedSubmission is the compiled snapshot ready to persist.
