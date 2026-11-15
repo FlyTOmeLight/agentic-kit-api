@@ -347,7 +347,7 @@ func digestIntent(opType memory.OperationType, entryID string, expectedRevision 
 		EntryID          string               `json:"entryID"`
 		ExpectedRevision int64                `json:"expectedRevision"`
 		Document         *memory.Document     `json:"document,omitempty"`
-	}{opType, entryID, expectedRevision, doc})
+	}{Type: opType, EntryID: entryID, ExpectedRevision: expectedRevision, Document: doc})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
 }
