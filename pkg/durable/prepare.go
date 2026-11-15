@@ -311,7 +311,7 @@ func recallMaterials(
 	if facts.Kind == execution.SubmitApplication {
 		agentID = facts.ExecutionSpec.AgentID
 	}
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: facts.Owner}
+	scope := memoryScopeFromFacts(facts)
 	entries, err := recaller.RecallTx(ctx, tx, scope, agentID, facts.Query, facts.MemoryFilter)
 	if err != nil {
 		return nil, err
@@ -321,6 +321,37 @@ func recallMaterials(
 		blocks[i] = memoryBlock(&entries[i])
 	}
 	return blocks, nil
+}
+
+// memoryScopeFromFacts derives the recall isolation key. Chat submissions have
+// no business tenant/project context and stay OwnerPrivate. Application
+// executions derive from the trusted workspace scope the caller asserted:
+// tenant plus actor selects ActorPrivate; tenant, project and actor select
+// ActorProject. Missing pieces fall back to OwnerPrivate rather than widening
+// to a shared scope.
+func memoryScopeFromFacts(facts execution.SubmissionFacts) memory.Scope {
+	if facts.Kind != execution.SubmitApplication || facts.ExecutionSpec.Scope == nil {
+		return memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: facts.Owner}
+	}
+	scope := facts.ExecutionSpec.Scope
+	if scope.TenantID == "" || scope.ActorID == "" {
+		return memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: facts.Owner}
+	}
+	if scope.ProjectID == "" {
+		return memory.Scope{
+			Kind:   memory.ScopeActorPrivate,
+			Owner:  facts.Owner,
+			Tenant: scope.TenantID,
+			Actor:  scope.ActorID,
+		}
+	}
+	return memory.Scope{
+		Kind:    memory.ScopeActorProject,
+		Owner:   facts.Owner,
+		Tenant:  scope.TenantID,
+		Project: scope.ProjectID,
+		Actor:   scope.ActorID,
+	}
 }
 
 func memoryBlock(entry *memory.Entry) contextbuilder.ContextBlock {

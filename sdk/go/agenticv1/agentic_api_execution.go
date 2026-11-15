@@ -12,8 +12,10 @@ type ExecutionSpec = execution.ExecutionSpec
 type SubmitExecutionRequest struct {
 	IdempotencyKey string `json:"-" form:"-" uri:"-" header:"Idempotency-Key" binding:"omitempty,max=128"`
 
-	Spec           ExecutionSpec `json:"spec"`
-	TimeoutSeconds int           `json:"timeoutSeconds" binding:"min=1,max=86400"`
+	Spec           ExecutionSpec       `json:"spec"`
+	TimeoutSeconds int                 `json:"timeoutSeconds" binding:"min=1,max=86400"`
+	Memory         string              `json:"memory,omitempty" binding:"omitempty,oneof=Off Recall"`
+	MemoryFilter   *MemoryRecallFilter `json:"memoryFilter,omitempty"`
 }
 
 type LeaseCheck struct {

@@ -19,18 +19,22 @@ type stubRecaller struct {
 	entries []memory.Entry
 	err     error
 	called  bool
+	scope   memory.Scope
+	agentID string
 	filter  memory.RecallFilter
 }
 
 func (s *stubRecaller) RecallTx(
 	_ context.Context,
 	_ *gorm.DB,
-	_ memory.Scope,
-	_ string,
+	scope memory.Scope,
+	agentID string,
 	_ string,
 	filter memory.RecallFilter,
 ) ([]memory.Entry, error) {
 	s.called = true
+	s.scope = scope
+	s.agentID = agentID
 	s.filter = filter
 	return s.entries, s.err
 }
@@ -223,5 +227,112 @@ func TestSubmitRecallWithoutRecallerRejected(t *testing.T) {
 	}, PrepareChatSubmission)
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("Accept error = %v, want ErrInvalid", err)
+	}
+}
+
+func submitApplicationWithMemory(
+	t *testing.T,
+	s *Store,
+	owner string,
+	spec execution.ExecutionSpec,
+	selection memory.Selection,
+	recaller MemoryRecaller,
+) *Run {
+	t.Helper()
+	input, _ := json.Marshal(struct {
+		Spec   execution.ExecutionSpec
+		Memory memory.Selection
+	}{Spec: spec, Memory: selection})
+	r, _, err := s.Accept(context.Background(), execution.SubmitCommand{
+		Owner:         owner,
+		RequestKey:    NewID(),
+		RequestHash:   Hash(input),
+		TTL:           time.Hour,
+		MaxAttempts:   5,
+		Kind:          execution.SubmitApplication,
+		ExecutionSpec: spec,
+		Memory:        selection,
+	}, PrepareApplicationSubmissionWith(recaller))
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	return r
+}
+
+func publishTestAgent(t *testing.T, s *Store, owner string) string {
+	t.Helper()
+	a, err := s.CreateAgent(context.Background(), owner, "app", AgentConfig{
+		SystemPrompt: "v1",
+		Model:        ModelSpec{Name: "local", BaseURL: "http://model.test/v1"},
+		MaxTurns:     5,
+	})
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	if _, err := s.PublishAgent(context.Background(), owner, a.ID, a.Revision); err != nil {
+		t.Fatalf("PublishAgent: %v", err)
+	}
+	return a.ID
+}
+
+func TestApplicationRecallDerivesScopeFromTrustedWorkspace(t *testing.T) {
+	tests := []struct {
+		name  string
+		scope Scope
+		want  memory.Scope
+	}{
+		{
+			name:  "tenant and actor select actor private",
+			scope: Scope{TenantID: "t", ActorID: "u"},
+			want:  memory.Scope{Kind: memory.ScopeActorPrivate, Owner: "app", Tenant: "t", Actor: "u"},
+		},
+		{
+			name:  "tenant project and actor select actor project",
+			scope: Scope{TenantID: "t", ProjectID: "p", ActorID: "u"},
+			want: memory.Scope{
+				Kind:    memory.ScopeActorProject,
+				Owner:   "app",
+				Tenant:  "t",
+				Project: "p",
+				Actor:   "u",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testStore(t)
+			agentID := publishTestAgent(t, s, "app")
+			recaller := &stubRecaller{}
+			scope := tc.scope
+			scope.TaskID = "task"
+			scope.RoundID = "round"
+			submitApplicationWithMemory(t, s, "app", execution.ExecutionSpec{
+				AgentID:      agentID,
+				AgentVersion: 1,
+				Query:        "request",
+				Scope:        &scope,
+			}, memory.SelectionRecall, recaller)
+			if !recaller.called {
+				t.Fatal("recaller was not called for a Recall submission")
+			}
+			if recaller.scope != tc.want {
+				t.Fatalf("recall scope = %+v, want %+v", recaller.scope, tc.want)
+			}
+			if recaller.agentID != agentID {
+				t.Fatalf("recall agentID = %q, want %q", recaller.agentID, agentID)
+			}
+		})
+	}
+}
+
+func TestChatRecallStaysOwnerPrivate(t *testing.T) {
+	s := testStore(t)
+	session := testConversation(t, s, Spec{MaxTurns: 5})
+
+	recaller := &stubRecaller{}
+	submitWithMemory(t, s, session.ID, memory.SelectionRecall, recaller)
+	want := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+	if recaller.scope != want {
+		t.Fatalf("recall scope = %+v, want %+v", recaller.scope, want)
 	}
 }
