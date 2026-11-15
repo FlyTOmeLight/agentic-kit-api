@@ -12,6 +12,10 @@ import (
 	"github.com/FlyTOmeLight/server-go/httpintegration"
 	"github.com/FlyTOmeLight/server-go/swagger"
 	"github.com/gin-gonic/gin"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/sandboxcenter"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
 func TestOpenAPIMatchesRoutes(t *testing.T) {
@@ -32,7 +36,23 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := gin.New()
-	newRoutes(nil, nil).register(router.Group(""))
+	// Route enumeration needs no live cluster; the provider only validates its
+	// configuration at construction.
+	provider, err := sandboxcenter.NewProvider(sandboxcenter.K8sConfig{
+		Context: "contract-test", Namespace: "sandbox-center", GuardImage: "unused",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactServer, _ := newFakeArtifact(t)
+	newRoutes(
+		&durable.Store{},
+		nil,
+		newArtifactClient(t, artifactServer),
+		sandboxcenter.NewStore(nil),
+		provider,
+		config.CallbackConfig{},
+	).register(router.Group(""))
 	colon := regexp.MustCompile(`:([A-Za-z0-9_]+)`)
 	documented := map[string]bool{}
 	for _, route := range router.Routes() {

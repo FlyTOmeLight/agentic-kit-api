@@ -118,7 +118,11 @@ func TestSDKConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.CommitBoundary(ctx, claimed.Lease(), durable.Boundary{Kind: durable.BoundaryComplete, State: []byte(`{}`), Output: "hello back"}); err != nil {
+	if err = store.CommitBoundary(
+		ctx,
+		claimed.Lease(),
+		durable.Boundary{Kind: durable.BoundaryComplete, State: []byte(`{}`), Output: "hello back"},
+	); err != nil {
 		t.Fatal(err)
 	}
 	run, err = client.Runs.Get(ctx, &sdk.GetRunRequest{ID: run.ID})

@@ -21,11 +21,12 @@ type Agent struct {
 func (Agent) TableName() string { return "agent" }
 
 type AgentVersion struct {
-	AgentID   string            `gorm:"type:text;primaryKey;not null"`
-	Number    int64             `gorm:"primaryKey;autoIncrement:false;not null"`
-	Config    agent.AgentConfig `gorm:"serializer:json;type:jsonb;not null"`
-	CreatedAt time.Time         `gorm:"not null"`
-	Agent     *Agent            `gorm:"foreignKey:AgentID;references:ID"`
+	AgentID            string    `gorm:"type:text;primaryKey;not null"`
+	Number             int64     `gorm:"primaryKey;autoIncrement:false;not null"`
+	ArtifactVersionID  string    `gorm:"type:text;not null"`
+	ArtifactVersionURI string    `gorm:"type:text;not null"`
+	CreatedAt          time.Time `gorm:"not null"`
+	Agent              *Agent    `gorm:"foreignKey:AgentID;references:ID"`
 }
 
 func (AgentVersion) TableName() string { return "agent_version" }

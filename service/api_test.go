@@ -62,6 +62,8 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 	t.Setenv("LISTEN_ADDR", "127.0.0.1:0")
 	t.Setenv("GIN_MODE", "test")
 	t.Setenv("SERVER_CONFIG_PATH", "../conf/server/config.toml")
+	artifactServer, _ := newFakeArtifact(t)
+	t.Setenv("ARTIFACT_ENDPOINT", artifactServer.URL)
 	token := "framework-lifecycle-test-token-32chars"
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

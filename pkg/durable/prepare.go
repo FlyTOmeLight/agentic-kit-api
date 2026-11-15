@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
@@ -17,80 +18,70 @@ func validEndpoint(raw string) bool {
 		u.Fragment == ""
 }
 
-// PrepareChatSubmission resolves the published agent version and conversation history.
+// PrepareChatSubmission compiles a chat run snapshot from a prefetched
+// published config; the closure only reads conversation history inside the
+// caller transaction and never queries agent tables or remote stores.
 func PrepareChatSubmission(
-	ctx context.Context,
-	tx *gorm.DB,
-	facts execution.SubmissionFacts,
-) (execution.PreparedSubmission, error) {
-	var agentRow table.Agent
-	if err := tx.WithContext(ctx).Where("owner_id = ? AND id = ?", facts.Owner, facts.SessionAgentID).
-		Take(&agentRow).Error; err != nil {
-		return execution.PreparedSubmission{}, recordError(err)
-	}
-	if agentRow.PublishedVersion == 0 {
-		return execution.PreparedSubmission{}, ErrConflict
-	}
-	var version table.AgentVersion
-	if err := tx.WithContext(ctx).Where("agent_id = ? AND number = ?", agentRow.ID, agentRow.PublishedVersion).
-		Take(&version).Error; err != nil {
-		return execution.PreparedSubmission{}, err
-	}
-	if len(version.Config.Toolsets) > 0 {
-		return execution.PreparedSubmission{}, ErrInvalid
-	}
-	spec := execution.CompileRunSpec(version.Config, agentRow.ID, version.Number, facts.Query, nil, nil)
-	if err := loadConversationHistory(tx, facts.Owner, facts.SessionID, &spec); err != nil {
-		return execution.PreparedSubmission{}, err
-	}
-	return execution.PreparedSubmission{
-		Spec:        spec,
-		UserMessage: execution.Message{Role: "user", Content: facts.Query},
-	}, nil
-}
-
-// PrepareApplicationSubmission resolves an explicit published version and optional filesystem binding.
-func PrepareApplicationSubmission(
-	ctx context.Context,
-	tx *gorm.DB,
-	facts execution.SubmissionFacts,
-) (execution.PreparedSubmission, error) {
-	input := facts.ExecutionSpec
-	var agentRow table.Agent
-	if err := tx.WithContext(ctx).Where("owner_id = ? AND id = ?", facts.Owner, input.AgentID).
-		Take(&agentRow).Error; err != nil {
-		return execution.PreparedSubmission{}, recordError(err)
-	}
-	var version table.AgentVersion
-	if err := tx.WithContext(ctx).Where("agent_id = ? AND number = ?", agentRow.ID, input.AgentVersion).
-		Take(&version).Error; err != nil {
-		return execution.PreparedSubmission{}, recordError(err)
-	}
-	spec := execution.CompileRunSpec(
-		version.Config,
-		agentRow.ID,
-		version.Number,
-		input.Query,
-		input.Scope,
-		input.Filesystem,
-	)
-	if len(spec.Toolsets) > 0 {
-		if spec.Filesystem == nil || spec.Filesystem.Provider != "AIO" ||
-			!validEndpoint(spec.Filesystem.URL) ||
-			spec.Filesystem.TokenEnv == "" ||
-			!strings.HasPrefix(spec.Filesystem.Workspace, "/") {
+	config agent.AgentConfig,
+	agentID string,
+	version int64,
+) PrepareSubmission {
+	return func(
+		ctx context.Context,
+		tx *gorm.DB,
+		facts execution.SubmissionFacts,
+	) (execution.PreparedSubmission, error) {
+		if len(config.Toolsets) > 0 {
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
-	} else if spec.Filesystem != nil {
-		return execution.PreparedSubmission{}, ErrInvalid
+		spec := execution.CompileRunSpec(config, agentID, version, facts.Query, nil, nil)
+		if err := loadConversationHistory(tx, facts.Owner, facts.SessionID, &spec); err != nil {
+			return execution.PreparedSubmission{}, err
+		}
+		return execution.PreparedSubmission{
+			Spec:        spec,
+			UserMessage: execution.Message{Role: "user", Content: facts.Query},
+		}, nil
 	}
-	if err := loadConversationHistory(tx, facts.Owner, facts.SessionID, &spec); err != nil {
-		return execution.PreparedSubmission{}, err
+}
+
+// PrepareApplicationSubmission compiles an application run snapshot from a
+// prefetched config; toolset/filesystem consistency depends only on the spec.
+func PrepareApplicationSubmission(
+	config agent.AgentConfig,
+	agentID string,
+	version int64,
+) PrepareSubmission {
+	return func(
+		ctx context.Context,
+		tx *gorm.DB,
+		facts execution.SubmissionFacts,
+	) (execution.PreparedSubmission, error) {
+		input := facts.ExecutionSpec
+		spec := execution.CompileRunSpec(config, agentID, version, input.Query, input.Scope, input.Filesystem)
+		if len(spec.Toolsets) > 0 {
+			if spec.Filesystem == nil ||
+				(spec.Filesystem.Provider != "AIO" && spec.Filesystem.Provider != "Sandbox") ||
+				!validEndpoint(spec.Filesystem.URL) ||
+				spec.Filesystem.TokenEnv == "" ||
+				!strings.HasPrefix(spec.Filesystem.Workspace, "/") {
+				return execution.PreparedSubmission{}, ErrInvalid
+			}
+			if spec.Filesystem.Provider == "AIO" &&
+				(spec.Filesystem.ProfileID != "" || spec.Filesystem.RestoreFromSandboxID != "") {
+				return execution.PreparedSubmission{}, ErrInvalid
+			}
+		} else if spec.Filesystem != nil {
+			return execution.PreparedSubmission{}, ErrInvalid
+		}
+		if err := loadConversationHistory(tx, facts.Owner, facts.SessionID, &spec); err != nil {
+			return execution.PreparedSubmission{}, err
+		}
+		return execution.PreparedSubmission{
+			Spec:        spec,
+			UserMessage: execution.Message{Role: "user", Content: input.Query},
+		}, nil
 	}
-	return execution.PreparedSubmission{
-		Spec:        spec,
-		UserMessage: execution.Message{Role: "user", Content: input.Query},
-	}, nil
 }
 
 func loadConversationHistory(tx *gorm.DB, owner, session string, spec *execution.Spec) error {

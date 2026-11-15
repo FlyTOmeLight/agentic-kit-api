@@ -34,6 +34,9 @@ func (s *Store) BeginStep(ctx context.Context, l Lease, intent StepIntent) (Step
 		if step.Status == "Completed" {
 			return StepDecision{Outcome: StepReplay, Result: step.Result}, nil
 		}
+		if intent.ExternalRef != "" && step.Status == "Started" && step.ExternalRef == intent.ExternalRef {
+			return StepDecision{Outcome: StepExternalWait}, nil
+		}
 		if intent.Policy == Unsafe {
 			return StepDecision{Outcome: StepUncertain}, nil
 		}
@@ -44,18 +47,28 @@ func (s *Store) BeginStep(ctx context.Context, l Lease, intent StepIntent) (Step
 	}
 	err = tx.Create(
 		&table.Step{
-			RunID:     l.RunID,
-			StepID:    intent.ID,
-			InputHash: Hash([]byte(intent.Input)),
-			Policy:    intent.Policy,
-			Status:    "Started",
+			RunID:       l.RunID,
+			StepID:      intent.ID,
+			InputHash:   Hash([]byte(intent.Input)),
+			Policy:      intent.Policy,
+			Status:      "Started",
+			ExternalRef: intent.ExternalRef,
 		},
 	).Error
 	if err != nil {
 		return StepDecision{}, err
 	}
-	if err = emit(ctx, tx, l.RunID, "ToolStarted", map[string]any{"stepID": intent.ID, "policy": intent.Policy}); err != nil {
+	if err = emit(
+		ctx,
+		tx,
+		l.RunID,
+		"ToolStarted",
+		map[string]any{"stepID": intent.ID, "policy": intent.Policy},
+	); err != nil {
 		return StepDecision{}, err
+	}
+	if intent.ExternalRef != "" {
+		return StepDecision{Outcome: StepExternalWait}, tx.Commit().Error
 	}
 	return StepDecision{Outcome: StepExecute}, tx.Commit().Error
 }

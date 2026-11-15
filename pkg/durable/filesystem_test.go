@@ -17,14 +17,8 @@ func TestFilesystemBindingIsFrozenAndRequired(t *testing.T) {
 		MaxTurns: 3,
 		Toolsets: []string{"filesystem"},
 	}
-	a, err := s.CreateAgent(ctx, "owner", "Coding AIO", config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	v, err := s.PublishAgent(ctx, "owner", a.ID, a.Revision)
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := createAgentFixture(t, s, "owner", "Coding AIO", config)
+	v := publishAgentFixture(t, s, "owner", a.ID, a.Revision)
 	spec := sdk.ExecutionSpec{
 		Scope: &sdk.Scope{
 			TenantID:  "tenant",
@@ -37,7 +31,18 @@ func TestFilesystemBindingIsFrozenAndRequired(t *testing.T) {
 		AgentVersion: v.Number,
 		Query:        "fix",
 	}
-	if _, _, err = s.SubmitExecution(ctx, "owner", "round", spec, time.Minute); !errors.Is(err, ErrInvalid) {
+	if _, _, err := submitExecutionFixture(
+		t,
+		s,
+		"owner",
+		"round",
+		spec,
+		time.Minute,
+		config,
+	); !errors.Is(
+		err,
+		ErrInvalid,
+	) {
 		t.Fatalf("missing workspace accepted: %v", err)
 	}
 	spec.Filesystem = &sdk.FilesystemBinding{
@@ -46,7 +51,7 @@ func TestFilesystemBindingIsFrozenAndRequired(t *testing.T) {
 		TokenEnv:  "AIO_TOKEN",
 		Workspace: "/workspace/repo",
 	}
-	r, created, err := s.SubmitExecution(ctx, "owner", "round", spec, time.Minute)
+	r, created, err := submitExecutionFixture(t, s, "owner", "round", spec, time.Minute, config)
 	if err != nil || !created {
 		t.Fatal(err)
 	}
@@ -59,7 +64,18 @@ func TestFilesystemBindingIsFrozenAndRequired(t *testing.T) {
 		t.Fatalf("binding lost: %+v", got.Spec)
 	}
 	spec.Filesystem.Workspace = "/workspace/different"
-	if _, _, err = s.SubmitExecution(ctx, "owner", "round", spec, time.Minute); !errors.Is(err, ErrConflict) {
+	if _, _, err = submitExecutionFixture(
+		t,
+		s,
+		"owner",
+		"round",
+		spec,
+		time.Minute,
+		config,
+	); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("binding changed on replay: %v", err)
 	}
 }

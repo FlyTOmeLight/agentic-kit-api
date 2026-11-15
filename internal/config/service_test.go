@@ -54,6 +54,8 @@ Listen = "${env:LISTEN_ADDR:127.0.0.1:9000}"
 [Redis]
 Addrs = ["localhost:6379"]
 DB = 0
+[Artifact]
+Endpoint = "http://127.0.0.1:18080"
 `)
 	cfg, err := Load(path)
 	if err != nil {
@@ -136,6 +138,9 @@ DSN = "${env:DATABASE_URL}"
 [Redis]
 Addrs = ["${env:TEST_CONFIG_REDIS_ADDR}"]
 DB = 0
+[Artifact]
+Endpoint = "${env:ARTIFACT_ENDPOINT:http://127.0.0.1:18080}"
+Timeout = 5000
 `)
 	t.Setenv("TEST_CONFIG_REDIS_ADDR", "localhost:6379")
 	t.Setenv("SERVER_CONFIG_PATH", path)
@@ -170,11 +175,37 @@ DB = 0
 	for _, change := range []func(*Service){
 		func(c *Service) { c.HTTPServer.APIBasePath = "/prefix" },
 		func(c *Service) { c.HTTPServer.WriteTimeout = 0 },
+		func(c *Service) { c.Sandbox.CheckpointImage = "saver:v1" },
+		func(c *Service) {
+			c.Sandbox = SandboxConfig{K8sContext: "local", CheckpointStoreHostPath: "/checkpoints"}
+		},
+		func(c *Service) {
+			c.Sandbox = SandboxConfig{K8sContext: "local", CheckpointImage: "saver:v1", CheckpointStoreHostPath: "relative"}
+		},
+		func(c *Service) { c.Callback.AllowedSources = []string{"approval"} },
+		func(c *Service) { c.Callback = CallbackConfig{SigningSecret: "test", AllowedSources: []string{""}} },
+		func(c *Service) {
+			c.Callback = CallbackConfig{SigningSecret: "test", AllowedSources: []string{" approval "}}
+		},
+		func(c *Service) { c.Artifact.Endpoint = "127.0.0.1:18080" },
+		func(c *Service) { c.Artifact.Endpoint = "ftp://127.0.0.1" },
+		func(c *Service) { c.Artifact.Endpoint = "http://user:pass@127.0.0.1" },
+		func(c *Service) { c.Artifact.Endpoint = "http://127.0.0.1/?q=1" },
+		func(c *Service) { c.Artifact.Endpoint = "http://127.0.0.1/#fragment" },
+		func(c *Service) { c.Artifact.Timeout = -1 },
 	} {
 		bad := cfg
 		change(&bad)
 		if bad.ValidateAPI() == nil {
 			t.Fatal("configuration breaking the HTTP contract accepted")
 		}
+	}
+	cfg.Sandbox = SandboxConfig{
+		K8sContext:              "local",
+		CheckpointImage:         "saver:v1",
+		CheckpointStoreHostPath: "/checkpoints",
+	}
+	if err := cfg.ValidateAPI(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
 
+	agentapp "github.com/FlyTOmeLight/agentic-kit-api/internal/app/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
@@ -18,6 +19,8 @@ func (h *Controller) RegisterExecutionRoutes(router core.Router) {
 	group.GET("/healthz", h.health)
 	group.POST("/executions", h.submitExecution)
 	group.GET("/executions/:id/lease", h.executionLease)
+	group.POST("/executions/:id/callback", h.executionCallback)
+	h.RegisterGoalRoutes(group)
 }
 
 // health 查询内部执行入口健康状态。
@@ -66,6 +69,7 @@ func (h *Controller) submitExecution(c *core.Context) {
 	req.IdempotencyKey = headers.IdempotencyKey
 	r, created, err := h.execution.SubmitApplication(
 		c.Request.Context(),
+		agentapp.RequestIdentity(c),
 		auth.UserID(c),
 		req.IdempotencyKey,
 		req.Spec,
@@ -89,6 +93,7 @@ func (h *Controller) submitExecution(c *core.Context) {
 // @Security BearerAuth
 // @Param id path string true "id"
 // @Param epoch query int true "执行 epoch" minimum(1)
+// @Param workerId query string false "领取 worker ID"
 // @Success 200 {object} agenticv1.LeaseCheck "成功"
 // @Failure 400 {object} serrors.Error "参数无效"
 // @Failure 401 {object} serrors.Error "身份校验失败"
@@ -102,10 +107,16 @@ func (h *Controller) executionLease(c *core.Context) {
 		serrors.AbortWithError(c, err)
 		return
 	}
-	allowed, err := h.execution.CheckExecutionLease(c.Request.Context(), auth.UserID(c), req.ID, req.Epoch)
+	verdict, err := h.execution.AuthorizeExecution(
+		c.Request.Context(),
+		auth.UserID(c),
+		req.ID,
+		req.WorkerID,
+		req.Epoch,
+	)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
 	}
-	c.JSON(200, sdk.LeaseCheck{Allowed: allowed})
+	c.JSON(200, verdict)
 }

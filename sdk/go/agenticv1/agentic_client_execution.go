@@ -34,11 +34,17 @@ func (c *executionClient) Submit(ctx context.Context, req *SubmitExecutionReques
 }
 
 func (c *executionClient) CheckLease(ctx context.Context, req *CheckExecutionLeaseRequest) (*LeaseCheck, error) {
+	q := url.Values{}
+	q.Set("epoch", strconv.FormatInt(req.Epoch, 10))
+	if req.WorkerID != "" {
+		q.Set("workerId", req.WorkerID)
+	}
 	return jsonResult[LeaseCheck](
 		ctx,
 		c.transport,
 		http.MethodGet,
-		"/internal/v1/executions/"+url.PathEscape(req.ID)+"/lease?epoch="+strconv.FormatInt(req.Epoch, 10),
+		"/internal/v1/executions/"+url.PathEscape(req.ID)+"/lease?"+q.Encode(),
+		nil,
 		nil,
 		http.StatusOK,
 	)

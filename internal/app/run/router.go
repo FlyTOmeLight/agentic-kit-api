@@ -5,20 +5,23 @@ import (
 	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
 
 	appexec "github.com/FlyTOmeLight/agentic-kit-api/internal/app/execution"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
 )
 
 type Controller struct {
 	service   Service
 	redis     frameworkredis.Redis
 	execution *appexec.Service
+	callback  config.CallbackConfig
 }
 
 func NewController(
 	service Service,
 	execution *appexec.Service,
 	redisClient frameworkredis.Redis,
+	callback config.CallbackConfig,
 ) *Controller {
-	return &Controller{service: service, execution: execution, redis: redisClient}
+	return &Controller{service: service, execution: execution, redis: redisClient, callback: callback}
 }
 
 func (h *Controller) RegisterRoutes(v1 *core.RouterGroup) {

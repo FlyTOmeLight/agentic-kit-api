@@ -67,7 +67,8 @@ func TestCommitBoundaryRejectsInvalidCombinations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Status != before.Status || after.EventSeq != before.EventSeq || string(after.State) != string(before.State) ||
+	if after.Status != before.Status || after.EventSeq != before.EventSeq ||
+		string(after.State) != string(before.State) ||
 		after.WaitingStep != "" ||
 		after.WaitingKind != "" {
 		t.Fatalf("invalid boundary wrote state: %+v", after)
@@ -125,8 +126,8 @@ func TestCommitBoundaryDerivesStatusMessageEvent(t *testing.T) {
 	}
 	for _, tc := range steps {
 		t.Run(tc.name, func(t *testing.T) {
-			session := testConversation(t, s, Spec{MaxTurns: 5})
-			r, _, err := s.Submit(ctx, "owner", session.ID, NewID(), "question", time.Hour, 3)
+			session, cfg := testConversation(t, s, Spec{MaxTurns: 5})
+			r, _, err := submitFixture(t, s, "owner", session.ID, NewID(), "question", time.Hour, 3, cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -145,7 +146,8 @@ func TestCommitBoundaryDerivesStatusMessageEvent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Status != tc.status || got.Output != tc.boundary.Output || got.Error != tc.boundary.Detail ||
+			if got.Status != tc.status || got.Output != tc.boundary.Output ||
+				got.Error != tc.boundary.Detail ||
 				got.WaitingStep != tc.boundary.WaitingStep ||
 				got.WaitingKind != tc.boundary.Kind.Interaction() {
 				t.Fatalf("run=%+v", got)

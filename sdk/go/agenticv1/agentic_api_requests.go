@@ -63,8 +63,9 @@ type OpenRunEventsRequest struct {
 }
 
 type CheckExecutionLeaseRequest struct {
-	ID    string `json:"-" uri:"id" binding:"required,max=128"`
-	Epoch int64  `json:"-" form:"epoch" binding:"required,min=1"`
+	ID       string `json:"-" uri:"id" binding:"required,max=128"`
+	Epoch    int64  `json:"-" form:"epoch" binding:"required,min=1"`
+	WorkerID string `json:"-" form:"workerId" binding:"omitempty,max=128"`
 }
 
 type SendMessageResponse struct {

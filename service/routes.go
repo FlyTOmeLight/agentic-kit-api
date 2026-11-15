@@ -8,25 +8,39 @@ import (
 	appexec "github.com/FlyTOmeLight/agentic-kit-api/internal/app/execution"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/run"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/session"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/sandboxcenter"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
 type routes struct {
-	agent   *agent.Controller
-	session *session.Controller
-	run     *run.Controller
+	agent        *agent.Controller
+	session      *session.Controller
+	run          *run.Controller
+	sandbox      *sandboxcenter.Controller
+	sandboxStore *sandboxcenter.Store
 }
 
 func newRoutes(
 	store *durable.Store,
 	cache frameworkredis.Redis,
+	artifact client.ArtifactStore,
+	sandboxStore *sandboxcenter.Store,
+	sandboxProvider *sandboxcenter.Provider,
+	callbackCfg config.CallbackConfig,
 ) *routes {
-	exec := appexec.NewService(store)
-	return &routes{
-		agent:   agent.NewController(store),
-		session: session.NewController(session.NewService(store, exec)),
-		run:     run.NewController(store, exec, cache),
+	exec := appexec.NewService(store, artifact)
+	r := &routes{
+		agent:        agent.NewController(agent.NewService(store.DB(), artifact)),
+		session:      session.NewController(session.NewService(store, exec)),
+		run:          run.NewController(store, exec, cache, callbackCfg),
+		sandboxStore: sandboxStore,
 	}
+	if sandboxProvider != nil {
+		r.sandbox = sandboxcenter.NewController(sandboxcenter.NewService(sandboxStore, sandboxProvider))
+	}
+	return r
 }
 
 func (r *routes) register(router *core.RouterGroup) {
@@ -38,4 +52,9 @@ func (r *routes) register(router *core.RouterGroup) {
 	r.agent.RegisterRoutes(v1)
 	r.session.RegisterRoutes(v1)
 	r.run.RegisterRoutes(v1)
+	if r.sandbox != nil {
+		r.sandbox.RegisterRoutes(v1)
+	} else if r.sandboxStore != nil {
+		sandboxcenter.RegisterStoreRoutes(v1, r.sandboxStore)
+	}
 }

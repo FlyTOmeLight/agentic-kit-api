@@ -48,7 +48,12 @@ func TestBeginStepOutcomes(t *testing.T) {
 	if err := s.FinishStep(ctx, r.Lease(), "lookup", "result", []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if d, err := s.BeginStep(ctx, r.Lease(), intent); err != nil || d.Outcome != StepReplay || d.Result != "result" {
+	if d, err := s.BeginStep(
+		ctx,
+		r.Lease(),
+		intent,
+	); err != nil || d.Outcome != StepReplay ||
+		d.Result != "result" {
 		t.Fatalf("replay: %+v %v", d, err)
 	}
 	if d, err := s.BeginStep(

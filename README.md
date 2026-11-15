@@ -2,6 +2,8 @@
 
 管理 Agent 草稿、不可变发布版本、会话、消息与持久化执行任务。模型推理与工具执行由独立的 `agentic-kit-worker` 完成；API 与 worker 共用 PostgreSQL 和本仓库的 durable 契约，可分别部署和扩容。
 
+Agent 草稿保存在本地，已发布配置正文存入 artifact-go，本地版本表仅保存公开版本号及远端 ID/URI。API 接受新任务前读取指定版本并冻结到 Run，worker 执行和恢复均使用该快照。
+
 本仓库只提供通用 Agent 能力。项目工作台、项目权限政策、产品模板、数据集、评测实验和场景发布审批由调用方应用负责，不在 API 中实现。执行请求可以携带 tenant、project、actor、task 等上下文，核心只据此隔离任务和保存快照，不查询或管理项目业务。
 
 当前执行链路支持 worker 重启后接管已提交任务。Memory 的[技术设计](docs/memory-design.md)已提出复用 artifact-go 版本服务，仍待实施。[通用框架重构设计](docs/refactoring-design.md)中的访问对象、新表结构和上下文管线也仍待实施；本次删除平台业务不代表整套重构已经完成。
@@ -21,10 +23,12 @@ agentic-kit-api/
 ├── service/                  # 公开构造、资源装配、HTTP 路由与 Outbox 生命周期
 ├── internal/
 │   ├── app/
-│   │   ├── agent/            # Agent HTTP 接口与消费方事务接口
+│   │   ├── agent/            # Agent 草稿事务、远端发布与 HTTP 接口
+│   │   ├── execution/        # 版本预取与持久化提交
 │   │   ├── session/          # 会话、消息与提交接口
 │   │   ├── run/              # 执行、租约、取消、人工恢复、trace 与 SSE
 │   │   └── apperror/         # 领域错误到 HTTP 错误的映射
+│   ├── client/               # artifact SDK 适配与错误转换
 │   ├── config/               # 类型化配置与启动校验
 │   ├── schema/               # 空库目标表结构初始化
 │   └── table/                # Agent、Session、Run、Step、Event、Message 表模型
@@ -37,7 +41,7 @@ agentic-kit-api/
 └── charts/agentic-kit-api/    # API、PostgreSQL 与 Redis 部署模板
 ```
 
-数据库操作与跨域事务位于 `pkg/durable`，Controller 负责绑定和响应；表模型仅在 `internal/table` 维护。独立服务的 `service.Build` 创建连接并交给 server-go Runtime；组合应用通过 `service.New` 注入已有资源，所有者在服务停止后关闭连接。
+Agent 资产事务由 `internal/app/agent` 负责，单表查询位于 `internal/table/agent_query.go`；执行一致性事务位于 `pkg/durable`。Controller 负责绑定和响应，表模型仅在 `internal/table` 维护。独立服务的 `service.Build` 创建连接与 artifact 客户端并交给 server-go Runtime；组合应用通过 `service.New` 注入已有资源，所有者在服务停止后关闭资源。
 
 ## 配置与启动
 
@@ -47,9 +51,13 @@ GOWORK=off go run ./cmd/server -config conf/server/config.toml
 
 通过 `-config`、`CONFIG_FILE`、`SERVER_CONFIG_PATH` 依次选择配置路径，未指定时读取 `conf/server/config.toml`。环境变量通过 TOML 中的 `${env:NAME:default}` 占位符映射，普通常量不被同名环境变量覆盖。
 
-当前只需 HTTP、数据库和 Redis 配置。常用环境变量为 `DATABASE_URL`、`REDIS_ADDR`、`LISTEN_ADDR`。`[Redis]` 使用 server-go `redis.Config`，以 `Addrs` 和 `DB` 配置连接；Redis 离线不阻止启动，事件仍从数据库回放。模型与工具凭据由 worker 环境提供，快照仅保存环境变量引用。
+启动需要 HTTP、数据库、Redis 和 `[Artifact]` 配置。常用环境变量为 `DATABASE_URL`、`REDIS_ADDR`、`LISTEN_ADDR`、`ARTIFACT_ENDPOINT`；`Artifact.Timeout` 的单位为毫秒。发布 Agent、读取版本正文和接受新任务依赖 artifact 服务，已接受任务的执行与恢复不依赖它。`[Redis]` 使用 server-go `redis.Config`，以 `Addrs` 和 `DB` 配置连接；Redis 离线不阻止启动，事件仍从数据库回放。模型与工具凭据由 worker 环境提供，快照仅保存环境变量引用。
+
+本地沙箱运行时通过 `[Sandbox]` 启用。自动保存与检查点恢复需设置 `SANDBOX_K8S_CONTEXT`、`SANDBOX_GUARD_IMAGE`、`SANDBOX_CHECKPOINT_IMAGE` 和绝对路径 `SANDBOX_CHECKPOINT_STORE_HOST_PATH`；后两项必须同时配置。当前存储适用于单节点 hostPath，申请恢复还须匹配 Run 冻结的文件系统绑定，详见[保存与恢复验证](docs/sandbox-center/layerfs-save-verification.md)。
 
 API 不维护静态 token、config owner 白名单、Tenant/Coding 业务客户端或对应连接配置。请求身份与鉴权后续通过 forge-tenant-api middleware 接入；当前尚未接入，业务路由没有身份校验。`auth.UserID(c)` 是现有身份读取点，持久化对象按 owner 隔离。
+
+真实 artifact 联调尚未完成：缺少已核验租户时适配器返回 503；Controller 到 artifact 的 Forge 会话 Cookie、CSRF 与 Origin 透传也尚未接通。当前假服务测试通过不能作为发布路径可上线的证据。
 
 `service.Build` 在接收请求前调用 `durable.Store.InitSchema`，在空库或空 schema 上初始化目标表结构；该初始化可重复执行，只建表与约束，不做历史迁移或数据回填。组合部署直接调用 `service.New` 时由调用方负责初始化。本仓库不提供 `eval`、`migrate` 命令或 Helm 迁移任务。
 

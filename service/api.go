@@ -9,33 +9,89 @@ import (
 	"github.com/FlyTOmeLight/server-go/logger"
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
+	"gorm.io/gorm"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/sandboxcenter"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
 var _ host.Service = (*API)(nil)
 
 type API struct {
-	routes  *routes
-	log     *logger.Logger
-	stopped bool
-	store   *durable.Store
-	redis   frameworkredis.Redis
-	cancel  context.CancelFunc
-	done    chan struct{}
+	routes     *routes
+	log        *logger.Logger
+	stopped    bool
+	store      *durable.Store
+	redis      frameworkredis.Redis
+	reconciler *sandboxcenter.Reconciler
+	cancel     context.CancelFunc
+	done       chan struct{}
 }
 
 // New constructs an API using caller-owned resources. Stop joins background tasks;
 // the caller releases Store and Redis after Stop succeeds.
-func New(cfg Config, log *logger.Logger, store *durable.Store, cache frameworkredis.Redis) (*API, error) {
+func New(
+	cfg Config,
+	log *logger.Logger,
+	store *durable.Store,
+	cache frameworkredis.Redis,
+	artifact client.ArtifactStore,
+) (*API, error) {
 	if err := cfg.ValidateAPI(); err != nil {
 		return nil, err
 	}
-	if log == nil || store == nil || cache == nil {
-		return nil, errors.New("API requires logger, store and Redis")
+	if log == nil || store == nil || cache == nil || artifact == nil {
+		return nil, errors.New("API requires logger, store, Redis and artifact client")
 	}
 	a := &API{log: log, store: store, redis: cache}
-	a.routes = newRoutes(store, cache)
+	a.routes = newRoutes(store, cache, artifact, nil, nil, cfg.Callback)
+	return a, nil
+}
+
+// NewWithSandbox constructs the API with the sandbox control plane. When
+// cfg.Sandbox.K8sContext is empty the provider is disabled and only
+// metadata routes are served.
+func NewWithSandbox(
+	cfg Config,
+	log *logger.Logger,
+	store *durable.Store,
+	cache frameworkredis.Redis,
+	artifact client.ArtifactStore,
+	db *gorm.DB,
+) (*API, error) {
+	a, err := New(cfg, log, store, cache, artifact)
+	if err != nil {
+		return nil, err
+	}
+	sandboxStore := sandboxcenter.NewStore(db)
+	var provider *sandboxcenter.Provider
+	if cfg.Sandbox.K8sContext != "" {
+		provider, err = sandboxcenter.NewProvider(sandboxcenter.K8sConfig{
+			Context:          cfg.Sandbox.K8sContext,
+			Namespace:        cfg.Sandbox.K8sNamespace,
+			GuardImage:       cfg.Sandbox.GuardImage,
+			RuntimeClassName: cfg.Sandbox.RuntimeClassName,
+		})
+		if err != nil {
+			return nil, err
+		}
+		a.reconciler = sandboxcenter.NewReconciler(
+			sandboxStore,
+			provider,
+			sandboxcenter.ReconcilerConfig{},
+			log,
+		)
+	}
+	a.routes = newRoutes(store, cache, artifact, sandboxStore, provider, cfg.Callback)
+	if provider != nil && cfg.Sandbox.CheckpointImage != "" {
+		checkpoints := sandboxcenter.NewService(sandboxStore, provider).
+			WithCheckpoints(sandboxcenter.CheckpointConfig{
+				Image: cfg.Sandbox.CheckpointImage, StoreHostPath: cfg.Sandbox.CheckpointStoreHostPath,
+			})
+		a.routes.sandbox = sandboxcenter.NewController(checkpoints)
+		a.reconciler.WithCheckpoints(checkpoints)
+	}
 	return a, nil
 }
 
@@ -62,6 +118,13 @@ func (a *API) Start(ctx context.Context) error {
 			func(err error) { a.log.Errorf(ctx, "outbox publish failed: %v", err) },
 		)
 	}()
+	if a.reconciler != nil {
+		go func() {
+			if err := a.reconciler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				a.log.Errorf(ctx, "sandbox reconciler stopped: %v", err)
+			}
+		}()
+	}
 	return nil
 }
 

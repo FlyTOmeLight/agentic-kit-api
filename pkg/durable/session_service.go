@@ -2,12 +2,9 @@ package durable
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
-	"time"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
-	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 func sessionFromRow(r table.Session) *Session {
@@ -26,11 +23,11 @@ func (s *Store) CreateSession(ctx context.Context, owner, agent, title string) (
 	if len(title) > 200 {
 		return nil, ErrInvalid
 	}
-	a, err := s.Agent(ctx, owner, agent)
+	agentRow, err := table.GetAgent(s.db.WithContext(ctx), owner, agent)
 	if err != nil {
-		return nil, err
+		return nil, recordError(err)
 	}
-	if a.PublishedVersion == 0 {
+	if agentRow.PublishedVersion == 0 {
 		return nil, ErrConflict
 	}
 	r := table.Session{ID: NewID(), OwnerID: owner, AgentID: agent, Title: title}
@@ -112,26 +109,4 @@ func (s *Store) SessionRuns(ctx context.Context, owner, session, after string, l
 		out[i] = *runFromRow(r)
 	}
 	return out, err
-}
-
-// Submit freezes the published configuration and conversation history in the same
-// transaction as the user message, run and queued event. A retry hashes only the
-// caller's input, so publishing a new version cannot invalidate an accepted request.
-func (s *Store) Submit(
-	ctx context.Context,
-	owner, session, key, query string,
-	ttl time.Duration,
-	maxAttempts int,
-) (*Run, bool, error) {
-	input, _ := json.Marshal(struct{ Session, Query string }{Session: session, Query: query})
-	return s.accept(ctx, execution.SubmitCommand{
-		Owner:       owner,
-		RequestKey:  key,
-		RequestHash: Hash(input),
-		TTL:         ttl,
-		MaxAttempts: maxAttempts,
-		Kind:        execution.SubmitChat,
-		SessionID:   session,
-		Query:       query,
-	}, PrepareChatSubmission)
 }

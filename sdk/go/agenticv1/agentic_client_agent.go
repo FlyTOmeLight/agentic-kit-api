@@ -12,7 +12,7 @@ type agentClient struct{ transport *transport }
 var _ AgentAPI = (*agentClient)(nil)
 
 func (c *agentClient) Create(ctx context.Context, req *CreateAgentRequest) (*Agent, error) {
-	return jsonResult[Agent](ctx, c.transport, http.MethodPost, "/v1/agents", req, http.StatusCreated)
+	return jsonResult[Agent](ctx, c.transport, http.MethodPost, "/v1/agents", req, nil, http.StatusCreated)
 }
 
 func (c *agentClient) Get(ctx context.Context, req *GetAgentRequest) (*Agent, error) {
@@ -21,6 +21,7 @@ func (c *agentClient) Get(ctx context.Context, req *GetAgentRequest) (*Agent, er
 		c.transport,
 		http.MethodGet,
 		"/v1/agents/"+url.PathEscape(req.ID),
+		nil,
 		nil,
 		http.StatusOK,
 	)
@@ -33,6 +34,7 @@ func (c *agentClient) List(ctx context.Context, req *ListAgentsRequest) (*Page[A
 		http.MethodGet,
 		withQuery("/v1/agents", req.PageOptions.query()),
 		nil,
+		nil,
 		http.StatusOK,
 	)
 }
@@ -44,6 +46,7 @@ func (c *agentClient) Update(ctx context.Context, req *UpdateAgentRequest) (*Age
 		http.MethodPut,
 		"/v1/agents/"+url.PathEscape(req.ID),
 		req,
+		nil,
 		http.StatusOK,
 	)
 }
@@ -55,6 +58,7 @@ func (c *agentClient) Publish(ctx context.Context, req *PublishAgentRequest) (*A
 		http.MethodPost,
 		"/v1/agents/"+url.PathEscape(req.ID)+"/publish",
 		req,
+		nil,
 		http.StatusOK,
 	)
 }
@@ -65,6 +69,7 @@ func (c *agentClient) GetVersion(ctx context.Context, req *GetAgentVersionReques
 		c.transport,
 		http.MethodGet,
 		"/v1/agents/"+url.PathEscape(req.ID)+"/versions/"+strconv.FormatInt(req.Number, 10),
+		nil,
 		nil,
 		http.StatusOK,
 	)

@@ -42,6 +42,10 @@ func (b Boundary) Validate() error {
 		if b.Output != "" || b.Detail == "" || b.WaitingStep == "" {
 			return ErrInvalid
 		}
+	case BoundaryAwaitExternal:
+		if b.Output != "" || b.Detail == "" || b.WaitingStep == "" || b.ExternalRef == "" {
+			return ErrInvalid
+		}
 	default:
 		return ErrInvalid
 	}

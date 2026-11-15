@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
@@ -49,7 +53,22 @@ func newRouter(
 	tokens map[string]string,
 	extra func(*gin.RouterGroup),
 ) http.Handler {
+	return newRouterWithCallback(t, store, redisClient, tokens, config.CallbackConfig{}, extra)
+}
+
+func newRouterWithCallback(
+	t *testing.T,
+	store *durable.Store,
+	redisClient redis.UniversalClient,
+	tokens map[string]string,
+	callbackCfg config.CallbackConfig,
+	extra func(*gin.RouterGroup),
+) http.Handler {
 	t.Helper()
+	if store == nil {
+		// Validation-only tests never reach the database.
+		store = &durable.Store{}
+	}
 	settings, err := conf.FromSettings(map[string]any{"AppName": "agentic", "AppCode": 100, "RunMode": "release"})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +83,8 @@ func newRouter(
 		t.Fatal(err)
 	}
 	t.Cleanup(log.Close)
-	routes := newRoutes(store, redisClient)
+	artifactServer, _ := newFakeArtifact(t)
+	routes := newRoutes(store, redisClient, newArtifactClient(t, artifactServer), nil, nil, callbackCfg)
 	h, err := host.NewHTTPHost(manager, log, nil, testRoutes{register: func(g *gin.RouterGroup) {
 		// Test double for the future Forge middleware: it only establishes the
 		// identity context and does not authenticate or authorize requests.
@@ -72,6 +92,7 @@ func newRouter(
 			token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 			if owner := tokens[token]; owner != "" {
 				c.Set(constants.KeyUserID, owner)
+				c.Set(constants.KeyTenantID, "test-tenant")
 			}
 			c.Next()
 		})
@@ -278,6 +299,174 @@ func TestGinRecoveryDoesNotAppendJSONToStream(t *testing.T) {
 	}
 }
 
+func TestCallbackSecurity(t *testing.T) {
+	secret := "callback-test-secret"
+	router := newRouterWithCallback(
+		t,
+		nil,
+		nil,
+		map[string]string{testToken: "owner"},
+		config.CallbackConfig{
+			SigningSecret:  secret,
+			AllowedSources: []string{"approval-system"},
+		},
+		nil,
+	)
+	path := "/internal/v1/executions/run-1/callback"
+	// Invalid JSON body is intentional for the valid-signature case so we can
+	// verify that signature & source pass before binder validation runs without a DB.
+	body := `{}`
+	validSig := callbackSignature(secret, path, "approval-system", body)
+
+	send := func(source, sig string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+testToken)
+		if source != "" {
+			r.Header.Set("X-Agentic-Source", source)
+		}
+		if sig != "" {
+			r.Header.Set("X-Agentic-Signature", sig)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w
+	}
+
+	assertError(t, send("untrusted", validSig), http.StatusForbidden, "Forbidden")
+	assertError(t, send("", validSig), http.StatusForbidden, "Forbidden")
+	assertError(t, send("approval-system", ""), http.StatusUnauthorized, "Unauthorized")
+	assertError(t, send("approval-system", "sha256=deadbeef"), http.StatusUnauthorized, "Unauthorized")
+	assertError(
+		t,
+		send("approval-system", strings.TrimPrefix(validSig, "sha256=")),
+		http.StatusUnauthorized,
+		"Unauthorized",
+	)
+	assertError(
+		t,
+		send("approval-system", callbackSignature(secret, "/other-run", "approval-system", body)),
+		http.StatusUnauthorized,
+		"Unauthorized",
+	)
+	assertError(
+		t,
+		send("approval-system", callbackSignature(secret, path, "other-source", body)),
+		http.StatusUnauthorized,
+		"Unauthorized",
+	)
+	assertError(
+		t,
+		send("approval-system", callbackSignature(secret, path, "approval-system", `{"result":"tampered"}`)),
+		http.StatusUnauthorized,
+		"Unauthorized",
+	)
+	// Passing both source and signature reaches binder validation (400 InvalidParameter on `{}`).
+	assertError(t, send("approval-system", validSig), http.StatusBadRequest, "InvalidParameter")
+}
+
+func callbackSignature(secret, path, source, body string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = io.WriteString(mac, http.MethodPost+"\n"+path+"\n"+source+"\n"+body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func TestSignedCallbackResumesRunWithoutQueryOverride(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	secret := "callback-test-secret"
+	source := "approval-system"
+	router := newRouterWithCallback(t, store, nil, map[string]string{testToken: "owner"},
+		config.CallbackConfig{SigningSecret: secret, AllowedSources: []string{source}}, nil)
+	session := createHTTPConversation(t, router)
+	response := request(router, http.MethodPost, "/v1/sessions/"+session.ID+"/messages",
+		`{"query":"wait for approval"}`, testToken, "callback-run")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("submit: %d %s", response.Code, response.Body)
+	}
+	claimed, err := store.Claim(ctx, "callback-worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := durable.StepIntent{
+		ID:          "approval",
+		Input:       "submit",
+		Policy:      durable.Idempotent,
+		ExternalRef: "approval-42",
+	}
+	if _, err = store.BeginStep(ctx, claimed.Lease(), intent); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.CommitBoundary(ctx, claimed.Lease(), durable.Boundary{
+		Kind: durable.BoundaryAwaitExternal, State: json.RawMessage(`{}`),
+		WaitingStep: intent.ID, ExternalRef: intent.ExternalRef, Detail: "awaiting approval",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/internal/v1/executions/" + claimed.ID + "/callback"
+	body := `{"stepID":"approval","externalRef":"approval-42","result":"approved"}`
+	for range 2 {
+		httpRequest := httptest.NewRequest(
+			http.MethodPost,
+			path+"?StepID=other&ExternalRef=other&Result=tampered",
+			strings.NewReader(body),
+		)
+		httpRequest.Header.Set("Content-Type", "application/json")
+		httpRequest.Header.Set("Authorization", "Bearer "+testToken)
+		httpRequest.Header.Set("X-Agentic-Source", source)
+		httpRequest.Header.Set("X-Agentic-Signature", callbackSignature(secret, path, source, body))
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httpRequest)
+		if recorder.Code != http.StatusNoContent {
+			t.Fatalf("callback: %d %s", recorder.Code, recorder.Body)
+		}
+	}
+	resumed, err := store.Claim(ctx, "resumed-worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := store.BeginStep(ctx, resumed.Lease(), intent)
+	if err != nil || decision.Outcome != durable.StepReplay || decision.Result != "approved" {
+		t.Fatalf("signed result changed: %+v err=%v", decision, err)
+	}
+}
+
+func TestCallbackBodyLimitsAndJSONBinding(t *testing.T) {
+	path := "/internal/v1/executions/run/callback"
+	for _, secret := range []string{"", "test-secret"} {
+		router := newRouterWithCallback(t, nil, nil, nil, config.CallbackConfig{SigningSecret: secret}, nil)
+		for _, test := range []struct {
+			name, body, contentType, query string
+			status                         int
+		}{
+			{name: "oversize", body: `{"result":"` + strings.Repeat("x", 1<<20) + `"}`, contentType: "application/json", status: http.StatusRequestEntityTooLarge},
+			{name: "form", body: "StepID=a&ExternalRef=b&Result=c", contentType: "application/x-www-form-urlencoded", status: http.StatusBadRequest},
+			{name: "query only", query: "?StepID=a&ExternalRef=b&Result=c", contentType: "application/json", status: http.StatusBadRequest},
+		} {
+			t.Run(fmt.Sprintf("signed=%t/%s", secret != "", test.name), func(t *testing.T) {
+				httpRequest := httptest.NewRequest(
+					http.MethodPost,
+					path+test.query,
+					strings.NewReader(test.body),
+				)
+				httpRequest.ContentLength = -1
+				httpRequest.Header.Set("Content-Type", test.contentType)
+				if secret != "" {
+					httpRequest.Header.Set(
+						"X-Agentic-Signature",
+						callbackSignature(secret, path, "", test.body),
+					)
+				}
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, httpRequest)
+				if response.Code != test.status {
+					t.Fatalf("status=%d want=%d body=%s", response.Code, test.status, response.Body)
+				}
+			})
+		}
+	}
+}
+
 func integrationStore(t *testing.T) *durable.Store {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -381,7 +570,11 @@ func TestGinRunLifecycleAndSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.CommitBoundary(ctx, active.Lease(), durable.Boundary{Kind: durable.BoundaryComplete, State: json.RawMessage(`{}`), Output: "final\nanswer"}); err != nil {
+	if err = store.CommitBoundary(
+		ctx,
+		active.Lease(),
+		durable.Boundary{Kind: durable.BoundaryComplete, State: json.RawMessage(`{}`), Output: "final\nanswer"},
+	); err != nil {
 		t.Fatal(err)
 	}
 	eventRequest := httptest.NewRequest("GET", "/v1/runs/"+run.ID+"/events", nil)

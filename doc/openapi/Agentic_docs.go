@@ -110,6 +110,90 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "/internal/v1/executions/{id}/callback": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "外部系统回调",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "run id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "JSON 请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/run.executionCallbackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "成功，无响应体"
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "来源不允许",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "状态或幂等冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "413": {
+                        "description": "请求体超过限制",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/internal/v1/executions/{id}/lease": {
             "get": {
                 "security": [
@@ -139,6 +223,12 @@ const docTemplateAgentic = `{
                         "name": "epoch",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "领取 worker ID",
+                        "name": "workerId",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -168,6 +258,521 @@ const docTemplateAgentic = `{
                     },
                     "404": {
                         "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/goals": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "列出 Goal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "状态过滤",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "上限",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/execution.Goal"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "创建或重放 Goal",
+                "parameters": [
+                    {
+                        "description": "JSON 请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/run.createGoalRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "幂等重放",
+                        "schema": {
+                            "$ref": "#/definitions/execution.Goal"
+                        }
+                    },
+                    "201": {
+                        "description": "创建成功",
+                        "schema": {
+                            "$ref": "#/definitions/execution.Goal"
+                        }
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "幂等标识冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/goals/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "查询 Goal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功",
+                        "schema": {
+                            "$ref": "#/definitions/execution.Goal"
+                        }
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/goals/{id}/evaluations": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "记录验收结果",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "goal id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "JSON 请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/run.recordEvaluationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功或幂等重放",
+                        "schema": {
+                            "$ref": "#/definitions/execution.Evaluation"
+                        }
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "同一 Run 的验收结果冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/goals/{id}/evaluations/{runID}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "查询验收结果",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "goal id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "run id",
+                        "name": "runID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功",
+                        "schema": {
+                            "$ref": "#/definitions/execution.Evaluation"
+                        }
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/goals/{id}/pause": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "暂停 Goal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "成功，无响应体"
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "状态冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/goals/{id}/resume": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "恢复 Goal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "成功，无响应体"
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "状态冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/v1/goals/{id}/steer": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "注入 Steering",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "goal id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "JSON 请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/run.steerGoalRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "成功，无响应体"
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Goal 无活跃 Run 或状态冲突",
                         "schema": {
                             "$ref": "#/definitions/errors.Error"
                         }
@@ -1071,6 +1676,253 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "/v1/sandboxes": {
+            "post": {
+                "description": "按 (ownerId, requestKey) 幂等；首次申请会调度 Pod 并激活租约。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sandbox"
+                ],
+                "summary": "申请沙箱",
+                "parameters": [
+                    {
+                        "description": "申请参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/sandboxcenter.acquireRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sandboxcenter.sandboxView"
+                        }
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "状态或幂等冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sandboxes/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sandbox"
+                ],
+                "summary": "查询沙箱",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "沙箱 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sandboxcenter.sandboxView"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sandbox"
+                ],
+                "summary": "释放沙箱",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "沙箱 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sandboxcenter.Sandbox"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sandboxes/{id}/operations": {
+            "post": {
+                "description": "先持久化 intent 与 dispatch 回执再派发；派发结果不可知时保留 Unknown。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sandbox"
+                ],
+                "summary": "执行命令",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "沙箱 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "执行参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/sandboxcenter.execRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sandboxcenter.Operation"
+                        }
+                    },
+                    "409": {
+                        "description": "沙箱未激活",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "502": {
+                        "description": "派发结果未知",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sandboxes/{id}/operations/{opID}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sandbox"
+                ],
+                "summary": "查询操作回执",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "沙箱 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "操作 ID",
+                        "name": "opID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sandboxcenter.Operation"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sandboxes/{id}/renew": {
+            "post": {
+                "description": "revision 单调递增；相同 revision 与 requestKey 重放返回原接受事实。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sandbox"
+                ],
+                "summary": "续租",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "沙箱 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "续期参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/sandboxcenter.renewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sandboxcenter.Lease"
+                        }
+                    },
+                    "409": {
+                        "description": "租约已关闭或过期",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/sessions": {
             "get": {
                 "security": [
@@ -1726,6 +2578,10 @@ const docTemplateAgentic = `{
                 "filesystem": {
                     "$ref": "#/definitions/execution.FilesystemBinding"
                 },
+                "goalID": {
+                    "description": "GoalID optionally binds the run to a durable goal. The goal must exist\nand be Active; the run is bound atomically at accept time.",
+                    "type": "string"
+                },
                 "query": {
                     "type": "string"
                 },
@@ -1739,6 +2595,24 @@ const docTemplateAgentic = `{
             "properties": {
                 "allowed": {
                     "type": "boolean"
+                },
+                "checkedAt": {
+                    "type": "string"
+                },
+                "epoch": {
+                    "type": "integer"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "runId": {
+                    "type": "string"
+                },
+                "scope": {
+                    "$ref": "#/definitions/workspace.Scope"
+                },
+                "workerId": {
+                    "type": "string"
                 }
             }
         },
@@ -1807,6 +2681,9 @@ const docTemplateAgentic = `{
                 "configVersion": {
                     "type": "string"
                 },
+                "costUSD": {
+                    "type": "number"
+                },
                 "deadline": {
                     "type": "string"
                 },
@@ -1819,6 +2696,9 @@ const docTemplateAgentic = `{
                 "eventSeq": {
                     "type": "integer"
                 },
+                "goalID": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -1828,6 +2708,12 @@ const docTemplateAgentic = `{
                 "ownerID": {
                     "type": "string"
                 },
+                "parentRunID": {
+                    "type": "string"
+                },
+                "parentStepID": {
+                    "type": "string"
+                },
                 "scope": {
                     "$ref": "#/definitions/workspace.Scope"
                 },
@@ -1835,6 +2721,12 @@ const docTemplateAgentic = `{
                     "type": "string"
                 },
                 "status": {
+                    "type": "string"
+                },
+                "tokensUsed": {
+                    "type": "integer"
+                },
+                "waitingExternalRef": {
                     "type": "string"
                 },
                 "waitingKind": {
@@ -1971,6 +2863,57 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "execution.BudgetSpec": {
+            "type": "object",
+            "properties": {
+                "maxCostUSD": {
+                    "type": "number"
+                },
+                "maxTokens": {
+                    "type": "integer"
+                },
+                "maxWallClockSeconds": {
+                    "type": "integer"
+                }
+            }
+        },
+        "execution.Evaluation": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "goalID": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "output": {
+                    "type": "string"
+                },
+                "ownerID": {
+                    "type": "string"
+                },
+                "runID": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "execution.EvaluatorSpec": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                }
+            }
+        },
         "execution.Event": {
             "type": "object",
             "properties": {
@@ -1994,7 +2937,15 @@ const docTemplateAgentic = `{
         "execution.FilesystemBinding": {
             "type": "object",
             "properties": {
+                "profileId": {
+                    "description": "ProfileID selects the sandbox-center isolation profile when Provider is\n\"Sandbox\". Empty means the default coding profile.",
+                    "type": "string"
+                },
                 "provider": {
+                    "description": "Provider selects the execution backend: \"AIO\" for the legacy direct\nadapter, \"Sandbox\" for the sandbox-center control plane.",
+                    "type": "string"
+                },
+                "restoreFromSandboxId": {
                     "type": "string"
                 },
                 "tokenEnv": {
@@ -2004,6 +2955,53 @@ const docTemplateAgentic = `{
                     "type": "string"
                 },
                 "workspace": {
+                    "type": "string"
+                }
+            }
+        },
+        "execution.Goal": {
+            "type": "object",
+            "properties": {
+                "activeRunID": {
+                    "type": "string"
+                },
+                "budget": {
+                    "$ref": "#/definitions/execution.BudgetSpec"
+                },
+                "costUSD": {
+                    "type": "number"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "evaluator": {
+                    "$ref": "#/definitions/execution.EvaluatorSpec"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastStallMark": {
+                    "type": "string"
+                },
+                "objective": {
+                    "type": "string"
+                },
+                "ownerID": {
+                    "type": "string"
+                },
+                "sessionID": {
+                    "type": "string"
+                },
+                "stallCount": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tokensUsed": {
+                    "type": "integer"
+                },
+                "updatedAt": {
                     "type": "string"
                 }
             }
@@ -2020,6 +3018,9 @@ const docTemplateAgentic = `{
                 "configVersion": {
                     "type": "string"
                 },
+                "costUSD": {
+                    "type": "number"
+                },
                 "deadline": {
                     "type": "string"
                 },
@@ -2032,6 +3033,9 @@ const docTemplateAgentic = `{
                 "eventSeq": {
                     "type": "integer"
                 },
+                "goalID": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -2041,6 +3045,12 @@ const docTemplateAgentic = `{
                 "ownerID": {
                     "type": "string"
                 },
+                "parentRunID": {
+                    "type": "string"
+                },
+                "parentStepID": {
+                    "type": "string"
+                },
                 "scope": {
                     "$ref": "#/definitions/workspace.Scope"
                 },
@@ -2048,6 +3058,12 @@ const docTemplateAgentic = `{
                     "type": "string"
                 },
                 "status": {
+                    "type": "string"
+                },
+                "tokensUsed": {
+                    "type": "integer"
+                },
+                "waitingExternalRef": {
                     "type": "string"
                 },
                 "waitingKind": {
@@ -2127,6 +3143,347 @@ const docTemplateAgentic = `{
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "run.createGoalRequest": {
+            "type": "object",
+            "required": [
+                "objective",
+                "requestHash",
+                "requestKey",
+                "sessionID"
+            ],
+            "properties": {
+                "budget": {
+                    "$ref": "#/definitions/execution.BudgetSpec"
+                },
+                "evaluator": {
+                    "$ref": "#/definitions/execution.EvaluatorSpec"
+                },
+                "objective": {
+                    "type": "string"
+                },
+                "requestHash": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "requestKey": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "sessionID": {
+                    "type": "string",
+                    "maxLength": 128
+                }
+            }
+        },
+        "run.executionCallbackRequest": {
+            "type": "object",
+            "required": [
+                "externalRef",
+                "result",
+                "stepID"
+            ],
+            "properties": {
+                "externalRef": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "result": {
+                    "type": "string"
+                },
+                "stepID": {
+                    "type": "string",
+                    "maxLength": 128
+                }
+            }
+        },
+        "run.recordEvaluationRequest": {
+            "type": "object",
+            "required": [
+                "runID",
+                "status"
+            ],
+            "properties": {
+                "output": {
+                    "type": "string",
+                    "maxLength": 65536
+                },
+                "runID": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "Passed",
+                        "Failed",
+                        "Error"
+                    ]
+                }
+            }
+        },
+        "run.steerGoalRequest": {
+            "type": "object",
+            "required": [
+                "content"
+            ],
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "maxLength": 4096
+                }
+            }
+        },
+        "sandboxcenter.Lease": {
+            "type": "object",
+            "properties": {
+                "closedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "hardExpiresAt": {
+                    "type": "string"
+                },
+                "holderRunEpoch": {
+                    "type": "integer"
+                },
+                "holderRunId": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "renewedAt": {
+                    "type": "string"
+                },
+                "requestKey": {
+                    "type": "string"
+                },
+                "revision": {
+                    "type": "integer"
+                },
+                "sandboxGeneration": {
+                    "type": "integer"
+                },
+                "sandboxId": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                },
+                "workerId": {
+                    "type": "string"
+                }
+            }
+        },
+        "sandboxcenter.Operation": {
+            "type": "object",
+            "properties": {
+                "completedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "dispatchedAt": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "executionId": {
+                    "type": "string"
+                },
+                "exitCode": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "leaseId": {
+                    "type": "string"
+                },
+                "output": {
+                    "type": "string"
+                },
+                "receiptStoredAt": {
+                    "type": "string"
+                },
+                "requestKey": {
+                    "type": "string"
+                },
+                "sandboxId": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "sandboxcenter.Sandbox": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "destroyedAt": {
+                    "type": "string"
+                },
+                "generation": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "leaseId": {
+                    "type": "string"
+                },
+                "ownerId": {
+                    "type": "string"
+                },
+                "podUid": {
+                    "type": "string"
+                },
+                "profileId": {
+                    "type": "string"
+                },
+                "profileRevision": {
+                    "type": "integer"
+                },
+                "requestKey": {
+                    "type": "string"
+                },
+                "requiredSave": {
+                    "type": "boolean"
+                },
+                "restoreFromSandboxId": {
+                    "type": "string"
+                },
+                "resumeCheckpoint": {
+                    "type": "string"
+                },
+                "savedCheckpoint": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "stoppedAt": {
+                    "type": "string"
+                },
+                "tenantId": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                },
+                "workspaceUid": {
+                    "type": "string"
+                }
+            }
+        },
+        "sandboxcenter.acquireRequest": {
+            "type": "object",
+            "properties": {
+                "ownerId": {
+                    "type": "string"
+                },
+                "profileId": {
+                    "type": "string"
+                },
+                "requestKey": {
+                    "type": "string"
+                },
+                "requiredSave": {
+                    "type": "boolean"
+                },
+                "restoreFromSandboxId": {
+                    "type": "string"
+                },
+                "runEpoch": {
+                    "type": "integer"
+                },
+                "runId": {
+                    "type": "string"
+                },
+                "tenantId": {
+                    "type": "string"
+                },
+                "ttlSeconds": {
+                    "type": "integer"
+                },
+                "workerId": {
+                    "type": "string"
+                }
+            }
+        },
+        "sandboxcenter.execRequest": {
+            "type": "object",
+            "properties": {
+                "evaluationEpoch": {
+                    "type": "integer"
+                },
+                "evaluationWorkerId": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "requestKey": {
+                    "type": "string"
+                },
+                "script": {
+                    "type": "string"
+                }
+            }
+        },
+        "sandboxcenter.renewRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "requestKey": {
+                    "type": "string"
+                },
+                "revision": {
+                    "type": "integer"
+                },
+                "ttlSeconds": {
+                    "type": "integer"
+                }
+            }
+        },
+        "sandboxcenter.sandboxView": {
+            "type": "object",
+            "properties": {
+                "lease": {
+                    "$ref": "#/definitions/sandboxcenter.Lease"
+                },
+                "sandbox": {
+                    "$ref": "#/definitions/sandboxcenter.Sandbox"
                 }
             }
         },

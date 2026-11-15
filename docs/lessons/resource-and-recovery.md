@@ -15,3 +15,9 @@
 当前专用 `notificationCache` 使用 server-go `redis.Config` 和 `redis.NewRedis`。初始化 context 已取消时返回错误；Redis Ping 失败时保留 UniversalClient 以便重连，生命周期仍由框架接管。Redis 离线由通知发布与事件读取路径处理。事件和状态的一致提交仍由数据库事务保证。
 
 证据：[通知连接](../../service/notification_cache.go)、[装配与资源接管](../../service/build.go)、[事件发布测试](../../pkg/durable/events_test.go)。Redis 不可用时的真实 API 启动与 SSE 回放证据见 [验证记录](../verification.md) 中的“强杀进程验证”和“server-go v0.9.0 重构与 Coding 根模块升级”；事件权威来源与重试顺序见 [恢复设计](../design.md)。
+
+## JSON 字段更新不能用 map
+
+`table.Agent.Draft` 使用 GORM `serializer:json`。`Updates(map[string]any{"draft": config})` 不经过 serializer，PostgreSQL 驱动会报 `unable to encode agent.AgentConfig`。更新这类字段时传结构体，并用 `Select` 列出要写的列，零值字段也能正确写入。
+
+证据：[UpdateDraft](../../internal/table/agent_query.go)、[TestAgentVersionReadsRemoteBody](../../internal/app/agent/service_test.go)。

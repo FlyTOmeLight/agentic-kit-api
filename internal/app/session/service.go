@@ -5,6 +5,7 @@ import (
 	"time"
 
 	appexec "github.com/FlyTOmeLight/agentic-kit-api/internal/app/execution"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	execpkg "github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
@@ -18,6 +19,7 @@ type Service interface {
 	SessionRuns(ctx context.Context, owner, session, after string, limit int) ([]execpkg.Run, error)
 	Submit(
 		ctx context.Context,
+		identity client.Identity,
 		owner, session, key, query string,
 		ttl time.Duration,
 		maxAttempts int,
@@ -60,9 +62,10 @@ func (s *service) SessionRuns(ctx context.Context, owner, session, after string,
 
 func (s *service) Submit(
 	ctx context.Context,
+	identity client.Identity,
 	owner, session, key, query string,
 	ttl time.Duration,
 	maxAttempts int,
 ) (*execpkg.Run, bool, error) {
-	return s.exec.SubmitChat(ctx, owner, session, key, query, ttl, maxAttempts)
+	return s.exec.SubmitChat(ctx, identity, owner, session, key, query, ttl, maxAttempts)
 }

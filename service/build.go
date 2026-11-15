@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/FlyTOmeLight/server-go/app"
 	"github.com/FlyTOmeLight/server-go/conf"
@@ -10,12 +11,20 @@ import (
 	"github.com/FlyTOmeLight/server-go/swagger"
 
 	_ "github.com/FlyTOmeLight/agentic-kit-api/doc/openapi"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
 // Config describes the standalone application configuration.
 type Config = config.Service
+
+// artifactModule adapts the artifact client to the runtime lifecycle.
+type artifactModule struct{ client client.ArtifactStore }
+
+func (m *artifactModule) Initialize(context.Context) error { return nil }
+
+func (m *artifactModule) Close(_ context.Context) error { return m.client.Close() }
 
 // Build owns standalone connections; combined applications inject their own
 // shared connections through New instead.
@@ -36,7 +45,15 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if err = store.InitSchema(ctx); err != nil {
 		return err
 	}
-	api, err := New(*cfg, runtime.Log, store, cache.client)
+	artifact, err := client.NewArtifact(cfg.Artifact.Endpoint, time.Duration(cfg.Artifact.Timeout)*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	if err = runtime.Initialize(ctx, &artifactModule{client: artifact}); err != nil {
+		artifact.Close()
+		return err
+	}
+	api, err := NewWithSandbox(*cfg, runtime.Log, store, cache.client, artifact, database.DB)
 	if err != nil {
 		return err
 	}

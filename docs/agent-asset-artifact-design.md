@@ -1,6 +1,6 @@
 # Agent 资产接入 artifact-go 技术设计
 
-状态：待实施。2026-10-20 按评审意见重写：版本正文只存 artifact 一处；跨服务提交的失败语义如实写明；身份前提写成显式契约而不是配置兜底。本文与 [ADR-0008](adr/0008-memory-artifact-versions.md)「本提案不迁移 Agent 资产版本」不同，偏离理由见 §2 与 [ADR-0009](adr/0009-agent-versions-in-artifact.md)。
+状态：API 核心接入已实施，真实身份与 artifact 联调待完成。2026-11-13 使用 artifact-go v0.5.0 完成 API 独立模块构建及 race 回归；Worker 兼容验证另记于验证记录。Controller 尚未透传 Forge 会话 Cookie、CSRF 与 Origin，身份 middleware 也尚未接入，因此不能按已上线功能验收。下文保留 2026-10-20 的设计背景和目标，当前实现及验证范围以代码和 [验证记录](verification.md) 为准。本文与 [ADR-0008](adr/0008-memory-artifact-versions.md)「本提案不迁移 Agent 资产版本」不同，偏离理由见 §2 与 [ADR-0009](adr/0009-agent-versions-in-artifact.md)。
 
 ## 1. 背景
 
@@ -95,11 +95,9 @@ artifact 内置的 Forge resolver（`integration/forgetenant/client.go`）只允
 
 ### 4.1 依赖版本
 
-artifact-go 没有 tag。截至 2026-10-20，`origin/main` 为 **`d9a2e25`**（`feat: unify Forge scope headers`），依赖 server-go v0.13.0、Go 1.27.1；本仓库为 server-go v0.12.0、Go 1.27.1。
+2026-11-13 的实现固定 artifact-go v0.5.0、server-go v0.13.0、Go 1.27.1。`go.mod` 必须显式声明 artifact-go；仅在 `go.work` 引入本地目录会掩盖依赖遗漏。验收使用 `GOWORK=off` 与 `-mod=readonly`。
 
-上一版固定的 `8ce972a` 已过时：它使用 server-go v0.10.0 和旧的 `X-Tenant-ID`/`X-Project-ID` 头，而 v0.12.0 的 `constants.HeaderTenantID` 已是 `x-forge-tenant-id`。依赖 `8ce972a` 会出现 SDK 与服务端 Header 不一致。实施第一步是把本仓库升到 server-go v0.13.0 并固定 artifact-go 的 `d9a2e25`，用 `go mod tidy` 与全量测试确认兼容；server-go v0.12→v0.13 的差异只有内部身份透传中间件与常量注释，不改变既有 API。
-
-只 import `sdk/go/artifactv1`，不 import 服务端 `internal` 包。上游发版后单独提交升级。
+只 import `sdk/go/artifactv1`，不 import 服务端 `internal` 包。
 
 ### 4.2 消费方接口
 

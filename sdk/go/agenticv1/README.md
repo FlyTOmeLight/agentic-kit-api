@@ -97,6 +97,12 @@ func NewConversation(sessions sdk.SessionAPI) *Conversation {
 
 `Client.Executions` 提供 Submit 与 CheckLease，使用 SubmitExecutionRequest / ExecutionSpec / Scope。ExecutionSpec 仅包含 agentID、agentVersion、scope 和 query。先通过 Agents 创建并发布定义，再调用 Executions.Submit；同一应用任务跨轮复用 Session。Submit 的幂等键与不可变快照重试语义和服务端一致。服务身份与调用权限由 Forge middleware 校验；浏览器用户不得持有服务凭据。Run.Scope 记录提交时的业务上下文，不替代每次敏感操作的动态授权。
 
+## 沙箱检查点恢复
+
+`Sandboxes.Acquire` 的 `RequiredSave` 开启必要保存保护；`RestoreFromSandboxID` 指定已保存、销毁的来源沙箱。服务端依据新 Run 冻结的 Sandbox 文件系统配置校验来源和 Profile；SDK 不接受检查点目录路径。恢复成功后才返回 Active 和 lease，`Sandbox.ResumeCheckpoint` 返回实际恢复的检查点。
+
+释放返回 SaveBlocked 表示保存尚未完成，需查询到 Destroyed 和非空 SavedCheckpoint 后才能作为恢复来源。同一申请重试保留 requestKey；修改恢复来源必须使用新请求键。当前实现与本地验证范围见仓库 `docs/sandbox-center/layerfs-save-verification.md`。
+
 ## 布局迁移
 
 旧导入路径 `github.com/FlyTOmeLight/agentic-kit-api/sdk` 已移除，改用 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`。可用 `sdk` 别名保留调用代码的类型前缀；业务路径和成功响应字段保持原契约；错误采用框架的平铺格式，详见上文错误处理。框架客户端的传输资源由 Client.Close 释放，调用方须在全部请求与事件流结束后关闭。

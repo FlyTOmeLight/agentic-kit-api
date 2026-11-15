@@ -2,6 +2,7 @@ package durable
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -23,7 +24,7 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (
 	defer tx.Rollback()
 	r, err := readRun(
 		tx.Model(&table.Run{}).
-			Where("(status='Queued' AND available_at<=clock_timestamp()) OR (status='Running' AND lease_until<=clock_timestamp()) OR (status IN ('WaitingClarification','NeedsReview') AND deadline<=clock_timestamp())").
+			Where("(status='Queued' AND available_at<=clock_timestamp()) OR (status='Running' AND lease_until<=clock_timestamp()) OR (status IN ('WaitingClarification','NeedsReview','WaitingExternal') AND deadline<=clock_timestamp())").
 			Order("available_at,created_at").
 			Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}),
 	)
@@ -49,12 +50,13 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (
 		err = tx.Model(&table.Run{}).
 			Where("id = ?", r.ID).
 			Updates(map[string]any{
-				"status":       Failed,
-				"epoch":        gorm.Expr("epoch + 1"),
-				"lease_until":  nil,
-				"error":        reason,
-				"waiting_step": "",
-				"waiting_kind": "",
+				"status":               Failed,
+				"epoch":                gorm.Expr("epoch + 1"),
+				"lease_until":          nil,
+				"error":                reason,
+				"waiting_step":         "",
+				"waiting_kind":         "",
+				"waiting_external_ref": "",
 			}).
 			Error
 		if err != nil {
@@ -114,4 +116,44 @@ func lockLease(ctx context.Context, tx *gorm.DB, l Lease) (*Run, error) {
 		return nil, ErrLeaseLost
 	}
 	return r, err
+}
+
+func (s *Store) TakePendingSteer(
+	ctx context.Context,
+	l Lease,
+	checkpoint func(string) json.RawMessage,
+) (string, error) {
+	if checkpoint == nil {
+		return "", ErrInvalid
+	}
+	tx := s.db.WithContext(ctx).Begin()
+	if err := tx.Error; err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if _, err := lockLease(ctx, tx, l); err != nil {
+		return "", err
+	}
+	var steer string
+	if err := tx.Model(&table.Run{}).
+		Where("id = ?", l.RunID).
+		Select("pending_steer").
+		Scan(&steer).
+		Error; err != nil {
+		return "", err
+	}
+	if steer == "" {
+		return "", tx.Commit().Error
+	}
+	state := checkpoint(steer)
+	if !json.Valid(state) {
+		return "", ErrInvalid
+	}
+	if err := tx.Model(&table.Run{}).
+		Where("id = ?", l.RunID).
+		Updates(map[string]any{"pending_steer": "", "state": string(state)}).
+		Error; err != nil {
+		return "", err
+	}
+	return steer, tx.Commit().Error
 }

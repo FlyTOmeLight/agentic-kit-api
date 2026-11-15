@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/sandboxcenter"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
@@ -22,9 +23,15 @@ func Init(ctx context.Context, db *gorm.DB) error {
 			&table.AgentVersion{},
 			&table.Session{},
 			&table.Run{},
+			&table.Goal{},
+			&table.Evaluation{},
 			&table.Step{},
 			&table.Event{},
 			&table.Message{},
+			&table.RunEnvironment{},
+			&sandboxcenter.Sandbox{},
+			&sandboxcenter.Lease{},
+			&sandboxcenter.Operation{},
 		)
 	})
 }

@@ -97,6 +97,17 @@ func (tx *Tx) Submit(
 		if err != nil {
 			return err
 		}
+		if cmd.GoalID != "" {
+			var goalRow table.Goal
+			if err = tx.db.Where("owner_id = ? AND id = ? AND status = ?", cmd.Owner, cmd.GoalID, GoalActive).
+				Take(&goalRow).
+				Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrNotFound
+				}
+				return err
+			}
+		}
 		id := NewID()
 		if err = tx.db.Model(&table.Run{}).Create(map[string]any{
 			"id":           id,
@@ -111,8 +122,17 @@ func (tx *Tx) Submit(
 				cmd.TTL.Milliseconds(),
 			),
 			"max_attempts": cmd.MaxAttempts,
+			"goal_id":      cmd.GoalID,
 		}).Error; err != nil {
 			return recordError(err)
+		}
+		if cmd.GoalID != "" {
+			if err = tx.db.Model(&table.Goal{}).
+				Where("owner_id = ? AND id = ? AND status = ?", cmd.Owner, cmd.GoalID, GoalActive).
+				Update("active_run_id", id).
+				Error; err != nil {
+				return err
+			}
 		}
 		run, err = readRun(tx.db.Where("id = ?", id))
 		if err != nil {
@@ -154,12 +174,8 @@ func lockSubmitSession(ctx context.Context, tx *gorm.DB, cmd execution.SubmitCom
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", sessionID).Error; err != nil {
 			return "", "", err
 		}
-		var agentRow table.Agent
-		if err := tx.Where("owner_id = ? AND id = ?", cmd.Owner, input.AgentID).
-			Take(&agentRow).
-			Error; err != nil {
-			return "", "", recordError(err)
-		}
+		// The caller verified the agent exists and belongs to the owner while
+		// prefetching the published config, so the request AgentID is trusted.
 		var session table.Session
 		err := tx.Where("owner_id = ? AND id = ?", cmd.Owner, sessionID).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -169,7 +185,7 @@ func lockSubmitSession(ctx context.Context, tx *gorm.DB, cmd execution.SubmitCom
 			session = table.Session{
 				ID:      sessionID,
 				OwnerID: cmd.Owner,
-				AgentID: agentRow.ID,
+				AgentID: input.AgentID,
 				Title:   input.Scope.TaskID,
 			}
 			if err = tx.Create(&session).Error; err != nil {
@@ -177,7 +193,7 @@ func lockSubmitSession(ctx context.Context, tx *gorm.DB, cmd execution.SubmitCom
 			}
 		} else if err != nil {
 			return "", "", err
-		} else if session.AgentID != agentRow.ID {
+		} else if session.AgentID != input.AgentID {
 			return "", "", ErrConflict
 		}
 		return session.ID, session.AgentID, nil

@@ -14,61 +14,29 @@ import (
 func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	session := testConversation(t, s, Spec{SystemPrompt: "version one", MaxTurns: 5})
-	first, _, err := s.Submit(ctx, "owner", session.ID, "first", "first question", time.Hour, 3)
+	session, cfg := testConversation(t, s, Spec{SystemPrompt: "version one", MaxTurns: 5})
+	first, _, err := submitFixture(t, s, "owner", session.ID, "first", "first question", time.Hour, 3, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent, err := s.Agent(ctx, "owner", session.AgentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	changed := agent.Draft
+	changed := cfg
 	changed.SystemPrompt = "version two"
 	changed.Model.Name = "new-model"
-	updated, err := s.UpdateAgent(ctx, "owner", agent.ID, "new name", agent.Revision, changed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, offset := updated.UpdatedAt.Zone(); offset != 0 {
-		t.Fatal("timestamps must use UTC")
-	}
-	if updated.Revision != 2 || updated.Draft.SystemPrompt != "version two" {
+	updated := updateAgentFixture(t, s, "owner", session.AgentID, "new name", 1, changed)
+	if updated.Revision != 2 {
 		t.Fatalf("updated: %+v", updated)
 	}
-	if _, err = s.UpdateAgent(
-		ctx,
-		"owner",
-		agent.ID,
-		"stale",
-		agent.Revision,
-		agent.Draft,
-	); !errors.Is(
-		err,
-		ErrConflict,
-	) {
-		t.Fatalf("stale draft accepted: %v", err)
+	version := publishAgentFixture(t, s, "owner", session.AgentID, updated.Revision)
+	if version.Number != 2 {
+		t.Fatalf("publish: %+v", version)
 	}
-	if _, err = s.PublishAgent(ctx, "owner", agent.ID, agent.Revision); !errors.Is(err, ErrConflict) {
-		t.Fatalf("stale publish accepted: %v", err)
-	}
-	version, err := s.PublishAgent(ctx, "owner", agent.ID, updated.Revision)
-	if err != nil || version.Number != 2 {
-		t.Fatalf("publish: %+v %v", version, err)
-	}
-	repeat, created, err := s.Submit(ctx, "owner", session.ID, "first", "first question", time.Hour, 3)
+	repeat, created, err := submitFixture(t, s, "owner", session.ID, "first", "first question", time.Hour, 3, cfg)
 	if err != nil || created || repeat.ID != first.ID || repeat.Spec.SystemPrompt != "version one" ||
 		repeat.ConfigVersion != "1" {
 		t.Fatalf("replay changed snapshot: %+v %v", repeat, err)
 	}
-	if _, _, err = s.Submit(
-		ctx,
-		"owner",
-		session.ID,
-		"first",
-		"changed input",
-		time.Hour,
-		3,
+	if _, _, err = submitFixture(
+		t, s, "owner", session.ID, "first", "changed input", time.Hour, 3, cfg,
 	); !errors.Is(
 		err,
 		ErrConflict,
@@ -110,7 +78,7 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := s.Submit(ctx, "owner", session.ID, "second", "follow up", time.Hour, 3)
+	second, _, err := submitFixture(t, s, "owner", session.ID, "second", "follow up", time.Hour, 3, changed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,10 +106,6 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 	if err != nil || len(page) != 2 || page[0].Seq != 3 || page[1].Seq != 4 {
 		t.Fatalf("page: %+v %v", page, err)
 	}
-	old, err := s.AgentVersion(ctx, "owner", agent.ID, 1)
-	if err != nil || old.Config.SystemPrompt != "version one" {
-		t.Fatalf("published version changed: %+v %v", old, err)
-	}
 	if err = s.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -154,15 +118,15 @@ func TestPublishedSnapshotsAndConversationHistory(t *testing.T) {
 func TestConcurrentPublishAndSubmit(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	session := testConversation(t, s, Spec{})
+	session, cfg := testConversation(t, s, Spec{})
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			v, err := s.PublishAgent(ctx, "owner", session.AgentID, 1)
-			if err != nil || v.Number != 1 {
-				t.Errorf("publish: %+v %v", v, err)
+			v := publishAgentFixture(t, s, "owner", session.AgentID, 1)
+			if v.Number != 1 {
+				t.Errorf("publish: %+v", v)
 			}
 		}()
 	}
@@ -175,7 +139,17 @@ func TestConcurrentPublishAndSubmit(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, err := s.Submit(ctx, "owner", session.ID, "same-key", "same message", time.Hour, 3)
+			_, _, err := submitFixture(
+				t,
+				s,
+				"owner",
+				session.ID,
+				"same-key",
+				"same message",
+				time.Hour,
+				3,
+				cfg,
+			)
 			if err != nil {
 				t.Error(err)
 			}
@@ -194,7 +168,17 @@ func TestConcurrentPublishAndSubmit(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, _, err := s.Submit(ctx, "owner", session.ID, NewID(), "another message", time.Hour, 3)
+			_, _, err := submitFixture(
+				t,
+				s,
+				"owner",
+				session.ID,
+				NewID(),
+				"another message",
+				time.Hour,
+				3,
+				cfg,
+			)
 			if !errors.Is(err, ErrConflict) {
 				t.Errorf("active session accepted: %v", err)
 			}
@@ -206,20 +190,11 @@ func TestConcurrentPublishAndSubmit(t *testing.T) {
 func TestConversationOwnership(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	session := testConversation(t, s, Spec{})
+	session, cfg := testConversation(t, s, Spec{})
 	tests := []struct {
 		name string
 		read func() error
 	}{
-		{name: "agent", read: func() error { _, e := s.Agent(ctx, "other", session.AgentID); return e }},
-		{
-			name: "version",
-			read: func() error { _, e := s.AgentVersion(ctx, "other", session.AgentID, 1); return e },
-		},
-		{
-			name: "publish",
-			read: func() error { _, e := s.PublishAgent(ctx, "other", session.AgentID, 1); return e },
-		},
 		{name: "session", read: func() error { _, e := s.Session(ctx, "other", session.ID); return e }},
 		{
 			name: "create session",
@@ -235,7 +210,20 @@ func TestConversationOwnership(t *testing.T) {
 		},
 		{
 			name: "submit",
-			read: func() error { _, _, e := s.Submit(ctx, "other", session.ID, "key", "question", time.Hour, 3); return e },
+			read: func() error {
+				_, _, e := submitFixture(
+					t,
+					s,
+					"other",
+					session.ID,
+					"key",
+					"question",
+					time.Hour,
+					3,
+					cfg,
+				)
+				return e
+			},
 		},
 	}
 	for _, tc := range tests {
@@ -244,10 +232,6 @@ func TestConversationOwnership(t *testing.T) {
 				t.Fatalf("got %v", err)
 			}
 		})
-	}
-	agents, err := s.Agents(ctx, "other", "", 50)
-	if err != nil || len(agents) != 0 {
-		t.Fatal("agent list leaked", err)
 	}
 	sessions, err := s.Sessions(ctx, "other", "", "", 50)
 	if err != nil || len(sessions) != 0 {
@@ -258,14 +242,14 @@ func TestConversationOwnership(t *testing.T) {
 func TestMessageAndRunRollbackTogether(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	session := testConversation(t, s, Spec{})
+	session, cfg := testConversation(t, s, Spec{})
 	err := s.db.Exec(
 		`CREATE FUNCTION reject_message() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$; CREATE TRIGGER reject_message BEFORE INSERT ON agent_message FOR EACH ROW EXECUTE FUNCTION reject_message()`,
 	).Error
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = s.Submit(ctx, "owner", session.ID, "key", "question", time.Hour, 3); err == nil {
+	if _, _, err = submitFixture(t, s, "owner", session.ID, "key", "question", time.Hour, 3, cfg); err == nil {
 		t.Fatal("expected failure")
 	}
 	var runs, events int64
@@ -282,7 +266,7 @@ func TestMessageAndRunRollbackTogether(t *testing.T) {
 	if err = s.db.Exec(`DROP TRIGGER reject_message ON agent_message`).Error; err != nil {
 		t.Fatal(err)
 	}
-	run, _, err := s.Submit(ctx, "owner", session.ID, "key", "question", time.Hour, 3)
+	run, _, err := submitFixture(t, s, "owner", session.ID, "key", "question", time.Hour, 3, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

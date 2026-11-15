@@ -129,7 +129,7 @@ func (h *Controller) publishAgent(c *core.Context) {
 		serrors.AbortWithError(c, err)
 		return
 	}
-	v, err := h.service.PublishAgent(c.Request.Context(), auth.UserID(c), req.ID, req.Revision)
+	v, err := h.service.PublishAgent(c.Request.Context(), RequestIdentity(c), auth.UserID(c), req.ID, req.Revision)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
@@ -157,7 +157,7 @@ func (h *Controller) getVersion(c *core.Context) {
 		serrors.AbortWithError(c, err)
 		return
 	}
-	v, err := h.service.AgentVersion(c.Request.Context(), auth.UserID(c), req.ID, req.Number)
+	v, err := h.service.AgentVersion(c.Request.Context(), RequestIdentity(c), auth.UserID(c), req.ID, req.Number)
 	if err != nil {
 		apperror.Respond(c, err)
 		return

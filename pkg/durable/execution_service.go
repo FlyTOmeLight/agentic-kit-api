@@ -2,43 +2,59 @@ package durable
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"time"
 
-	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
-	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
-)
+	"gorm.io/gorm"
 
-// SubmitExecution freezes a published Agent version and business input.
-// A task reuses its conversation; retries reuse the originally accepted run.
-func (s *Store) SubmitExecution(
-	ctx context.Context,
-	owner, key string,
-	inputSpec execution.ExecutionSpec,
-	ttl time.Duration,
-) (*Run, bool, error) {
-	input, _ := json.Marshal(struct {
-		Spec execution.ExecutionSpec
-		TTL  time.Duration
-	}{Spec: inputSpec, TTL: ttl})
-	return s.accept(ctx, execution.SubmitCommand{
-		Owner:         owner,
-		RequestKey:    key,
-		RequestHash:   Hash(input),
-		TTL:           ttl,
-		MaxAttempts:   5,
-		Kind:          execution.SubmitApplication,
-		ExecutionSpec: inputSpec,
-	}, PrepareApplicationSubmission)
-}
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+)
 
 // CheckExecutionLease uses the database clock and rejects canceled, expired, or old attempts.
 func (s *Store) CheckExecutionLease(ctx context.Context, owner, id string, epoch int64) (bool, error) {
-	var n int64
-	e := s.db.WithContext(ctx).
+	auth, err := s.AuthorizeExecution(ctx, owner, id, "", epoch)
+	if err != nil {
+		return false, err
+	}
+	return auth.Allowed, nil
+}
+
+// AuthorizeExecution validates a run claim against the database clock and
+// returns the authoritative validity bound min(lease_until, deadline). When
+// workerID is non-empty the claim holder must also match that worker.
+func (s *Store) AuthorizeExecution(
+	ctx context.Context,
+	owner, id, workerID string,
+	epoch int64,
+) (*RunAuthorization, error) {
+	var row struct {
+		table.Run
+		CheckedAt time.Time `gorm:"column:checked_at"`
+		ExpiresAt time.Time `gorm:"column:expires_at"`
+	}
+	q := s.db.WithContext(ctx).
 		Model(&table.Run{}).
-		Where("owner_id = ? AND id = ? AND epoch = ? AND status = ? AND lease_until > clock_timestamp() AND deadline > clock_timestamp()", owner, id, epoch, Running).
-		Count(&n).
-		Error
-	return n == 1, e
+		Select("durable_run.*, clock_timestamp() AS checked_at, LEAST(lease_until, deadline) AS expires_at").
+		Where(
+			"owner_id = ? AND id = ? AND epoch = ? AND status = ? AND lease_until > clock_timestamp() AND deadline > clock_timestamp()",
+			owner, id, epoch, Running,
+		)
+	if workerID != "" {
+		q = q.Where("worker_id = ?", workerID)
+	}
+	if err := q.Take(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return &RunAuthorization{Allowed: false}, nil
+		}
+		return nil, err
+	}
+	return &RunAuthorization{
+		Allowed:   true,
+		RunID:     row.ID,
+		WorkerID:  row.WorkerID,
+		Epoch:     row.Epoch,
+		Scope:     row.Spec.Scope,
+		CheckedAt: row.CheckedAt,
+		ExpiresAt: row.ExpiresAt,
+	}, nil
 }

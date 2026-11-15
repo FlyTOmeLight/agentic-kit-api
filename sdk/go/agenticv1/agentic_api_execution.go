@@ -16,8 +16,6 @@ type SubmitExecutionRequest struct {
 	TimeoutSeconds int           `json:"timeoutSeconds" binding:"min=1,max=86400"`
 }
 
-type LeaseCheck struct {
-	Allowed bool `json:"allowed"`
-}
+type LeaseCheck = execution.RunAuthorization
 
 type FilesystemBinding = execution.FilesystemBinding

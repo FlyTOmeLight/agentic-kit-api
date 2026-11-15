@@ -10,6 +10,7 @@ import (
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
 
+	agentapp "github.com/FlyTOmeLight/agentic-kit-api/internal/app/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
@@ -209,6 +210,7 @@ func (h *Controller) submitMessage(c *core.Context) {
 	owner := auth.UserID(c)
 	run, created, err := h.service.Submit(
 		c.Request.Context(),
+		agentapp.RequestIdentity(c),
 		owner,
 		req.SessionID,
 		req.IdempotencyKey,

@@ -1,0 +1,615 @@
+diff --git a/components/execd/main.go b/components/execd/main.go
+--- a/components/execd/main.go
++++ b/components/execd/main.go
+@@ -35,6 +35,7 @@
+ 	"github.com/alibaba/opensandbox/execd/pkg/flag"
+ 	"github.com/alibaba/opensandbox/execd/pkg/isolation"
+ 	"github.com/alibaba/opensandbox/execd/pkg/lifecycle"
++	"github.com/alibaba/opensandbox/execd/pkg/listener"
+ 	"github.com/alibaba/opensandbox/execd/pkg/log"
+ 	"github.com/alibaba/opensandbox/execd/pkg/runtime"
+ 	"github.com/alibaba/opensandbox/execd/pkg/telemetry"
+@@ -229,12 +230,12 @@
+ 	lifecycleConfig *lifecycle.Config,
+ 	initManager *controller.RuntimeInitManager,
+ ) error {
+-	addr := fmt.Sprintf(":%d", flag.ServerPort)
+-	listener, err := net.Listen("tcp4", addr)
+-	if err != nil {
+-		return fmt.Errorf("listen on %s: %w", addr, err)
+-	}
+-	log.Info("execd: listening on %s (IPv4)", addr)
++	apiListener, err := listener.Listen(flag.ServerPort, flag.ServerUnixSocket)
++	if err != nil {
++		return err
++	}
++	defer apiListener.Close()
++	log.Info("execd: listening on %s (%s)", apiListener.Addr(), apiListener.Addr().Network())
+ 	// In init mode SIGTERM belongs to the init lifecycle (forward + graceful
+ 	// shutdown with the entrypoint's exit status); only SIGINT cancels the
+ 	// HTTP server there.
+@@ -280,7 +281,7 @@
+ 		initManager.MarkReady()
+ 		return nil
+ 	}
+-	return serveHTTPUntilShutdown(serverCtx, listener, engine, startup)
++	return serveHTTPUntilShutdown(serverCtx, apiListener, engine, startup)
+ }
+ 
+ func startLifecycle(
+diff --git a/components/execd/pkg/flag/flags.go b/components/execd/pkg/flag/flags.go
+--- a/components/execd/pkg/flag/flags.go
++++ b/components/execd/pkg/flag/flags.go
+@@ -22,6 +22,9 @@
+ 	JupyterServerToken string
+ 
+ 	ServerPort int
++
++	// ServerUnixSocket replaces the TCP listener when set.
++	ServerUnixSocket string
+ 
+ 	ServerLogLevel int
+ 
+diff --git a/components/execd/pkg/flag/parser.go b/components/execd/pkg/flag/parser.go
+--- a/components/execd/pkg/flag/parser.go
++++ b/components/execd/pkg/flag/parser.go
+@@ -38,6 +38,7 @@
+ // InitFlags registers CLI flags and env overrides.
+ func InitFlags() {
+ 	ServerPort = 44772
++	ServerUnixSocket = ""
+ 	ServerLogLevel = 6
+ 	ServerAccessToken = ""
+ 	ApiGracefulShutdownTimeout = 200 * time.Millisecond
+@@ -67,6 +68,7 @@
+ 	flag.StringVar(&JupyterServerHost, "jupyter-host", JupyterServerHost, "Jupyter server host address (e.g., http://localhost, http://192.168.1.100)")
+ 	flag.StringVar(&JupyterServerToken, "jupyter-token", JupyterServerToken, "Jupyter server authentication token")
+ 	flag.IntVar(&ServerPort, "port", ServerPort, "Server listening port (default: 44772)")
++	flag.StringVar(&ServerUnixSocket, "unix-socket", "", "Listen only on this absolute Unix socket path in a root-owned private directory")
+ 	flag.IntVar(&ServerLogLevel, "log-level", ServerLogLevel, "Server log level (0=LevelEmergency, 1=LevelAlert, 2=LevelCritical, 3=LevelError, 4=LevelWarning, 5=LevelNotice, 6=LevelInformational, 7=LevelDebug, default: 6)")
+ 	flag.StringVar(&ServerAccessToken, "access-token", ServerAccessToken, "Server access token for API authentication")
+ 
+diff --git a/components/execd/pkg/flag/parser_test.go b/components/execd/pkg/flag/parser_test.go
+--- a/components/execd/pkg/flag/parser_test.go
++++ b/components/execd/pkg/flag/parser_test.go
+@@ -87,3 +87,16 @@
+ 
+ 	require.Equal(t, 200*time.Millisecond, ApiGracefulShutdownTimeout)
+ }
++
++func TestInitFlagsUnixSocket(t *testing.T) {
++	previousArgs := os.Args
++	previousCommandLine := flag.CommandLine
++	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
++	os.Args = []string{previousArgs[0], "--unix-socket=/run/execd/control.sock"}
++	t.Cleanup(func() {
++		os.Args = previousArgs
++		flag.CommandLine = previousCommandLine
++	})
++	InitFlags()
++	require.Equal(t, "/run/execd/control.sock", ServerUnixSocket)
++}
+diff --git a/docs/architecture/data-plane/execd.md b/docs/architecture/data-plane/execd.md
+--- a/docs/architecture/data-plane/execd.md
++++ b/docs/architecture/data-plane/execd.md
+@@ -12,6 +12,16 @@
+ ![execd overview](../../public/images/execd-overview.svg)
+ 
+ The reference platform provisions execd next to your entrypoint — as a staged binary in Docker, an init container in Kubernetes, or a baked-in part of a Fast Sandbox template image. Execd serves an HTTP API (default port `44772`); when access-token protection is enabled, clients forward the token supplied by endpoint resolution. The published [execd API spec](https://github.com/opensandbox-group/OpenSandbox/blob/main/specs/execd-api.yaml) describes the execution contract; some reference-implementation extensions, including PTY routes, are not yet covered by it.
++
++On Unix platforms, `--unix-socket=/run/execd/control.sock` replaces the TCP
++listener entirely. Provision the parent as a root-owned directory with no group
++or other access (for example, mode `0700`), and run execd as root. The path must
++be absolute, with no symlink components or untrusted writable ancestors. Execd
++creates the socket with mode `0600` and refuses every existing path, including
++stale sockets. Shutdown removes only the socket it created. After an unclean
++exit, the trusted supervisor must reconcile the old process and socket before
++restarting. Socket clients are trusted control-plane callers; this option does
++not enforce workload identity or make unrestricted forwarding safe.
+ 
+ Execd also fronts a small reverse proxy (`/proxy/{port}`), so one exposed host port can reach every port inside the sandbox — see [Single-Host Network (Docker)](/architecture/network/single-host-network).
+ 
+diff --git a/components/execd/pkg/listener/listener.go b/components/execd/pkg/listener/listener.go
+new file mode 100644
+--- /dev/null
++++ b/components/execd/pkg/listener/listener.go
+@@ -0,0 +1,31 @@
++// Copyright 2025 The OpenSandbox Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++// Package listener owns the execd API transport.
++package listener
++
++import (
++	"fmt"
++	"net"
++)
++
++// Listen starts exactly one API listener. Unix mode requires a root-owned,
++// private parent directory, which the caller must provision before startup.
++// No existing path is removed, including a stale socket from a prior process.
++func Listen(port int, socketPath string) (net.Listener, error) {
++	if socketPath != "" {
++		return listenUnix(socketPath)
++	}
++	return net.Listen("tcp4", fmt.Sprintf(":%d", port))
++}
+diff --git a/components/execd/pkg/listener/listener_other.go b/components/execd/pkg/listener/listener_other.go
+new file mode 100644
+--- /dev/null
++++ b/components/execd/pkg/listener/listener_other.go
+@@ -0,0 +1,26 @@
++//go:build !unix
++
++// Copyright 2025 The OpenSandbox Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package listener
++
++import (
++	"errors"
++	"net"
++)
++
++func listenUnix(string) (net.Listener, error) {
++	return nil, errors.New("--unix-socket requires a Unix platform")
++}
+diff --git a/components/execd/pkg/listener/listener_test.go b/components/execd/pkg/listener/listener_test.go
+new file mode 100644
+--- /dev/null
++++ b/components/execd/pkg/listener/listener_test.go
+@@ -0,0 +1,34 @@
++// Copyright 2025 The OpenSandbox Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package listener
++
++import (
++	"net"
++	"testing"
++	"time"
++)
++
++func TestTCPMode(t *testing.T) {
++	l, err := Listen(0, "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer l.Close()
++	conn, err := net.DialTimeout("tcp4", l.Addr().String(), time.Second)
++	if err != nil {
++		t.Fatal(err)
++	}
++	_ = conn.Close()
++}
+diff --git a/components/execd/pkg/listener/listener_unix.go b/components/execd/pkg/listener/listener_unix.go
+new file mode 100644
+--- /dev/null
++++ b/components/execd/pkg/listener/listener_unix.go
+@@ -0,0 +1,115 @@
++//go:build unix
++
++// Copyright 2025 The OpenSandbox Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//	 http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package listener
++
++import (
++	"errors"
++	"fmt"
++	"net"
++	"os"
++	"path/filepath"
++	"sync"
++	"syscall"
++)
++
++// listenUnix creates the protected control-plane socket.
++func listenUnix(socketPath string) (net.Listener, error) {
++	if !filepath.IsAbs(socketPath) || filepath.Clean(socketPath) != socketPath || socketPath == "/" {
++		return nil, fmt.Errorf("unix socket path must be absolute and clean: %q", socketPath)
++	}
++	if err := validateParent(filepath.Dir(socketPath)); err != nil {
++		return nil, err
++	}
++	if os.Geteuid() != 0 {
++		return nil, errors.New("unix socket listener must run as root")
++	}
++	if _, err := os.Lstat(socketPath); !errors.Is(err, os.ErrNotExist) {
++		if err == nil {
++			return nil, fmt.Errorf("unix socket path already exists: %s", socketPath)
++		}
++		return nil, fmt.Errorf("inspect unix socket path: %w", err)
++	}
++	conn, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
++	if err != nil {
++		return nil, fmt.Errorf("listen on unix socket: %w", err)
++	}
++	// The standard listener unlinks by pathname. Keep a replacement file safe
++	// when closing, including repeated Close calls from http.Server.
++	conn.SetUnlinkOnClose(false)
++	info, err := os.Lstat(socketPath)
++	if err != nil {
++		_ = conn.Close()
++		return nil, fmt.Errorf("inspect created unix socket: %w", err)
++	}
++	owned := &unixListener{UnixListener: conn, path: socketPath, info: info}
++	if err := os.Chmod(socketPath, 0600); err != nil {
++		_ = owned.Close()
++		return nil, fmt.Errorf("protect unix socket: %w", err)
++	}
++	return owned, nil
++}
++
++func validateParent(parent string) error {
++	for dir := parent; ; dir = filepath.Dir(dir) {
++		info, err := os.Lstat(dir)
++		if err != nil {
++			return fmt.Errorf("inspect unix socket directory %s: %w", dir, err)
++		}
++		stat, ok := info.Sys().(*syscall.Stat_t)
++		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Uid != 0 {
++			return fmt.Errorf("unix socket directory must be a root-owned directory without symlinks: %s", dir)
++		}
++		if dir == parent {
++			if info.Mode().Perm()&0077 != 0 {
++				return fmt.Errorf("unix socket parent must deny group and other access: %s", dir)
++			}
++		} else if info.Mode().Perm()&0022 != 0 && info.Mode()&os.ModeSticky == 0 {
++			return fmt.Errorf("unix socket ancestor is writable by non-root users: %s", dir)
++		}
++		// Root-owned sticky ancestors (e.g. /tmp) cannot rename or remove
++		// their root-owned children. Every intervening component is checked.
++		if dir == "/" {
++			return nil
++		}
++	}
++}
++
++type unixListener struct {
++	*net.UnixListener
++	path     string
++	info     os.FileInfo
++	once     sync.Once
++	closeErr error
++}
++
++func (l *unixListener) Close() error {
++	l.once.Do(func() {
++		l.closeErr = l.UnixListener.Close()
++		info, err := os.Lstat(l.path)
++		if errors.Is(err, os.ErrNotExist) {
++			return
++		}
++		if err != nil {
++			l.closeErr = errors.Join(l.closeErr, err)
++			return
++		}
++		if os.SameFile(l.info, info) {
++			l.closeErr = errors.Join(l.closeErr, os.Remove(l.path))
++		}
++	})
++	return l.closeErr
++}
+diff --git a/components/execd/pkg/listener/listener_unix_test.go b/components/execd/pkg/listener/listener_unix_test.go
+new file mode 100644
+--- /dev/null
++++ b/components/execd/pkg/listener/listener_unix_test.go
+@@ -0,0 +1,273 @@
++//go:build unix
++
++// Copyright 2025 The OpenSandbox Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package listener
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"net/http"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"runtime"
++	"syscall"
++	"testing"
++	"time"
++)
++
++func TestListenRejectsInvalidPaths(t *testing.T) {
++	for _, path := range []string{"relative.sock", "/", "/tmp/../control.sock", "/tmp//control.sock", "/tmp/control.sock/"} {
++		t.Run(path, func(t *testing.T) {
++			l, err := Listen(0, path)
++			if err == nil {
++				_ = l.Close()
++				t.Fatalf("accepted invalid path %q", path)
++			}
++		})
++	}
++}
++
++func TestListenRejectsUntrustedParent(t *testing.T) {
++	dir := t.TempDir()
++	if os.Geteuid() == 0 {
++		if err := os.Chmod(dir, 0755); err != nil {
++			t.Fatal(err)
++		}
++	}
++	path := filepath.Join(dir, "control.sock")
++	if l, err := Listen(0, path); err == nil {
++		_ = l.Close()
++		t.Fatal("accepted non-root-owned or non-private parent")
++	}
++	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
++		t.Fatalf("failed listener created a path: %v", err)
++	}
++}
++
++func trustedDir(t *testing.T) string {
++	t.Helper()
++	if os.Geteuid() != 0 {
++		t.Skip("requires root to validate the privileged socket boundary")
++	}
++	root := "/tmp"
++	if runtime.GOOS == "darwin" {
++		root = "/private/tmp"
++	}
++	dir, err := os.MkdirTemp(root, "execd-listener-")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.RemoveAll(dir) })
++	return dir
++}
++
++func TestUnixHTTPAndCleanup(t *testing.T) {
++	path := filepath.Join(trustedDir(t), "control.sock")
++	l, err := Listen(-1, path) // An invalid TCP port is irrelevant in Unix mode.
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = l.Close() })
++	info, err := os.Lstat(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if info.Mode().Perm() != 0600 || info.Mode()&os.ModeSocket == 0 {
++		t.Fatalf("socket mode: %v", info.Mode())
++	}
++	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		_, _ = io.WriteString(w, "private API")
++	})}
++	done := make(chan error, 1)
++	go func() { done <- server.Serve(l) }()
++	t.Cleanup(func() { _ = server.Close() })
++	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
++		return (&net.Dialer{}).DialContext(ctx, "unix", path)
++	}}
++	defer transport.CloseIdleConnections()
++	client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
++	response, err := client.Get("http://execd/ping")
++	if err != nil {
++		t.Fatal(err)
++	}
++	body, err := io.ReadAll(response.Body)
++	_ = response.Body.Close()
++	if err != nil || response.StatusCode != http.StatusOK || string(body) != "private API" {
++		t.Fatalf("response = %q, %v", body, err)
++	}
++	if err := server.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if err := <-done; !errors.Is(err, http.ErrServerClosed) {
++		t.Fatal(err)
++	}
++	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
++		t.Fatalf("socket not removed on close: %v", err)
++	}
++}
++
++func TestExistingPathIsNeverRemoved(t *testing.T) {
++	dir := trustedDir(t)
++	for _, kind := range []string{"file", "symlink", "socket", "stale_socket"} {
++		t.Run(kind, func(t *testing.T) {
++			path := filepath.Join(dir, kind)
++			switch kind {
++			case "file":
++				if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
++					t.Fatal(err)
++				}
++			case "symlink":
++				if err := os.Symlink("missing", path); err != nil {
++					t.Fatal(err)
++				}
++			case "socket", "stale_socket":
++				l, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
++				if err != nil {
++					t.Fatal(err)
++				}
++				defer l.Close()
++				if kind == "stale_socket" {
++					l.SetUnlinkOnClose(false)
++					if err := l.Close(); err != nil {
++						t.Fatal(err)
++					}
++				}
++			}
++			before, err := os.Lstat(path)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if l, err := Listen(0, path); err == nil {
++				_ = l.Close()
++				t.Fatal("accepted existing path")
++			}
++			after, err := os.Lstat(path)
++			if err != nil || !os.SameFile(before, after) {
++				t.Fatalf("existing path was changed: %v", err)
++			}
++		})
++	}
++}
++
++func TestRejectsSymlinkAndWritableAncestors(t *testing.T) {
++	dir := trustedDir(t)
++	real := filepath.Join(dir, "real")
++	if err := os.Mkdir(real, 0700); err != nil {
++		t.Fatal(err)
++	}
++	link := filepath.Join(dir, "link")
++	if err := os.Symlink(real, link); err != nil {
++		t.Fatal(err)
++	}
++	for _, path := range []string{filepath.Join(link, "control.sock"), filepath.Join(link, "child", "control.sock")} {
++		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
++			t.Fatal(err)
++		}
++		if l, err := Listen(0, path); err == nil {
++			_ = l.Close()
++			t.Fatalf("accepted symlink ancestor: %s", path)
++		}
++	}
++	if err := os.Chmod(dir, 0777); err != nil {
++		t.Fatal(err)
++	}
++	if l, err := Listen(0, filepath.Join(real, "control.sock")); err == nil {
++		_ = l.Close()
++		t.Fatal("accepted writable non-sticky ancestor")
++	}
++}
++
++func TestClosePreservesReplacement(t *testing.T) {
++	path := filepath.Join(trustedDir(t), "control.sock")
++	l, err := Listen(0, path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer l.Close()
++	if err := os.Remove(path); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, []byte("replacement"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := l.Close(); err != nil {
++		t.Fatal(err)
++	}
++	body, err := os.ReadFile(path)
++	if err != nil || string(body) != "replacement" {
++		t.Fatalf("replacement lost: %q %v", body, err)
++	}
++}
++
++func TestUnprivilegedConnectDenied(t *testing.T) {
++	if path := os.Getenv("EXECD_TEST_UNIX_DIAL"); path != "" {
++		conn, err := net.DialTimeout("unix", path, time.Second)
++		if conn != nil {
++			_ = conn.Close()
++		}
++		if !errors.Is(err, os.ErrPermission) {
++			t.Fatalf("expected permission denied, got %v", err)
++		}
++		return
++	}
++	dir := trustedDir(t)
++	path := filepath.Join(dir, "control.sock")
++	l, err := Listen(0, path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer l.Close()
++	// Copy the test executable into a traversable directory so the child can
++	// reach the actual dial check after dropping its identity.
++	public := trustedDir(t)
++	if err := os.Chmod(public, 0755); err != nil {
++		t.Fatal(err)
++	}
++	executable, err := os.Executable()
++	if err != nil {
++		t.Fatal(err)
++	}
++	binary, err := os.ReadFile(executable)
++	if err != nil {
++		t.Fatal(err)
++	}
++	helper := filepath.Join(public, "dial-test")
++	if err := os.WriteFile(helper, binary, 0755); err != nil {
++		t.Fatal(err)
++	}
++	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++	defer cancel()
++	cmd := exec.CommandContext(ctx, helper, "-test.run=^TestUnprivilegedConnectDenied$")
++	cmd.Env = append(os.Environ(), "EXECD_TEST_UNIX_DIAL="+path)
++	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534, Groups: []uint32{}}}
++	if output, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("unprivileged dial: %v: %s", err, output)
++	}
++}
++
++func TestRejectsNonRootOwnedDirectory(t *testing.T) {
++	dir := trustedDir(t)
++	if err := os.Chown(dir, 65534, 65534); err != nil {
++		t.Fatal(err)
++	}
++	if l, err := Listen(0, filepath.Join(dir, "control.sock")); err == nil {
++		_ = l.Close()
++		t.Fatal("accepted directory owned by workload identity")
++	}
++}
