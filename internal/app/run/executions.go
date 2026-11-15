@@ -10,6 +10,7 @@ import (
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -64,12 +65,33 @@ func (h *Controller) submitExecution(c *core.Context) {
 		return
 	}
 	req.IdempotencyKey = headers.IdempotencyKey
+	selection := memory.Selection(req.Memory)
+	var filter memory.RecallFilter
+	if req.MemoryFilter != nil {
+		if selection != memory.SelectionRecall {
+			serrors.Abort(
+				c,
+				http.StatusBadRequest,
+				"InvalidParameter",
+				"memoryFilter requires memory=Recall",
+			)
+			return
+		}
+		filter = memory.RecallFilter{
+			Terms:      req.MemoryFilter.Terms,
+			Tags:       req.MemoryFilter.Tags,
+			MaxEntries: req.MemoryFilter.MaxEntries,
+			MaxBytes:   req.MemoryFilter.MaxBytes,
+		}
+	}
 	r, created, err := h.execution.SubmitApplication(
 		c.Request.Context(),
 		auth.UserID(c),
 		req.IdempotencyKey,
 		req.Spec,
 		time.Duration(req.TimeoutSeconds)*time.Second,
+		selection,
+		filter,
 	)
 	if err != nil {
 		apperror.Respond(c, err)

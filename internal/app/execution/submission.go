@@ -58,11 +58,14 @@ func (s *Service) SubmitApplication(
 	owner, key string,
 	spec execpkg.ExecutionSpec,
 	ttl time.Duration,
+	memorySelection memory.Selection,
+	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
 	input, _ := json.Marshal(struct {
-		Spec execpkg.ExecutionSpec
-		TTL  time.Duration
-	}{Spec: spec, TTL: ttl})
+		Spec   execpkg.ExecutionSpec
+		TTL    time.Duration
+		Memory memory.Selection
+	}{Spec: spec, TTL: ttl, Memory: memorySelection})
 	return s.store.Accept(ctx, execpkg.SubmitCommand{
 		Owner:         owner,
 		RequestKey:    key,
@@ -71,6 +74,8 @@ func (s *Service) SubmitApplication(
 		MaxAttempts:   5,
 		Kind:          execpkg.SubmitApplication,
 		ExecutionSpec: spec,
+		Memory:        memorySelection,
+		MemoryFilter:  filter,
 	}, durable.PrepareApplicationSubmissionWith(s.recaller))
 }
 

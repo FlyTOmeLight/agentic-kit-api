@@ -218,6 +218,8 @@ Agent 版本不因本设计增加自动开启学习的开关。服务端政策�
 
 将选中条目的完整正文、条件、来源、固定版本引用及顺序映射为 ContextBlock；与策略和预算一起编码到 ContextSnapshot，并与 Session/Run/用户消息/事件原子提交。无匹配保存 Recall/Empty，Off 保存明确关闭；本地读取或投影校验失败使接受事务回滚，不能静默降为 Empty。投影正常时 artifact 暂时离线不影响 Recall，这来自已完成的本地生效契约。
 
+已实现 scope 构造口径：普通聊天无业务 tenant/project 上下文，固定 OwnerPrivate。应用执行从接受时已核验的 workspace scope 派生（`pkg/durable/prepare.go` 的 `memoryScopeFromFacts`）：tenant+actor 且 project 为空为 ActorPrivate；tenant+project+actor 为 ActorProject；组件缺失时回退 OwnerPrivate，绝不扩宽为 ProjectShared。应用执行与聊天共用同一请求字段：`SubmitExecutionRequest` 携带 `memory`（Off/Recall）与 `memoryFilter`（同 §7.2 的 RecallFilter），Off 携带 filter 报 400 Invalid。
+
 同键已成功提交直接读取原 Run；后续记忆更新、策略变化或 artifact 故障均不触发重新召回。未成功接受的请求可在重试时重新选择，以最终接受的快照为准。
 
 ### 7.3 每轮模型输入与恢复
