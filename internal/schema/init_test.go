@@ -54,7 +54,7 @@ func TestInitCreatesTargetSchemaAndIsRepeatable(t *testing.T) {
 	for _, model := range []any{
 		&table.Agent{}, &table.AgentVersion{}, &table.Session{}, &table.Run{},
 		&table.Goal{}, &table.Evaluation{}, &table.Step{}, &table.Event{}, &table.Message{},
-		&table.RunEnvironment{},
+		&table.RunEnvironment{}, &table.Usage{},
 	} {
 		if !db.Migrator().HasTable(model) {
 			t.Fatalf("missing table for %T", model)

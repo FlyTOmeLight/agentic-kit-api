@@ -96,17 +96,12 @@ func (s *Store) SpawnChildRun(ctx context.Context, l Lease, stepID, query string
 }
 
 // handleChildTerminal runs inside the transaction that moved a child run to a
-// terminal status. It charges the goal budget, then either wakes the waiting
-// parent with the child outcome or records a ChildOrphaned event when the
-// parent can no longer accept the result.
+// terminal status. Usage was already charged at RecordUsage time, so this only
+// wakes the waiting parent with the child outcome or records a ChildOrphaned
+// event when the parent can no longer accept the result.
 func handleChildTerminal(ctx context.Context, tx *gorm.DB, child *table.Run) error {
 	if child.ParentRunID == "" {
 		return nil
-	}
-	if child.GoalID != "" {
-		if err := chargeGoalBudget(ctx, tx, child); err != nil {
-			return err
-		}
 	}
 	result := child.Output
 	if child.Status != Completed {
@@ -242,33 +237,4 @@ func cascadeCancelChildren(ctx context.Context, tx *gorm.DB, parentID string) er
 		}
 	}
 	return nil
-}
-
-// chargeGoalBudget folds a terminal child run's usage into its goal. The goal
-// row is locked; crossing a configured budget blocks the goal so subtasks
-// cannot bypass the budget by splitting work.
-func chargeGoalBudget(ctx context.Context, tx *gorm.DB, child *table.Run) error {
-	var goalRow table.Goal
-	if err := tx.Model(&table.Goal{}).
-		Where("owner_id = ? AND id = ?", child.OwnerID, child.GoalID).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Take(&goalRow).
-		Error; err != nil {
-		return recordError(err)
-	}
-	if goalRow.Status != GoalActive {
-		return nil
-	}
-	goalRow.TokensUsed += child.TokensUsed
-	goalRow.CostUSD += child.CostUSD
-	updates := map[string]any{
-		"tokens_used": goalRow.TokensUsed,
-		"cost_usd":    goalRow.CostUSD,
-		"updated_at":  gorm.Expr("clock_timestamp()"),
-	}
-	if (goalRow.Budget.MaxTokens > 0 && goalRow.TokensUsed > goalRow.Budget.MaxTokens) ||
-		(goalRow.Budget.MaxCostUSD > 0 && goalRow.CostUSD > goalRow.Budget.MaxCostUSD) {
-		updates["status"] = GoalBlocked
-	}
-	return tx.Model(&table.Goal{}).Where("id = ?", goalRow.ID).Updates(updates).Error
 }

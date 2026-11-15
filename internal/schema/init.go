@@ -29,6 +29,7 @@ func Init(ctx context.Context, db *gorm.DB) error {
 			&table.Event{},
 			&table.Message{},
 			&table.RunEnvironment{},
+			&table.Usage{},
 			&sandboxcenter.Sandbox{},
 			&sandboxcenter.Lease{},
 			&sandboxcenter.Operation{},

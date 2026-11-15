@@ -210,10 +210,6 @@ func (s *Store) CheckGoalProgress(ctx context.Context, owner, goalID string) (*G
 			return nil, err
 		}
 	}
-	if !undetermined {
-		goalRow.TokensUsed += runRow.TokensUsed
-		goalRow.CostUSD += runRow.CostUSD
-	}
 	switch {
 	case passed:
 		goalRow.StallCount = 0
@@ -249,8 +245,6 @@ func (s *Store) CheckGoalProgress(ctx context.Context, owner, goalID string) (*G
 			"status":          newStatus,
 			"stall_count":     goalRow.StallCount,
 			"last_stall_mark": goalRow.LastStallMark,
-			"tokens_used":     goalRow.TokensUsed,
-			"cost_usd":        goalRow.CostUSD,
 			"updated_at":      gorm.Expr("clock_timestamp()"),
 		}).
 		Error; err != nil {
