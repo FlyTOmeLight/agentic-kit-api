@@ -10,11 +10,16 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
 func testService(t *testing.T) (*Service, *durable.Store) {
+	return testServiceWithArchive(t, nil)
+}
+
+func testServiceWithArchive(t *testing.T, archive Archiver) (*Service, *durable.Store) {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -50,7 +55,7 @@ func testService(t *testing.T) (*Service, *durable.Store) {
 	if err = store.InitSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return NewService(store.DB()), store
+	return NewService(store.DB(), archive), store
 }
 
 func factDocument(scope memory.Scope, subject, summary, body string) memory.Document {
@@ -66,7 +71,7 @@ func factDocument(scope memory.Scope, subject, summary, body string) memory.Docu
 }
 
 func TestMemoryCreateGetListUpdateRetireRestore(t *testing.T) {
-	svc, _ := testService(t)
+	svc, store := testService(t)
 	ctx := context.Background()
 	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
 
@@ -77,6 +82,20 @@ func TestMemoryCreateGetListUpdateRetireRestore(t *testing.T) {
 	}
 	if entry.Revision != 1 || entry.ID == "" {
 		t.Fatalf("unexpected entry: %+v", entry)
+	}
+	var localEntries, localReceipts int64
+	if err := store.DB().Model(&table.MemoryEntry{}).
+		Where("id = ? AND binding IS NULL AND active_version_ref IS NULL", entry.ID).
+		Count(&localEntries).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DB().Model(&table.MemoryOperation{}).
+		Where("entry_id = ? AND binding IS NULL AND version_ref IS NULL", entry.ID).
+		Count(&localReceipts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if localEntries != 1 || localReceipts != 1 {
+		t.Fatal("local writes must store SQL NULL archive references")
 	}
 
 	got, err := svc.Get(ctx, "owner-a", entry.ID)
@@ -119,6 +138,14 @@ func TestMemoryCreateGetListUpdateRetireRestore(t *testing.T) {
 	if retired.RetiredAt == nil {
 		t.Fatal("Retire did not set RetiredAt")
 	}
+	replayed, err := svc.Retire(ctx, "owner-a", "actor-a", "key-4", entry.ID, 2)
+	if err != nil || replayed.Revision != 3 {
+		t.Fatalf("Retire replay: %+v, %v", replayed, err)
+	}
+	if _, err = svc.Create(ctx, "owner-a", "actor-a", "retired-subject",
+		factDocument(scope, "editor", "duplicate", "x")); !errors.Is(err, memory.ErrConflict) {
+		t.Fatalf("retired subject Create = %v, want Conflict", err)
+	}
 
 	if _, err = svc.Update(ctx, "owner-a", "actor-a", "key-5", entry.ID, 3,
 		factDocument(scope, "editor", "x", "y")); !errors.Is(err, memory.ErrConflict) {
@@ -132,6 +159,15 @@ func TestMemoryCreateGetListUpdateRetireRestore(t *testing.T) {
 	}
 	if restored.RetiredAt != nil || restored.Revision != 4 {
 		t.Fatalf("unexpected restored entry: %+v", restored)
+	}
+	var activeCount int64
+	if err := store.DB().Model(&table.MemoryEntry{}).
+		Where("id = ? AND retired_at IS NULL AND revision = 4", entry.ID).
+		Count(&activeCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if activeCount != 1 {
+		t.Fatal("Restore did not persist SQL NULL retired_at")
 	}
 }
 

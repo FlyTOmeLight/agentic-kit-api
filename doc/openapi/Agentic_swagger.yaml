@@ -131,6 +131,13 @@ definitions:
     required:
     - name
     type: object
+  agenticv1.CreateMemoryRequest:
+    properties:
+      document:
+        $ref: '#/definitions/agenticv1.MemoryDocument'
+    required:
+    - document
+    type: object
   agenticv1.CreateSessionRequest:
     properties:
       agentID:
@@ -159,6 +166,81 @@ definitions:
     properties:
       allowed:
         type: boolean
+    type: object
+  agenticv1.MemoryDocument:
+    properties:
+      agentID:
+        type: string
+      body:
+        type: object
+      conditions:
+        $ref: '#/definitions/memory.Conditions'
+      entryID:
+        type: string
+      kind:
+        type: string
+      outputVisibility:
+        type: string
+      schemaVersion:
+        type: integer
+      scope:
+        $ref: '#/definitions/memory.Scope'
+      source:
+        $ref: '#/definitions/memory.Source'
+      subjectKey:
+        type: string
+      summary:
+        type: string
+      validUntil:
+        type: integer
+    type: object
+  agenticv1.MemoryEntry:
+    properties:
+      activeVersionRef:
+        $ref: '#/definitions/memory.VersionRef'
+      agentID:
+        type: string
+      binding:
+        $ref: '#/definitions/memory.ArtifactBinding'
+      body:
+        type: object
+      conditions:
+        $ref: '#/definitions/memory.Conditions'
+      id:
+        type: string
+      kind:
+        type: string
+      outputVisibility:
+        type: string
+      retiredAt:
+        type: integer
+      revision:
+        type: integer
+      scope:
+        $ref: '#/definitions/memory.Scope'
+      source:
+        $ref: '#/definitions/memory.Source'
+      subjectKey:
+        type: string
+      summary:
+        type: string
+      validUntil:
+        type: integer
+    type: object
+  agenticv1.MemoryRecallFilter:
+    properties:
+      maxBytes:
+        type: integer
+      maxEntries:
+        type: integer
+      tags:
+        items:
+          type: string
+        type: array
+      terms:
+        items:
+          type: string
+        type: array
     type: object
   agenticv1.Page-agenticv1_Agent:
     properties:
@@ -193,6 +275,14 @@ definitions:
       revision:
         minimum: 1
         type: integer
+    type: object
+  agenticv1.RetireMemoryRequest:
+    properties:
+      expectedRevision:
+        minimum: 1
+        type: integer
+    required:
+    - expectedRevision
     type: object
   agenticv1.Run:
     properties:
@@ -244,6 +334,13 @@ definitions:
     type: object
   agenticv1.SendMessageRequest:
     properties:
+      memory:
+        enum:
+        - "Off"
+        - Recall
+        type: string
+      memoryFilter:
+        $ref: '#/definitions/agenticv1.MemoryRecallFilter'
       query:
         type: string
     required:
@@ -266,6 +363,13 @@ definitions:
     type: object
   agenticv1.SubmitExecutionRequest:
     properties:
+      memory:
+        enum:
+        - "Off"
+        - Recall
+        type: string
+      memoryFilter:
+        $ref: '#/definitions/agenticv1.MemoryRecallFilter'
       spec:
         $ref: '#/definitions/agenticv1.ExecutionSpec'
       timeoutSeconds:
@@ -296,6 +400,19 @@ definitions:
         type: integer
     required:
     - name
+    type: object
+  agenticv1.UpdateMemoryRequest:
+    properties:
+      document:
+        $ref: '#/definitions/agenticv1.MemoryDocument'
+      expectedRevision:
+        minimum: 1
+        type: integer
+      restore:
+        type: boolean
+    required:
+    - document
+    - expectedRevision
     type: object
   errors.Error:
     properties:
@@ -414,6 +531,86 @@ definitions:
       id:
         type: string
       name:
+        type: string
+    type: object
+  memory.ArtifactBinding:
+    properties:
+      artifactID:
+        type: string
+      projectID:
+        type: string
+      storeID:
+        type: string
+      tenantID:
+        type: string
+      userID:
+        type: string
+    type: object
+  memory.Conditions:
+    properties:
+      taskTags:
+        items:
+          type: string
+        type: array
+      toolNames:
+        items:
+          type: string
+        type: array
+    type: object
+  memory.Scope:
+    properties:
+      actor:
+        type: string
+      kind:
+        type: string
+      owner:
+        type: string
+      project:
+        type: string
+      tenant:
+        type: string
+    type: object
+  memory.Source:
+    properties:
+      actor:
+        type: string
+      class:
+        type: string
+      evidence:
+        items:
+          $ref: '#/definitions/memory.SourceEvidence'
+        type: array
+    type: object
+  memory.SourceEvidence:
+    properties:
+      eventID:
+        type: string
+      messageID:
+        type: string
+      runID:
+        type: string
+      stepID:
+        type: string
+      summary:
+        type: string
+    type: object
+  memory.VersionRef:
+    properties:
+      artifactID:
+        type: string
+      projectID:
+        type: string
+      sequence:
+        type: integer
+      storeID:
+        type: string
+      tenantID:
+        type: string
+      userID:
+        type: string
+      versionID:
+        type: string
+      versionURI:
         type: string
     type: object
   workspace.Scope:
@@ -851,6 +1048,208 @@ paths:
       summary: 查询 Agent 版本
       tags:
       - Agent
+  /v1/memories:
+    get:
+      parameters:
+      - description: 游标
+        in: query
+        name: after
+        type: string
+      - default: 50
+        description: 数量
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功
+          schema:
+            items:
+              $ref: '#/definitions/agenticv1.MemoryEntry'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: 列出记忆
+      tags:
+      - Memory
+    post:
+      consumes:
+      - application/json
+      description: Idempotency-Key 必须通过请求 Header 发送，不能放在 JSON body 中。
+      parameters:
+      - description: 幂等标识；同键同参重放返回已有结果
+        in: header
+        maxLength: 128
+        name: Idempotency-Key
+        required: true
+        type: string
+      - description: JSON 请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/agenticv1.CreateMemoryRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: 成功
+          schema:
+            $ref: '#/definitions/agenticv1.MemoryEntry'
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 状态或幂等冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "503":
+          description: 本地生效结果不明、归档版本或依赖暂不可用
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 创建记忆
+      tags:
+      - Memory
+  /v1/memories/{id}:
+    get:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功
+          schema:
+            $ref: '#/definitions/agenticv1.MemoryEntry'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 查询记忆
+      tags:
+      - Memory
+    put:
+      consumes:
+      - application/json
+      description: |-
+        restore 为 false 或省略时更新活跃条目；restore 为 true 时恢复已停用条目。
+        Idempotency-Key 必须通过请求 Header 发送，不能放在 JSON body 中。
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 幂等标识；同键同参重放返回已有结果
+        in: header
+        maxLength: 128
+        name: Idempotency-Key
+        required: true
+        type: string
+      - description: JSON 请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/agenticv1.UpdateMemoryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功
+          schema:
+            $ref: '#/definitions/agenticv1.MemoryEntry'
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 状态、修订或幂等冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "503":
+          description: 本地生效结果不明、归档版本或依赖暂不可用
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 更新或恢复记忆
+      tags:
+      - Memory
+  /v1/memories/{id}/retire:
+    post:
+      consumes:
+      - application/json
+      description: Idempotency-Key 必须通过请求 Header 发送，不能放在 JSON body 中。
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 幂等标识；同键同参重放返回已有结果
+        in: header
+        maxLength: 128
+        name: Idempotency-Key
+        required: true
+        type: string
+      - description: JSON 请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/agenticv1.RetireMemoryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功
+          schema:
+            $ref: '#/definitions/agenticv1.MemoryEntry'
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 状态或修订冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "503":
+          description: 本地生效结果不明或依赖暂不可用
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 停用记忆
+      tags:
+      - Memory
   /v1/runs/{id}:
     get:
       parameters:

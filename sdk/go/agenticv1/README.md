@@ -58,6 +58,28 @@ func Start(ctx context.Context, baseURL, token string) (*sdk.Run, error) {
 
 `Sessions.SendMessage` 的响应 `Created` 表示是否创建新任务：202 为 true，200 幂等回放为 false。提交成功只代表服务接受任务；通过 `Runs.Get`、`Sessions.ListMessages` 或事件流获取执行结果。
 
+## Memory
+
+`Client.Memories` 提供 Memory 的 Create、Get、List、Update 和 Retire。当前只支持 OwnerPrivate 人工维护。更新和恢复共用一个方法：`UpdateMemoryRequest.Restore=false` 或省略字段时更新活跃条目，`Restore=true` 时显式恢复停用条目；两者都必须提供当前 `ExpectedRevision` 和完整 `Document`。
+
+```go
+restored, err := client.Memories.Update(ctx, entry.ID, &sdk.UpdateMemoryRequest{
+    IdempotencyKey:   "memory-restore-001",
+    ExpectedRevision: entry.Revision,
+    Restore:          true,
+    Document:         sdk.MemoryDocument{
+        // 填写完整的 scope、kind、subjectKey、summary、body 和 source。
+    },
+})
+if err != nil {
+    return err
+}
+```
+
+`IdempotencyKey` 由 SDK 写入 `Idempotency-Key` Header，不会进入 JSON body；该 Header 三个写接口都必填，body 中出现 `idempotencyKey` 会被拒绝。同一 owner 下同键同参重试返回首次生效结果，不重复发布或覆盖后来变更；同键不同参或 actor 返回 409。网络超时或 503 后应复用原键，不要生成新键。
+
+Update 和 Restore 的 revision 不匹配、恢复活跃条目、更新停用条目或改变身份字段都会返回 409。Memory 写操作的 503 状态包括：`MemoryOperationPending`（操作已受理但尚未完成，使用原键重试）、`MemoryUnavailable`（依赖暂不可用，修复后继续原键）、`MemoryOperationOutcomeUnknown`（本地生效提交结果不明，保留原键、原 collection 和原版本身份继续原键处理，不能换键或重建集合）和 `MemoryVersionUnavailable`（归档版本正文不可用，可能来自源版本 410；同样保留原版本身份并交由受控修复）。版本历史 API（`GET /v1/memories/{id}/versions` 及单版本读取）本轮尚未实现；SDK 当前只暴露 Entry 的 `Revision` 和 `ActiveVersionRef`。
+
 `NewClient` 的第三个参数可以传自定义 `*http.Client`，用于连接池、TLS 和超时设置。SDK 复用 server-go 客户端，以 Resty v3 执行请求并禁用重定向。标准 HTTP Transport 被克隆，不修改原 client；普通 JSON 默认 20 秒超时，传入 HTTP Client 的正超时值会覆盖此默认值。调用方在请求与流结束后调用 client.Close()。Client 可以并发复用。
 
 非 2xx 响应返回 `*github.com/FlyTOmeLight/server-go/errors.Error`，包含 HTTP 状态 `Status`、框架错误编号 `StatusCode`、`Code`、`Message` 和 `RequestID`，可用 `errors.As(err, &apiErr)` 判断。网络错误和 context 取消保留原错误链，可用 `errors.Is` 判断。
@@ -70,7 +92,7 @@ func Start(ctx context.Context, baseURL, token string) (*sdk.Run, error) {
 
 ## 接口与依赖注入
 
-`Client.Agents`、`Client.Sessions`、`Client.Runs` 分别是 `AgentAPI`、`SessionAPI`、`RunAPI` 接口。业务实现和 server-go SDK（Resty v3）客户端均不导出。调用方可以只接收所需的业务接口，例如：
+`Client.Agents`、`Client.Sessions`、`Client.Runs`、`Client.Memories` 分别是 `AgentAPI`、`SessionAPI`、`RunAPI`、`MemoryAPI` 接口。业务实现和 server-go SDK（Resty v3）客户端均不导出。调用方可以只接收所需的业务接口，例如：
 
 ```go
 type Conversation struct {
@@ -89,7 +111,7 @@ func NewConversation(sessions sdk.SessionAPI) *Conversation {
 
 ## 请求与响应
 
-所有操作接收标准 `context.Context` 和一个操作请求指针。路径 ID、query 分页和本次请求的 Header 与 JSON body 字段放在同一请求中；SDK 按协议分别编码，不将路径和 Header 字段写入 JSON。比如 `Runs.Get(ctx, &sdk.GetRunRequest{ID: runID})`、`Sessions.ListMessages(ctx, &sdk.ListMessagesRequest{SessionID: sessionID, ListMessagesOptions: sdk.ListMessagesOptions{After: 10, Limit: 50}})`。
+所有操作接收标准 `context.Context` 和一个操作请求指针；带目标 ID 的方法同时接收单独的 ID 参数。请求对象可以承载路径、query、Header 和 JSON 字段，SDK 按协议分别编码，不将路径和 Header 字段写入 JSON。比如 `Runs.Get(ctx, &sdk.GetRunRequest{ID: runID})`、`Sessions.ListMessages(ctx, &sdk.ListMessagesRequest{SessionID: sessionID, ListMessagesOptions: sdk.ListMessagesOptions{After: 10, Limit: 50}})`、`Memories.Update(ctx, memoryID, &sdk.UpdateMemoryRequest{IdempotencyKey: key, ExpectedRevision: revision, Document: document})`。
 
 普通查询返回领域对象或分页结果；没有响应 body 的操作返回 `error`。提交消息和执行返回包含领域结果与 `Created` 的操作响应。事件流使用 `OpenEvents(ctx, &sdk.OpenRunEventsRequest{ID: runID, LastEventID: "runID:seq"})`，调用方负责关闭返回的 `io.ReadCloser`。
 

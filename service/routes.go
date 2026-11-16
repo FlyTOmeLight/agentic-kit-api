@@ -22,11 +22,12 @@ type routes struct {
 func newRoutes(
 	store *durable.Store,
 	cache frameworkredis.Redis,
+	archive appmemory.Archiver,
 ) *routes {
 	exec := appexec.NewService(store)
 	var memoryCtrl *appmemory.Controller
 	if store != nil {
-		memorySvc := appmemory.NewService(store.DB())
+		memorySvc := appmemory.NewService(store.DB(), archive)
 		memoryCtrl = appmemory.NewController(memorySvc)
 		exec = exec.WithMemoryRecaller(memorySvc)
 	}

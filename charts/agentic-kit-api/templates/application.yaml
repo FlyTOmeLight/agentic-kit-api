@@ -20,6 +20,16 @@ spec:
           env:
             - name: LISTEN_ADDR
               value: ":8080"
+            - name: ARTIFACT_ENDPOINT
+              value: {{ .Values.artifact.endpoint | quote }}
+            - name: ARTIFACT_STORE_ID
+              value: {{ .Values.artifact.storeID | quote }}
+            - name: ARTIFACT_TENANT_ID
+              value: {{ .Values.artifact.tenantID | quote }}
+            - name: ARTIFACT_TIMEOUT_SECONDS
+              value: {{ .Values.artifact.timeoutSeconds | quote }}
+            - name: ARTIFACT_MAX_PAYLOAD_BYTES
+              value: {{ .Values.artifact.maxPayloadBytes | quote }}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
           resources:
             requests: {cpu: 50m, memory: 96Mi}

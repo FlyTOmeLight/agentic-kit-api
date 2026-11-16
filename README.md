@@ -4,7 +4,9 @@
 
 本仓库只提供通用 Agent 能力。项目工作台、项目权限政策、产品模板、数据集、评测实验和场景发布审批由调用方应用负责，不在 API 中实现。执行请求可以携带 tenant、project、actor、task 等上下文，核心只据此隔离任务和保存快照，不查询或管理项目业务。
 
-当前执行链路支持 worker 重启后接管已提交任务。上下文构建已实现预算预检、工具结果有界预览、历史两级裁剪和当前轮工具链折叠：Run 接受时冻结完整材料、策略与预算，配套 worker 每次模型调用前重新构建输入。新 Run 使用 `context-v3`，超限先移除低优先级 Memory，再从旧到新折叠历史工具过程、保留问答，仍超限才删除整轮；历史耗尽后仍超限时，把当前轮较旧的工具结果替换为投影标记，只保留最近 3 条完整结果。旧 `context-v1`、`context-v2` 快照保持各自原有裁剪规则。原始消息、工具结果和快照继续完整保存。Memory 的[技术设计](docs/memory-design.md)提出复用 artifact-go，当前真实提交仍固定为 Off，维护与召回尚未实现。[通用框架重构设计](docs/refactoring-design.md)中的访问对象和新表结构仍待实施。
+当前执行链路支持 worker 重启后接管已提交任务。上下文构建已实现预算预检、工具结果有界预览、历史两级裁剪和当前轮工具链折叠：Run 接受时冻结完整材料、策略与预算，配套 worker 每次模型调用前重新构建输入。新 Run 使用 `context-v3`，超限先移除低优先级 Memory，再从旧到新折叠历史工具过程、保留问答，仍超限才删除整轮；历史耗尽后仍超限时，把当前轮较旧的工具结果替换为投影标记，只保留最近 3 条完整结果。旧 `context-v1`、`context-v2` 快照保持各自原有裁剪规则。原始消息、工具结果和快照继续完整保存。
+
+Memory 已提供 OwnerPrivate 人工创建、读取、纠正、停用和显式 Restore；聊天与应用执行默认 Off，显式 Recall 时通过 `RecallTx` 在接受事务内读取本地生效投影，并将完整材料冻结进 Run。可选 artifact 适配使用 artifact-go `v0.5.0`、server-go `v0.13.0`，以持久操作回执连接远端存档与本地 CAS 生效。版本历史 API、自动提炼、后台 Pending 恢复、语义检索和版本删除/回收尚未实现，真实 artifact 部署尚未联合验证。范围和后续设计见 [Memory 设计](docs/memory-design.md)；[通用框架重构设计](docs/refactoring-design.md)的完整访问模型和目录重组仍未全部落地。
 
 Agent 的 `model.contextWindow` 可配置模型窗口；设置后必须同时设置正数 `model.maxTokens`，且小于窗口。输入预算取两者之差，使用版本化 UTF-8 字节估算与 256 token 协议预留；这是偏保守的估算，不是模型 tokenizer 的精确计数。不配置窗口时使用 128 KiB 输入字节上限。单条工具结果默认最多向模型展示 16 KiB，配置窗口时再限制为输入预算的四分之一（最低 128 字节）。提交期对已知材料预检，超限返回 HTTP 400 `ContextBudgetExceeded`；worker 按实际工具 schema 和当前工具链复检，必需内容仍超限则结束为 Failed。
 
@@ -17,6 +19,7 @@ Agent 的 `model.contextWindow` 可配置模型窗口；设置后必须同时设
 | Run / Execution | 提交、查询、取消、澄清回答、人工确认、执行权校验、trace 与 SSE 回放 |
 | Durable / Outbox | API 与 worker 共享执行事务、租约、步骤存档、状态与事件一致提交、通知投递 |
 | Context | 完整历史组与 Memory 材料的稳定选择、预算裁剪、版本化 `ContextSnapshot` 冻结 |
+| Memory | OwnerPrivate 人工维护与 Restore、操作回执、可选 artifact 存档、本地投影召回与 Run 冻结 |
 
 ```text
 agentic-kit-api/
@@ -27,12 +30,15 @@ agentic-kit-api/
 │   │   ├── agent/            # Agent HTTP 接口与消费方事务接口
 │   │   ├── session/          # 会话、消息与提交接口
 │   │   ├── run/              # 执行、租约、取消、人工恢复、trace 与 SSE
+│   │   ├── memory/           # 人工维护、发布编排、生效与本地召回
 │   │   └── apperror/         # 领域错误到 HTTP 错误的映射
+│   ├── client/               # artifact SDK 与固定存储绑定适配
 │   ├── config/               # 类型化配置与启动校验
 │   ├── schema/               # 空库目标表结构初始化
-│   └── table/                # Agent、Session、Run、Step、Event、Message 表模型
+│   └── table/                # Agent、执行与 Memory 表模型
 ├── pkg/durable/              # API/worker 共享持久化事务与执行契约
 ├── pkg/contextbuilder/       # 纯上下文构建、预算裁剪与快照编码
+├── pkg/memory/               # Memory 领域值、校验和词项匹配
 ├── sdk/go/agenticv1/          # 通用 HTTP 请求/响应、Go SDK 与 SSE 消费
 ├── doc/openapi/              # 由 Controller 与 SDK 生成的 OpenAPI
 ├── conf/server/config.toml   # 默认配置与环境占位符
@@ -41,7 +47,7 @@ agentic-kit-api/
 └── charts/agentic-kit-api/    # API、PostgreSQL 与 Redis 部署模板
 ```
 
-数据库操作与跨域事务位于 `pkg/durable`，Controller 负责绑定和响应；表模型仅在 `internal/table` 维护。独立服务的 `service.Build` 创建连接并交给 server-go Runtime；组合应用通过 `service.New` 注入已有资源，所有者在服务停止后关闭连接。
+执行事务位于 `pkg/durable`，Memory 维护事务与发布编排位于 `internal/app/memory`；Controller 负责绑定和响应，表模型仅在 `internal/table` 维护。`service.Build` 创建数据库与 Redis 连接并交给 server-go Runtime，创建的 archive 客户端由 API 在成功停止后关闭。组合应用通过 `service.New` 注入已有资源，由调用方在服务成功停止后关闭。
 
 ## 配置与启动
 
@@ -51,7 +57,19 @@ GOWORK=off go run ./cmd/server -config conf/server/config.toml
 
 通过 `-config`、`CONFIG_FILE`、`SERVER_CONFIG_PATH` 依次选择配置路径，未指定时读取 `conf/server/config.toml`。环境变量通过 TOML 中的 `${env:NAME:default}` 占位符映射，普通常量不被同名环境变量覆盖。
 
-当前只需 HTTP、数据库和 Redis 配置。常用环境变量为 `DATABASE_URL`、`REDIS_ADDR`、`LISTEN_ADDR`。`[Redis]` 使用 server-go `redis.Config`，以 `Addrs` 和 `DB` 配置连接；Redis 离线不阻止启动，事件仍从数据库回放。模型与工具凭据由 worker 环境提供，快照仅保存环境变量引用。
+基础启动需要 HTTP、数据库和 Redis 配置。常用环境变量为 `DATABASE_URL`、`REDIS_ADDR`、`LISTEN_ADDR`。`[Redis]` 使用 server-go `redis.Config`，以 `Addrs` 和 `DB` 配置连接；Redis 离线不阻止启动，事件仍从数据库回放。模型与工具凭据由 worker 环境提供，快照仅保存环境变量引用。
+
+`[Artifact]` 可选，配置与 Helm values 对应如下：
+
+| TOML 字段 | 环境变量 | Helm value | 默认值 |
+| --- | --- | --- | --- |
+| `Endpoint` | `ARTIFACT_ENDPOINT` | `artifact.endpoint` | 空 |
+| `StoreID` | `ARTIFACT_STORE_ID` | `artifact.storeID` | `artifact` |
+| `TenantID` | `ARTIFACT_TENANT_ID` | `artifact.tenantID` | 空，无公共租户兜底 |
+| `TimeoutSeconds` | `ARTIFACT_TIMEOUT_SECONDS` | `artifact.timeoutSeconds` | `30` |
+| `MaxPayloadBytes` | `ARTIFACT_MAX_PAYLOAD_BYTES` | `artifact.maxPayloadBytes` | `262144` |
+
+Endpoint 为空时保持本地模式，Memory 写入本地投影，不生成远端版本引用，其余 Artifact 字段不参与校验。配置 Endpoint 后，启动时要求绝对 HTTP(S) URL、非空 StoreID/TenantID、1–60 秒超时及 1–262144 字节 payload 上限；OwnerPrivate 使用配置的 tenant 与 owner 固定存储归属。timeout 是客户端请求超时，Archive 的集合创建与发布另受 1 分钟总预算约束。已有绑定不会因配置变化自动迁移，本地条目也不会自动补归档。Helm 将这些 values 渲染为显式 env，同名 `envFrom` Secret 值不会覆盖它们。
 
 API 不维护静态 token、config owner 白名单、Tenant/Coding 业务客户端或对应连接配置。请求身份与鉴权后续通过 forge-tenant-api middleware 接入；当前尚未接入，业务路由没有身份校验。`auth.UserID(c)` 是现有身份读取点，持久化对象按 owner 隔离。
 
@@ -81,7 +99,7 @@ curl -N "$API_URL/v1/runs/$run_id/events"
 
 继续对话时使用相同 session_id、新的 Idempotency-Key 和 query。编辑 Agent 使用 `PUT /v1/agents/{id}`，传完整 name/config 和当前 revision；发布后新任务使用新版本，已有任务仍使用冻结的原版本。完整请求、幂等、执行上下文与人工恢复见 [HTTP 契约](docs/api.md)。
 
-Go SDK 导入 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`，提供 Agents、Sessions、Runs、Executions。所有操作接收标准 context 和请求指针，路径、查询、Header 与 JSON 分别编码；调用方负责关闭客户端和事件流。使用示例见 [SDK README](sdk/go/agenticv1/README.md)。
+Go SDK 导入 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`，提供 Agent、Session、Run、Execution 和 Memory 维护接口。所有操作接收标准 context 和请求指针，路径、查询、Header 与 JSON 分别编码；调用方负责关闭客户端和事件流。使用示例见 [SDK README](sdk/go/agenticv1/README.md)。
 
 ## 验证与部署
 
@@ -105,6 +123,6 @@ Dockerfile 只构建并打包 server 和默认配置，依赖下载使用 BuildK
 - [HTTP 契约](docs/api.md)及 [SDK 用法](sdk/go/agenticv1/README.md)：当前接口。
 - [恢复设计](docs/design.md)：执行权、事务、接管、步骤及事件回放。
 - [框架重构设计](docs/refactoring-design.md)：后续目标结构和实施约束。
-- [Memory 设计](docs/memory-design.md)：尚未实现的版本、维护和召回契约。
+- [Memory 设计](docs/memory-design.md)：人工维护、存档、生效与召回的实现边界，以及版本历史等后续设计。
 - [核心流程图解](docs/core-flows.html)：设计中的上下文及恢复流程。
 - [项目经验](docs/lessons/README.md)与 [历史验证记录](docs/verification.md)。

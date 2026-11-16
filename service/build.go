@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/FlyTOmeLight/server-go/app"
 	"github.com/FlyTOmeLight/server-go/conf"
@@ -10,6 +11,8 @@ import (
 	"github.com/FlyTOmeLight/server-go/swagger"
 
 	_ "github.com/FlyTOmeLight/agentic-kit-api/doc/openapi"
+	appmemory "github.com/FlyTOmeLight/agentic-kit-api/internal/app/memory"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
@@ -36,12 +39,49 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if err = store.InitSchema(ctx); err != nil {
 		return err
 	}
-	api, err := New(*cfg, runtime.Log, store, cache.client)
+	archive, err := buildArchiver(cfg)
 	if err != nil {
 		return err
 	}
+	var archiver appmemory.Archiver
+	if archive != nil {
+		archiver = archive
+	}
+	api, err := New(*cfg, runtime.Log, store, cache.client, archiver)
+	if err != nil {
+		if archive != nil {
+			err = errors.Join(err, archive.Close())
+		}
+		return err
+	}
+	if archive != nil {
+		api.ownedArchive = archive
+	}
 	swagger.DocPrefix = "Agentic"
-	return runtime.AddService(api)
+	if err := runtime.AddService(api); err != nil {
+		return errors.Join(err, api.closeArchive())
+	}
+	return nil
+}
+
+// buildArchiver constructs the Memory archive adapter when an artifact
+// endpoint is configured. Without one the deployment keeps Memory writes
+// local; recall and Off continue to work.
+func buildArchiver(cfg *Config) (*client.ArtifactStore, error) {
+	if cfg.Artifact.Endpoint == "" {
+		return nil, nil
+	}
+	store, err := client.NewArtifactStore(client.ArtifactConfig{
+		Endpoint:        cfg.Artifact.Endpoint,
+		StoreID:         cfg.Artifact.StoreID,
+		TenantID:        cfg.Artifact.TenantID,
+		Timeout:         time.Duration(cfg.Artifact.TimeoutSeconds) * time.Second,
+		MaxPayloadBytes: cfg.Artifact.MaxPayloadBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 // Keep the public route contract when the framework rebuilds handlers on reload.

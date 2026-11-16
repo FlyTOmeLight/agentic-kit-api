@@ -11,6 +11,7 @@
 | Redis 断开，API 无法启动或无法回放事件 | [通知连接与数据库事件](resource-and-recovery.md#通知连接不能成为数据库回放的前置条件) |
 | 带 digest 的 JSON payload 经 `jsonb` 往返后校验失败 | [上下文快照存储](context-snapshot-storage.md#带-digest-的不透明-payload-不要存-jsonb) |
 | 上下文裁剪污染 checkpoint，或多个历史 Run 的工具 ID 冲突 | [上下文投影与完整事实](context-projection.md) |
+| 数据库租约测试把过期时间设在宿主机过去，仍返回 Pending | [数据库租约时钟](database-lease-clock.md) |
 | 测试通过，但外部依赖用例被跳过，或未覆盖真实恢复 | [验证范围](verification.md) |
 
 新增经验时记录具体问题、已验证的处理和代码或测试链接。历史验证流水继续写入 `docs/verification.md`，避免在这里重复维护版本清单。

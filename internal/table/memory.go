@@ -25,6 +25,7 @@ type MemoryEntry struct {
 	OutputVisibility string          `gorm:"type:text;not null;default:'Private';check:memory_entry_output_visibility,output_visibility IN ('Private','Project')"`
 	Source           json.RawMessage `gorm:"serializer:json;type:jsonb;not null"`
 	ValidUntil       *int64          `gorm:"type:bigint"`
+	Binding          json.RawMessage `gorm:"serializer:json;type:jsonb"`
 	ActiveVersionRef json.RawMessage `gorm:"serializer:json;type:jsonb"`
 	Revision         int64           `gorm:"type:bigint;not null;default:1"`
 	RetiredAt        *int64          `gorm:"type:bigint"`
@@ -34,30 +35,34 @@ type MemoryEntry struct {
 
 func (MemoryEntry) TableName() string { return "memory_entry" }
 
-// MemoryEntrySubjectUnique enforces one active entry per (scope, agent, kind, subject).
+// MemoryEntrySubjectUnique enforces one entry per (scope, agent, kind, subject).
 // Entries with an empty subjectKey are not constrained.
 const MemoryEntrySubjectUnique = `
-CREATE UNIQUE INDEX IF NOT EXISTS memory_entry_subject_unique
+CREATE UNIQUE INDEX IF NOT EXISTS memory_entry_subject_identity
 ON memory_entry (owner_id, scope_kind, tenant_id, project_id, actor_id, agent_id, kind, subject_key)
-WHERE subject_key != '' AND retired_at IS NULL;
+WHERE subject_key != '';
 `
 
 // MemoryOperation is a durable receipt for one write intent.
 // It enables idempotent replay and cross-service recovery.
 type MemoryOperation struct {
 	ID               string          `gorm:"type:text;primaryKey;not null"`
-	OwnerID          string          `gorm:"type:text;not null;index:memory_operation_owner,priority:1"`
-	RequestKey       string          `gorm:"type:text;not null;uniqueIndex:memory_operation_owner_key,priority:2"`
+	OwnerID          string          `gorm:"type:text;not null;uniqueIndex:memory_operation_owner_request,priority:1"`
+	RequestKey       string          `gorm:"type:text;not null;uniqueIndex:memory_operation_owner_request,priority:2"`
 	IntentDigest     string          `gorm:"type:text;not null"`
 	OpType           string          `gorm:"type:text;not null;check:memory_operation_op_type,op_type IN ('Create','Update','Restore','Retire')"`
 	EntryID          string          `gorm:"type:text;not null"`
 	ExpectedRevision int64           `gorm:"type:bigint;not null"`
 	ActorID          string          `gorm:"type:text;not null"`
 	Document         json.RawMessage `gorm:"serializer:json;type:jsonb"`
+	Binding          json.RawMessage `gorm:"serializer:json;type:jsonb"`
+	VersionRef       json.RawMessage `gorm:"serializer:json;type:jsonb"`
 	Status           string          `gorm:"type:text;not null;default:'Pending';check:memory_operation_status,status IN ('Pending','Applied','Rejected')"`
 	AppliedRevision  *int64          `gorm:"type:bigint"`
 	AppliedAt        *int64          `gorm:"type:bigint"`
 	ErrorReason      string          `gorm:"type:text;not null;default:''"`
+	ArchiveClaim     string          `gorm:"type:text;not null;default:''"`
+	ArchiveUntil     *time.Time      `gorm:"type:timestamptz"`
 	CreatedAt        time.Time       `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false"`
 	UpdatedAt        time.Time       `gorm:"type:timestamptz;not null;default:clock_timestamp();autoUpdateTime:false"`
 }
@@ -82,7 +87,8 @@ func MemoryEntryFromDomain(e *memory.Entry) *MemoryEntry {
 		OutputVisibility: string(e.OutputVisibility),
 		Source:           mustMarshal(e.Source),
 		ValidUntil:       e.ValidUntil,
-		ActiveVersionRef: mustMarshal(e.ActiveVersionRef),
+		Binding:          marshalOptional(e.Binding),
+		ActiveVersionRef: marshalOptional(e.ActiveVersionRef),
 		Revision:         e.Revision,
 		RetiredAt:        e.RetiredAt,
 	}
@@ -94,13 +100,6 @@ func (r *MemoryEntry) ToDomain() *memory.Entry {
 	_ = json.Unmarshal(r.Conditions, &conditions)
 	var source memory.Source
 	_ = json.Unmarshal(r.Source, &source)
-	var ref *memory.VersionRef
-	if len(r.ActiveVersionRef) > 0 {
-		var v memory.VersionRef
-		if json.Unmarshal(r.ActiveVersionRef, &v) == nil {
-			ref = &v
-		}
-	}
 	return &memory.Entry{
 		ID: r.ID,
 		Scope: memory.Scope{
@@ -119,7 +118,8 @@ func (r *MemoryEntry) ToDomain() *memory.Entry {
 		OutputVisibility: memory.OutputVisibility(r.OutputVisibility),
 		Source:           source,
 		ValidUntil:       r.ValidUntil,
-		ActiveVersionRef: ref,
+		Binding:          unmarshalBinding(r.Binding),
+		ActiveVersionRef: unmarshalVersionRef(r.ActiveVersionRef),
 		Revision:         r.Revision,
 		RetiredAt:        r.RetiredAt,
 	}
@@ -127,6 +127,14 @@ func (r *MemoryEntry) ToDomain() *memory.Entry {
 
 func mustMarshal(v any) json.RawMessage {
 	data, _ := json.Marshal(v)
+	return data
+}
+
+func marshalOptional(value any) json.RawMessage {
+	data := mustMarshal(value)
+	if string(data) == "null" {
+		return nil
+	}
 	return data
 }
 
@@ -142,6 +150,8 @@ func MemoryOperationFromDomain(op *memory.Operation) *MemoryOperation {
 		ExpectedRevision: op.ExpectedRevision,
 		ActorID:          op.ActorID,
 		Document:         op.Document,
+		Binding:          marshalOptional(op.Binding),
+		VersionRef:       marshalOptional(op.VersionRef),
 		Status:           string(op.Status),
 		AppliedRevision:  op.AppliedRevision,
 		AppliedAt:        op.AppliedAt,
@@ -152,6 +162,8 @@ func MemoryOperationFromDomain(op *memory.Operation) *MemoryOperation {
 // ToDomain converts the operation row back to the pure domain value.
 func (r *MemoryOperation) ToDomain() *memory.Operation {
 	return &memory.Operation{
+		Binding:          unmarshalBinding(r.Binding),
+		VersionRef:       unmarshalVersionRef(r.VersionRef),
 		ID:               r.ID,
 		OwnerID:          r.OwnerID,
 		RequestKey:       r.RequestKey,
@@ -166,4 +178,26 @@ func (r *MemoryOperation) ToDomain() *memory.Operation {
 		AppliedAt:        r.AppliedAt,
 		ErrorReason:      r.ErrorReason,
 	}
+}
+
+func unmarshalBinding(data json.RawMessage) *memory.ArtifactBinding {
+	if len(data) == 0 {
+		return nil
+	}
+	var b *memory.ArtifactBinding
+	if json.Unmarshal(data, &b) != nil {
+		return nil
+	}
+	return b
+}
+
+func unmarshalVersionRef(data json.RawMessage) *memory.VersionRef {
+	if len(data) == 0 {
+		return nil
+	}
+	var v *memory.VersionRef
+	if json.Unmarshal(data, &v) != nil {
+		return nil
+	}
+	return v
 }

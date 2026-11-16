@@ -212,3 +212,20 @@ worker 通过本地 `go.work` 指向 API 隔离树执行全仓 race：**63** 个
 worker 在隔离工作树通过本地 replace 指向 API 改动，`GOWORK=off make integration`（全仓 race 与 vet）通过；新增 `TestBuildContextProjectsOlderCurrentToolResults` 验证真实 Eino 状态消息中旧结果被投影、最近 2 条完整保留、用量下降且原消息未被修改。
 
 未验证：当前轮折叠后的模型输出质量与摘要收益未做线上评估；投影标记的措辞可能影响模型行为，尚无对比实验。Memory 召回、artifact 接入与 LLM 摘要仍未实现。
+
+## Memory 阶段四：人工维护、可选 artifact 归档与 RecallTx 冻结
+
+2026-11-16：在 `feat/memory-artifact-publish` 隔离工作树完成，未改动根工作树。Memory 拥有身份、OwnerPrivate 权限、生效投影和操作回执；artifact-go `v0.5.0` 仅经 `internal/client` 适配，事务外做集合创建与版本发布，本地事务用 CAS 激活固定 VersionRef。`pkg/durable/prepare.go` 的 RecallTx 从同一事务读取生效投影并冻结进 ContextSnapshot；执行与恢复不访问 artifact。
+
+- 维护闭环：Create/Get/List/Update/Retire/Restore，删除语义为 Retire，Restore 重新发布新版本并激活；HTTP、SDK、OpenAPI、配置、Helm 与文档同步。
+- 故障语义：操作回执持久化发布意图；archive claim 2 分钟、远端调用总预算 1 分钟；原键重放恢复 Pending/Applied；激活提交失败按原键确认，结果不明返回 HTTP 503 `MemoryOperationOutcomeUnknown`；410 墓碑保留固定引用并拒绝激活；已有归档绑定不能关闭归档后静默退回本地写入。
+- 稳定性修复：集合创建键按 entryID 稳定派生，版本发布键按操作 ID 派生；首次归档在 revision 竞争中失败后，显式 Restore 复用原集合键，避免同名集合冲突（`TestFirstArchiveLosesRevisionThenRestores`）；OwnerPrivate 的存储 user 固定为 scope.Owner，不随 actor 变化。
+
+验证（全部 `GOWORK=off`，无本地 replace）：
+
+- 第一轮定向检查包含无数据库环境的测试，不能据其通过数认定数据库用例已执行。补齐 `prepare` 拒绝路径的提交结果确认后，带隔离 PostgreSQL/Redis 的全仓 `GOWORK=off make integration`（race 与 vet）通过，覆盖归档、并发修订、墓碑恢复与 RecallTx。
+- `go test -race -count=1 -v ./internal/app/memory -run '^TestCommit'`（隔离 PostgreSQL）：5 组、10 个故障注入场景全部通过，覆盖 Create 激活、Update 激活拒绝、Retire 生效/拒绝与 prepare 拒绝。分别模拟实际提交后报错及实际回滚后报错，核对持久回执、投影与原键重放；首次事务回滚时回执也不存在，不能当作已持久化 Pending。
+- `CGO_ENABLED=0 go build ./...`、`git diff --check` 通过；`helm lint charts/agentic-kit-api` 1 chart、0 failed；`make doc` 重新生成 OpenAPI，三个写接口含 503 响应。首次推送被 gorgeous 格式检查阻止，已应用格式修复。
+- 经验补充：[数据库租约时钟](lessons/database-lease-clock.md)：租约测试改用 `clock_timestamp()` 表达式后 `TestArchiveClaimExpiresAndCanResume` 通过。
+
+未验证与未实现：真实 artifact-go 部署未联调（仅 fake archiver 与 httptest adapter）；后台 Pending 恢复、版本历史 API、自动提炼、语义检索未实现；对外仅 OwnerPrivate，完整认证 middleware 与多主体共享授权未接入；本地模式（未配置 Artifact Endpoint）下无远端版本引用。

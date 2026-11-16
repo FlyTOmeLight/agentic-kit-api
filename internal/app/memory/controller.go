@@ -17,6 +17,18 @@ type Controller struct{ service *Service }
 
 func NewController(service *Service) *Controller { return &Controller{service: service} }
 
+func bindIdempotencyKey(c *core.Context, key *string) bool {
+	var header struct {
+		IdempotencyKey string `header:"Idempotency-Key" binding:"required,max=128"`
+	}
+	if err := binder.Bind(c, &header).Header().Error(); err != nil {
+		serrors.AbortWithError(c, err)
+		return false
+	}
+	*key = header.IdempotencyKey
+	return true
+}
+
 func (h *Controller) RegisterRoutes(v1 *core.RouterGroup) {
 	g := v1.Group("/memories")
 	g.POST("", h.create)
@@ -28,19 +40,25 @@ func (h *Controller) RegisterRoutes(v1 *core.RouterGroup) {
 
 // createMemory 创建记忆条目。
 // @Summary 创建记忆
+// @Description Idempotency-Key 必须通过请求 Header 发送，不能放在 JSON body 中。
 // @Tags Memory
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Param Idempotency-Key header string true "幂等标识；同键同参重放返回已有结果" maxlength(128)
 // @Param request body agenticv1.CreateMemoryRequest true "JSON 请求"
 // @Success 201 {object} agenticv1.MemoryEntry "成功"
 // @Failure 400 {object} serrors.Error "参数无效"
 // @Failure 401 {object} serrors.Error "身份校验失败"
 // @Failure 409 {object} serrors.Error "状态或幂等冲突"
+// @Failure 503 {object} serrors.Error "本地生效结果不明、归档版本或依赖暂不可用"
 // @Failure 500 {object} serrors.Error "内部错误"
 // @Router /v1/memories [post]
 func (h *Controller) create(c *core.Context) {
 	var req sdk.CreateMemoryRequest
+	if !bindIdempotencyKey(c, &req.IdempotencyKey) {
+		return
+	}
 	if err := binder.Bind(c, &req).All().Error(); err != nil {
 		serrors.AbortWithError(c, err)
 		return
@@ -99,35 +117,56 @@ func (h *Controller) list(c *core.Context) {
 	c.JSON(http.StatusOK, entries)
 }
 
-// updateMemory 更新记忆条目。
-// @Summary 更新记忆
+// updateMemory 更新或恢复记忆条目。
+// @Summary 更新或恢复记忆
+// @Description restore 为 false 或省略时更新活跃条目；restore 为 true 时恢复已停用条目。
+// @Description Idempotency-Key 必须通过请求 Header 发送，不能放在 JSON body 中。
 // @Tags Memory
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "id"
+// @Param Idempotency-Key header string true "幂等标识；同键同参重放返回已有结果" maxlength(128)
 // @Param request body agenticv1.UpdateMemoryRequest true "JSON 请求"
 // @Success 200 {object} agenticv1.MemoryEntry "成功"
 // @Failure 400 {object} serrors.Error "参数无效"
 // @Failure 404 {object} serrors.Error "资源不存在"
-// @Failure 409 {object} serrors.Error "状态或修订冲突"
+// @Failure 409 {object} serrors.Error "状态、修订或幂等冲突"
+// @Failure 503 {object} serrors.Error "本地生效结果不明、归档版本或依赖暂不可用"
 // @Router /v1/memories/{id} [put]
 func (h *Controller) update(c *core.Context) {
 	var req sdk.UpdateMemoryRequest
+	if !bindIdempotencyKey(c, &req.IdempotencyKey) {
+		return
+	}
 	if err := binder.Bind(c, &req).All().Error(); err != nil {
 		serrors.AbortWithError(c, err)
 		return
 	}
 	owner := auth.UserID(c)
-	entry, err := h.service.Update(
-		c.Request.Context(),
-		owner,
-		owner,
-		req.IdempotencyKey,
-		c.Param("id"),
-		req.ExpectedRevision,
-		req.Document,
-	)
+	var entry *sdk.MemoryEntry
+	var err error
+	if req.Restore {
+		entry, err = h.service.Restore(
+			c.Request.Context(),
+			owner,
+			owner,
+			req.IdempotencyKey,
+			c.Param("id"),
+			req.ExpectedRevision,
+			req.Document,
+		)
+	} else {
+		entry, err = h.service.Update(
+			c.Request.Context(),
+			owner,
+			owner,
+			req.IdempotencyKey,
+			c.Param("id"),
+			req.ExpectedRevision,
+			req.Document,
+		)
+	}
 	if err != nil {
 		apperror.Respond(c, err)
 		return
@@ -137,19 +176,25 @@ func (h *Controller) update(c *core.Context) {
 
 // retireMemory 停用记忆条目。
 // @Summary 停用记忆
+// @Description Idempotency-Key 必须通过请求 Header 发送，不能放在 JSON body 中。
 // @Tags Memory
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "id"
+// @Param Idempotency-Key header string true "幂等标识；同键同参重放返回已有结果" maxlength(128)
 // @Param request body agenticv1.RetireMemoryRequest true "JSON 请求"
 // @Success 200 {object} agenticv1.MemoryEntry "成功"
 // @Failure 400 {object} serrors.Error "参数无效"
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 409 {object} serrors.Error "状态或修订冲突"
+// @Failure 503 {object} serrors.Error "本地生效结果不明或依赖暂不可用"
 // @Router /v1/memories/{id}/retire [post]
 func (h *Controller) retire(c *core.Context) {
 	var req sdk.RetireMemoryRequest
+	if !bindIdempotencyKey(c, &req.IdempotencyKey) {
+		return
+	}
 	if err := binder.Bind(c, &req).All().Error(); err != nil {
 		serrors.AbortWithError(c, err)
 		return
