@@ -191,6 +191,7 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 	var entry *memory.Entry
 	var archived bool
 	var rejected bool
+	callbackSucceeded := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row table.MemoryOperation
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).
@@ -254,7 +255,11 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 			if existing.Binding == nil {
 				if reason := revisionConflict(target, existing, doc); reason != "" {
 					rejected = true
-					return markRejected(tx, existing, reason)
+					if err := markRejected(tx, existing, reason); err != nil {
+						return err
+					}
+					callbackSucceeded = true
+					return nil
 				}
 			}
 		}
@@ -325,6 +330,10 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 		return nil
 	})
 	if err != nil {
+		if callbackSucceeded {
+			resolved, resolveErr := s.resolveCommittedOperation(ctx, op, err)
+			return resolved, false, resolveErr
+		}
 		return nil, false, err
 	}
 	if rejected {

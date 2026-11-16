@@ -513,7 +513,8 @@ func TestArchiveDeletedVersionRetainsReceiptWithoutActivation(t *testing.T) {
 				t.Fatal(err)
 			}
 			stored := receipt.ToDomain()
-			if stored.Status != memory.OperationRejected || stored.ErrorReason != "MemoryVersionUnavailable" ||
+			if stored.Status != memory.OperationRejected ||
+				stored.ErrorReason != "MemoryVersionUnavailable" ||
 				stored.VersionRef == nil ||
 				*stored.VersionRef != ref ||
 				receipt.ArchiveClaim != "" {
