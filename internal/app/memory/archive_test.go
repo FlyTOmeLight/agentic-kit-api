@@ -31,9 +31,9 @@ type fakeArchiver struct {
 
 type uniqueCollectionArchiver struct {
 	fakeArchiver
-	mu          sync.Mutex
+	mu                 sync.Mutex
 	collectionsByEntry map[string]string
-	bindingsByEntry map[string]memory.ArtifactBinding
+	bindingsByEntry    map[string]memory.ArtifactBinding
 }
 
 func (f *uniqueCollectionArchiver) EnsureCollection(
@@ -514,7 +514,8 @@ func TestArchiveDeletedVersionRetainsReceiptWithoutActivation(t *testing.T) {
 			}
 			stored := receipt.ToDomain()
 			if stored.Status != memory.OperationRejected || stored.ErrorReason != "MemoryVersionUnavailable" ||
-				stored.VersionRef == nil || *stored.VersionRef != ref ||
+				stored.VersionRef == nil ||
+				*stored.VersionRef != ref ||
 				receipt.ArchiveClaim != "" {
 				t.Fatalf("lost tombstone receipt: %+v", stored)
 			}

@@ -242,8 +242,12 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 		var target *memory.Entry
 		if existing.Type != memory.OperationCreate {
 			var entryRow table.MemoryEntry
-			if err := privateEntries(tx.Clauses(clause.Locking{Strength: "UPDATE"}), existing.OwnerID).Where("id = ?", existing.EntryID).
-				Take(&entryRow).Error; err != nil {
+			if err := privateEntries(
+				tx.Clauses(clause.Locking{Strength: "UPDATE"}),
+				existing.OwnerID,
+			).Where("id = ?", existing.EntryID).
+				Take(&entryRow).
+				Error; err != nil {
 				return mapError(err)
 			}
 			target = entryRow.ToDomain()
