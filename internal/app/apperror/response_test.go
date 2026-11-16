@@ -22,26 +22,26 @@ func TestRespondDomainErrors(t *testing.T) {
 		status int
 		code   string
 	}{
-		{"memory invalid", memory.ErrInvalid, 400, "InvalidParameter"},
-		{"memory not found", memory.ErrNotFound, 404, "NotFound"},
-		{"memory conflict", memory.ErrConflict, 409, "Conflict"},
-		{"memory forbidden", memory.ErrForbidden, 403, "Forbidden"},
-		{"memory pending", memory.ErrPending, 503, "MemoryOperationPending"},
-		{"memory outcome unknown", memory.ErrOperationOutcomeUnknown, 503, "MemoryOperationOutcomeUnknown"},
-		{"memory unavailable", memory.ErrUnavailable, 503, "MemoryUnavailable"},
-		{"memory version unavailable", memory.ErrVersionUnavailable, 503, "MemoryVersionUnavailable"},
-		{"adapter version unavailable", &memory.VersionUnavailableError{
+		{name: "memory invalid", err: memory.ErrInvalid, status: 400, code: "InvalidParameter"},
+		{name: "memory not found", err: memory.ErrNotFound, status: 404, code: "NotFound"},
+		{name: "memory conflict", err: memory.ErrConflict, status: 409, code: "Conflict"},
+		{name: "memory forbidden", err: memory.ErrForbidden, status: 403, code: "Forbidden"},
+		{name: "memory pending", err: memory.ErrPending, status: 503, code: "MemoryOperationPending"},
+		{name: "memory outcome unknown", err: memory.ErrOperationOutcomeUnknown, status: 503, code: "MemoryOperationOutcomeUnknown"},
+		{name: "memory unavailable", err: memory.ErrUnavailable, status: 503, code: "MemoryUnavailable"},
+		{name: "memory version unavailable", err: memory.ErrVersionUnavailable, status: 503, code: "MemoryVersionUnavailable"},
+		{name: "adapter version unavailable", err: &memory.VersionUnavailableError{
 			Ref:   memory.VersionRef{VersionID: "original-version"},
 			Cause: errors.New("source body deleted"),
-		}, 503, "MemoryVersionUnavailable"},
-		{"replayed version unavailable", &memory.VersionUnavailableError{
+		}, status: 503, code: "MemoryVersionUnavailable"},
+		{name: "replayed version unavailable", err: &memory.VersionUnavailableError{
 			Ref: memory.VersionRef{VersionID: "original-version"},
-		}, 503, "MemoryVersionUnavailable"},
-		{"durable invalid", durable.ErrInvalid, 400, "InvalidParameter"},
-		{"durable not found", durable.ErrNotFound, 404, "NotFound"},
-		{"durable conflict", durable.ErrConflict, 409, "Conflict"},
-		{"context budget", contextbuilder.ErrBudgetExceeded, 400, "ContextBudgetExceeded"},
-		{"unknown", errors.New("private database detail"), 500, "InternalError"},
+		}, status: 503, code: "MemoryVersionUnavailable"},
+		{name: "durable invalid", err: durable.ErrInvalid, status: 400, code: "InvalidParameter"},
+		{name: "durable not found", err: durable.ErrNotFound, status: 404, code: "NotFound"},
+		{name: "durable conflict", err: durable.ErrConflict, status: 409, code: "Conflict"},
+		{name: "context budget", err: contextbuilder.ErrBudgetExceeded, status: 400, code: "ContextBudgetExceeded"},
+		{name: "unknown", err: errors.New("private database detail"), status: 500, code: "InternalError"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			router := gin.New()

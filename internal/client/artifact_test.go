@@ -19,11 +19,11 @@ func TestArtifactConfiguration(t *testing.T) {
 		name   string
 		config ArtifactConfig
 	}{
-		{"missing endpoint", ArtifactConfig{MaxPayloadBytes: 4096}},
-		{"invalid endpoint", ArtifactConfig{Endpoint: "relative", MaxPayloadBytes: 4096}},
-		{"missing limit", ArtifactConfig{Endpoint: "http://localhost"}},
-		{"negative limit", ArtifactConfig{Endpoint: "http://localhost", MaxPayloadBytes: -1}},
-		{"negative timeout", ArtifactConfig{Endpoint: "http://localhost", MaxPayloadBytes: 4096, Timeout: -time.Second}},
+		{name: "missing endpoint", config: ArtifactConfig{MaxPayloadBytes: 4096}},
+		{name: "invalid endpoint", config: ArtifactConfig{Endpoint: "relative", MaxPayloadBytes: 4096}},
+		{name: "missing limit", config: ArtifactConfig{Endpoint: "http://localhost"}},
+		{name: "negative limit", config: ArtifactConfig{Endpoint: "http://localhost", MaxPayloadBytes: -1}},
+		{name: "negative timeout", config: ArtifactConfig{Endpoint: "http://localhost", MaxPayloadBytes: 4096, Timeout: -time.Second}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, err := NewArtifactStore(test.config)
@@ -58,43 +58,43 @@ func TestArtifactResolveBinding(t *testing.T) {
 		want  *memory.ArtifactBinding
 	}{
 		{
-			"owner mapped tenant",
-			memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"},
-			"editor",
-			&memory.ArtifactBinding{StoreID: "archive", TenantID: "storage-tenant", UserID: "owner"},
+			name:  "owner mapped tenant",
+			scope: memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"},
+			actor: "editor",
+			want:  &memory.ArtifactBinding{StoreID: "archive", TenantID: "storage-tenant", UserID: "owner"},
 		},
 		{
-			"owner business tenant",
-			memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner", Tenant: "tenant"},
-			"editor",
-			&memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant", UserID: "owner"},
+			name:  "owner business tenant",
+			scope: memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner", Tenant: "tenant"},
+			actor: "editor",
+			want:  &memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant", UserID: "owner"},
 		},
 		{
-			"actor private",
-			memory.Scope{Kind: memory.ScopeActorPrivate, Tenant: "tenant"},
-			"actor",
-			&memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant", UserID: "actor"},
+			name:  "actor private",
+			scope: memory.Scope{Kind: memory.ScopeActorPrivate, Tenant: "tenant"},
+			actor: "actor",
+			want:  &memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant", UserID: "actor"},
 		},
 		{
-			"actor project",
-			memory.Scope{Kind: memory.ScopeActorProject, Tenant: "tenant", Project: "project"},
-			"actor",
-			&memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant", ProjectID: "project", UserID: "actor"},
+			name:  "actor project",
+			scope: memory.Scope{Kind: memory.ScopeActorProject, Tenant: "tenant", Project: "project"},
+			actor: "actor",
+			want:  &memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant", ProjectID: "project", UserID: "actor"},
 		},
 		{
-			"project shared",
-			memory.Scope{Kind: memory.ScopeProjectShared, Tenant: "tenant", Project: "project"},
-			"creator",
-			&memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant", ProjectID: "project", UserID: "creator"},
+			name:  "project shared",
+			scope: memory.Scope{Kind: memory.ScopeProjectShared, Tenant: "tenant", Project: "project"},
+			actor: "creator",
+			want:  &memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant", ProjectID: "project", UserID: "creator"},
 		},
-		{"owner missing", memory.Scope{Kind: memory.ScopeOwnerPrivate}, "editor", nil},
-		{"owner with project", memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner", Project: "project"}, "editor", nil},
-		{"actor missing tenant", memory.Scope{Kind: memory.ScopeActorPrivate}, "actor", nil},
-		{"actor missing user", memory.Scope{Kind: memory.ScopeActorPrivate, Tenant: "tenant"}, "", nil},
-		{"private with project", memory.Scope{Kind: memory.ScopeActorPrivate, Tenant: "tenant", Project: "project"}, "actor", nil},
-		{"actor missing project", memory.Scope{Kind: memory.ScopeActorProject, Tenant: "tenant"}, "actor", nil},
-		{"shared missing project", memory.Scope{Kind: memory.ScopeProjectShared, Tenant: "tenant"}, "actor", nil},
-		{"unsupported scope", memory.Scope{Kind: "Unknown"}, "actor", nil},
+		{name: "owner missing", scope: memory.Scope{Kind: memory.ScopeOwnerPrivate}, actor: "editor", want: nil},
+		{name: "owner with project", scope: memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner", Project: "project"}, actor: "editor", want: nil},
+		{name: "actor missing tenant", scope: memory.Scope{Kind: memory.ScopeActorPrivate}, actor: "actor", want: nil},
+		{name: "actor missing user", scope: memory.Scope{Kind: memory.ScopeActorPrivate, Tenant: "tenant"}, actor: "", want: nil},
+		{name: "private with project", scope: memory.Scope{Kind: memory.ScopeActorPrivate, Tenant: "tenant", Project: "project"}, actor: "actor", want: nil},
+		{name: "actor missing project", scope: memory.Scope{Kind: memory.ScopeActorProject, Tenant: "tenant"}, actor: "actor", want: nil},
+		{name: "shared missing project", scope: memory.Scope{Kind: memory.ScopeProjectShared, Tenant: "tenant"}, actor: "actor", want: nil},
+		{name: "unsupported scope", scope: memory.Scope{Kind: "Unknown"}, actor: "actor", want: nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := store.ResolveBinding(test.scope, test.actor)
@@ -219,11 +219,11 @@ func TestArtifactRejectsInvalidInputWithoutRequests(t *testing.T) {
 		name    string
 		binding *memory.ArtifactBinding
 	}{
-		{"nil binding", nil},
-		{"missing store", &memory.ArtifactBinding{TenantID: "tenant", UserID: "user"}},
-		{"missing tenant", &memory.ArtifactBinding{StoreID: "archive", UserID: "user"}},
-		{"missing user", &memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant"}},
-		{"different store", &memory.ArtifactBinding{StoreID: "other-deployment", TenantID: "tenant", UserID: "user", ArtifactID: "original"}},
+		{name: "nil binding", binding: nil},
+		{name: "missing store", binding: &memory.ArtifactBinding{TenantID: "tenant", UserID: "user"}},
+		{name: "missing tenant", binding: &memory.ArtifactBinding{StoreID: "archive", UserID: "user"}},
+		{name: "missing user", binding: &memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant"}},
+		{name: "different store", binding: &memory.ArtifactBinding{StoreID: "other-deployment", TenantID: "tenant", UserID: "user", ArtifactID: "original"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := store.EnsureCollection(
@@ -255,10 +255,10 @@ func TestArtifactRejectsInvalidInputWithoutRequests(t *testing.T) {
 		name, entry, key string
 		doc              *memory.Document
 	}{
-		{"missing entry", "", "key", artifactTestDocument()},
-		{"missing key", "entry", "", artifactTestDocument()},
-		{"nil document", "entry", "key", nil},
-		{"invalid document JSON", "entry", "key", &memory.Document{Body: json.RawMessage(`{`)}},
+		{name: "missing entry", entry: "", key: "key", doc: artifactTestDocument()},
+		{name: "missing key", entry: "entry", key: "", doc: artifactTestDocument()},
+		{name: "nil document", entry: "entry", key: "key", doc: nil},
+		{name: "invalid document JSON", entry: "entry", key: "key", doc: &memory.Document{Body: json.RawMessage(`{`)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := store.PublishVersion(
@@ -382,19 +382,19 @@ func TestArtifactRemoteErrorMapping(t *testing.T) {
 		want           error
 		collectionWant error
 	}{
-		{"in progress", 409, `{"code":"RequestInProgress"}`, memory.ErrUnavailable, nil},
-		{"expired attempt", 409, `{"code":"RequestAttemptExpired"}`, memory.ErrUnavailable, nil},
-		{"parameter mismatch", 409, `{"code":"IdempotentParameterMismatch"}`, memory.ErrConflict, nil},
-		{"name collision", 409, `{"code":"ArtifactAlreadyExists"}`, memory.ErrConflict, nil},
-		{"archived collection", 409, `{"code":"ArtifactArchived"}`, memory.ErrConflict, nil},
-		{"bad request", 400, `{"code":"InvalidParameter"}`, memory.ErrUnavailable, nil},
-		{"forbidden storage identity", 403, `{"code":"Forbidden"}`, memory.ErrUnavailable, nil},
-		{"missing collection", 404, `{"code":"NotFound"}`, memory.ErrUnavailable, nil},
-		{"payload limit", 413, `{"code":"PayloadTooLarge"}`, memory.ErrUnavailable, nil},
-		{"internal failure", 500, `{"code":"InternalError"}`, memory.ErrUnavailable, nil},
-		{"unavailable", 503, `{"code":"ServiceUnavailable"}`, memory.ErrUnavailable, nil},
-		{"incomplete tombstone", 410, `{"code":"VersionDeleted","version":{"artifactID":"artifact"}}`, memory.ErrUnavailable, nil},
-		{"foreign tombstone", 410, `{"code":"VersionDeleted","version":{"id":"version","artifactID":"other"}}`, memory.ErrConflict, memory.ErrUnavailable},
+		{name: "in progress", status: 409, body: `{"code":"RequestInProgress"}`, want: memory.ErrUnavailable, collectionWant: nil},
+		{name: "expired attempt", status: 409, body: `{"code":"RequestAttemptExpired"}`, want: memory.ErrUnavailable, collectionWant: nil},
+		{name: "parameter mismatch", status: 409, body: `{"code":"IdempotentParameterMismatch"}`, want: memory.ErrConflict, collectionWant: nil},
+		{name: "name collision", status: 409, body: `{"code":"ArtifactAlreadyExists"}`, want: memory.ErrConflict, collectionWant: nil},
+		{name: "archived collection", status: 409, body: `{"code":"ArtifactArchived"}`, want: memory.ErrConflict, collectionWant: nil},
+		{name: "bad request", status: 400, body: `{"code":"InvalidParameter"}`, want: memory.ErrUnavailable, collectionWant: nil},
+		{name: "forbidden storage identity", status: 403, body: `{"code":"Forbidden"}`, want: memory.ErrUnavailable, collectionWant: nil},
+		{name: "missing collection", status: 404, body: `{"code":"NotFound"}`, want: memory.ErrUnavailable, collectionWant: nil},
+		{name: "payload limit", status: 413, body: `{"code":"PayloadTooLarge"}`, want: memory.ErrUnavailable, collectionWant: nil},
+		{name: "internal failure", status: 500, body: `{"code":"InternalError"}`, want: memory.ErrUnavailable, collectionWant: nil},
+		{name: "unavailable", status: 503, body: `{"code":"ServiceUnavailable"}`, want: memory.ErrUnavailable, collectionWant: nil},
+		{name: "incomplete tombstone", status: 410, body: `{"code":"VersionDeleted","version":{"artifactID":"artifact"}}`, want: memory.ErrUnavailable, collectionWant: nil},
+		{name: "foreign tombstone", status: 410, body: `{"code":"VersionDeleted","version":{"id":"version","artifactID":"other"}}`, want: memory.ErrConflict, collectionWant: memory.ErrUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -447,30 +447,30 @@ func TestArtifactPublishValidatesResponse(t *testing.T) {
 		change func(map[string]any)
 		want   error
 	}{
-		{"different artifact", func(body map[string]any) { body["artifactID"] = "other" }, memory.ErrConflict},
-		{"missing version ID", func(body map[string]any) { delete(body, "id") }, memory.ErrUnavailable},
-		{"missing URI", func(body map[string]any) { delete(body, "versionUri") }, memory.ErrUnavailable},
-		{"missing sequence", func(body map[string]any) { delete(body, "sequence") }, memory.ErrUnavailable},
-		{"not ready", func(body map[string]any) { body["state"] = "deleting" }, memory.ErrUnavailable},
-		{"not protected", func(body map[string]any) { body["protected"] = false }, memory.ErrUnavailable},
-		{"missing payload", func(body map[string]any) { delete(body, "payload") }, memory.ErrUnavailable},
-		{"wrong entry", func(body map[string]any) { doc := artifactTestDocument(); doc.EntryID = "other"; body["payload"] = doc }, memory.ErrUnavailable},
-		{"wrong scope", func(body map[string]any) {
+		{name: "different artifact", change: func(body map[string]any) { body["artifactID"] = "other" }, want: memory.ErrConflict},
+		{name: "missing version ID", change: func(body map[string]any) { delete(body, "id") }, want: memory.ErrUnavailable},
+		{name: "missing URI", change: func(body map[string]any) { delete(body, "versionUri") }, want: memory.ErrUnavailable},
+		{name: "missing sequence", change: func(body map[string]any) { delete(body, "sequence") }, want: memory.ErrUnavailable},
+		{name: "not ready", change: func(body map[string]any) { body["state"] = "deleting" }, want: memory.ErrUnavailable},
+		{name: "not protected", change: func(body map[string]any) { body["protected"] = false }, want: memory.ErrUnavailable},
+		{name: "missing payload", change: func(body map[string]any) { delete(body, "payload") }, want: memory.ErrUnavailable},
+		{name: "wrong entry", change: func(body map[string]any) { doc := artifactTestDocument(); doc.EntryID = "other"; body["payload"] = doc }, want: memory.ErrUnavailable},
+		{name: "wrong scope", change: func(body map[string]any) {
 			doc := artifactTestDocument()
 			doc.Scope.Owner = "other"
 			body["payload"] = doc
-		}, memory.ErrUnavailable},
-		{"wrong schema", func(body map[string]any) { doc := artifactTestDocument(); doc.SchemaVersion++; body["payload"] = doc }, memory.ErrUnavailable},
-		{"wrong document", func(body map[string]any) {
+		}, want: memory.ErrUnavailable},
+		{name: "wrong schema", change: func(body map[string]any) { doc := artifactTestDocument(); doc.SchemaVersion++; body["payload"] = doc }, want: memory.ErrUnavailable},
+		{name: "wrong document", change: func(body map[string]any) {
 			doc := artifactTestDocument()
 			doc.Summary = "changed"
 			body["payload"] = doc
-		}, memory.ErrUnavailable},
-		{"large integer changed", func(body map[string]any) {
+		}, want: memory.ErrUnavailable},
+		{name: "large integer changed", change: func(body map[string]any) {
 			doc := artifactTestDocument()
 			doc.Body = json.RawMessage(`{"count":9007199254740992}`)
 			body["payload"] = doc
-		}, memory.ErrUnavailable},
+		}, want: memory.ErrUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := artifactTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
@@ -497,8 +497,8 @@ func TestArtifactCollectionValidatesResponse(t *testing.T) {
 		body map[string]any
 		want error
 	}{
-		{map[string]any{}, memory.ErrUnavailable},
-		{map[string]any{"id": "other"}, memory.ErrConflict},
+		{body: map[string]any{}, want: memory.ErrUnavailable},
+		{body: map[string]any{"id": "other"}, want: memory.ErrConflict},
 	} {
 		store := artifactTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
 			writeArtifactJSON(t, writer, 200, test.body)
