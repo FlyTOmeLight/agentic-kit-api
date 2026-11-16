@@ -14,6 +14,7 @@ type CreateMemoryRequest struct {
 type UpdateMemoryRequest struct {
 	IdempotencyKey   string         `json:"-" header:"Idempotency-Key" binding:"required,max=128"`
 	ExpectedRevision int64          `json:"expectedRevision" binding:"required,min=1"`
+	Restore          bool           `json:"restore"`
 	Document         MemoryDocument `json:"document" binding:"required"`
 }
 

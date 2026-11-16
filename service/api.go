@@ -4,30 +4,43 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
+	"sync"
 
 	"github.com/FlyTOmeLight/server-go/host"
 	"github.com/FlyTOmeLight/server-go/logger"
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
 
+	appmemory "github.com/FlyTOmeLight/agentic-kit-api/internal/app/memory"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
 var _ host.Service = (*API)(nil)
 
 type API struct {
-	routes  *routes
-	log     *logger.Logger
-	stopped bool
-	store   *durable.Store
-	redis   frameworkredis.Redis
-	cancel  context.CancelFunc
-	done    chan struct{}
+	routes          *routes
+	log             *logger.Logger
+	stopped         bool
+	store           *durable.Store
+	redis           frameworkredis.Redis
+	cancel          context.CancelFunc
+	done            chan struct{}
+	ownedArchive    io.Closer
+	archiveClose    sync.Once
+	archiveCloseErr error
 }
 
-// New constructs an API using caller-owned resources. Stop joins background tasks;
-// the caller releases Store and Redis after Stop succeeds.
-func New(cfg Config, log *logger.Logger, store *durable.Store, cache frameworkredis.Redis) (*API, error) {
+// New constructs an API using caller-owned resources. Stop joins background
+// tasks; the caller releases Store, Redis and the archiver after Stop
+// succeeds. archive may be nil when Memory archiving is not configured.
+func New(
+	cfg Config,
+	log *logger.Logger,
+	store *durable.Store,
+	cache frameworkredis.Redis,
+	archive appmemory.Archiver,
+) (*API, error) {
 	if err := cfg.ValidateAPI(); err != nil {
 		return nil, err
 	}
@@ -35,7 +48,7 @@ func New(cfg Config, log *logger.Logger, store *durable.Store, cache frameworkre
 		return nil, errors.New("API requires logger, store and Redis")
 	}
 	a := &API{log: log, store: store, redis: cache}
-	a.routes = newRoutes(store, cache)
+	a.routes = newRoutes(store, cache, archive)
 	return a, nil
 }
 
@@ -68,14 +81,23 @@ func (a *API) Start(ctx context.Context) error {
 func (a *API) Stop(ctx context.Context) error {
 	if a.cancel == nil {
 		a.stopped = true
-		return nil
+		return a.closeArchive()
 	}
 	a.cancel()
 	select {
 	case <-a.done:
 		a.stopped = true
-		return nil
+		return a.closeArchive()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (a *API) closeArchive() error {
+	a.archiveClose.Do(func() {
+		if a.ownedArchive != nil {
+			a.archiveCloseErr = a.ownedArchive.Close()
+		}
+	})
+	return a.archiveCloseErr
 }

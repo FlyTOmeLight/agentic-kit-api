@@ -1,10 +1,10 @@
 # Agentic Kit API 通用 Agent 框架重构设计
 
-状态：待实施。2026-10-16 的 Memory 版本存储修订为提案，详见 [Memory设计](memory-design.md)与[ADR-0008](adr/0008-memory-artifact-versions.md)，不将此次新增方向标为此前已确认。范围和决策见第14节，第10节为按正文契约校准的目标文件地图；实施前须核对第13节的技术事实和依赖能力。当前行为仍以代码、[HTTP契约](api.md)、[恢复设计](design.md)和[布局约束](layout.md)为准。
+状态：部分实施，2026-11-16 按当前工作树更新。本地人工 Memory、召回冻结和上下文构建已有实现，本次新增可选 artifact 归档；完整访问模型、目录重组及下文其余目标尚未全部落地。范围和决策见第14节，第10节仍为目标文件地图；当前行为以代码、[HTTP契约](api.md)、[恢复设计](design.md)和[布局约束](layout.md)为准。
 
-2026-11-09 进度：`pkg/contextbuilder` 首版（完整消息组、Memory 优先级、预算裁剪、版本化快照与 digest）和 Run 的 `ContextSnapshot` 同事务冻结已实现；历史装配在快照中保留 assistant/tool 完整链并跳过缺失结果的消息组，`Spec.History` 仍只投影 User 与最终 Assistant 文本以兼容现有 worker。Memory 召回、模型窗口预算元数据、提交前预算预检和 worker 每轮 `Build` 接入仍待实施。
+当前进度：`pkg/contextbuilder` 已实现完整消息组、预算预检、工具结果预览、历史裁剪和 `context-v3` 当前轮工具结果投影；模型窗口与输出预留随 Run 冻结，配套 worker 每轮调用模型前执行 `Build`。本地 OwnerPrivate 人工创建、读取、纠正、停用、显式 Restore 和 `RecallTx` 已有，显式 Recall 在接受事务内冻结完整材料。本次 artifact 归档使用 artifact-go `v0.5.0`、server-go `v0.13.0`，通过持久回执连接远端发布与本地 CAS 生效。版本历史 API、自动提炼及后台 Pending 恢复未实现，真实 artifact 部署尚未联合验证，详见 [Memory设计](memory-design.md)。
 
-设计基线：2026-10-14 的当前工作树，Go 1.27.1、server-go v0.9.0。本文依据当前方法实现、数据库模型、API/SDK 测试及相邻 worker 调用编写。实施时先核对工作树变化，不把本地框架 main 的接口当作发布版能力。
+原始设计基线：2026-10-14 的工作树，Go 1.27.1、server-go v0.9.0。下文保留当时的目标结构与问题分析；当前依赖及实现状态以上述进度和代码为准，不把本地框架 main 的接口当作发布版能力。
 
 阅读入口：[代码问题](#2-重构起点的代码问题)、[功能与类型](#3-功能模型与所有权)、[访问与入口](#4-身份权限与入口统一)、[执行事务](#6-对话提交与持久执行核心)、[文件地图](#10-文件级实施地图)、[方法清单](#11-原方法重写与删除清单)、[实施与验收](#12-实施顺序与验收)。
 
@@ -20,7 +20,7 @@
 
 Memory首版实现人工读写/纠正/停用及恢复、版本、受控召回与Run内冻结；context_builder实现规范材料组合、完整消息组选择与预算。后台提炼、自主学习、自动晋升、LLM摘要调用后置。详细契约见 [Memory设计](memory-design.md)：artifact-go拥有不可变内容历史，Memory拥有生效指针与完整检索投影；远期能力不提前实现。
 
-本文描述后续目标，不将目标标为已实现。2026-10-18 已按明确指令删除平台、评测、dataset、场景客户端与 CLI；其余模块继续按本文设计实施，不修改或发布其他仓库，也不删除已有业务数据。
+本文保留完整目标，已实现范围见文首和 §6.6。2026-10-18 已按明确指令删除平台、评测、dataset、场景客户端与 CLI；其余模块继续按本文设计实施，不修改或发布其他仓库，也不删除已有业务数据。
 
 本次采用全新目标结构，不考虑旧版本接口、数据库、请求摘要或checkpoint的兼容与迁移。目标不包含兼容别名、回退、历史回填、旧状态转换、升级或切换文件；数据库按新模型初始化，API、SDK与worker共同使用同一新版契约。本文不安排生产数据删除操作。
 
@@ -81,7 +81,7 @@ Q13已确认独立场景应用；本项目只承担通用框架。本项目公�
 
 ### 3.2 server-go布局与类型归属
 
-依据go.mod选定的[server-go v0.9.0发布版《Go服务项目组织约定》](https://github.com/FlyTOmeLight/server-go/blob/v0.9.0/docs/go-project-layout.md)：Controller与业务Service按领域放internal/app，Service定义事务，internal/table拥有模型、查询与更新，internal/client转换外部协议，公开service只装配和管理生命周期。此处不采用本地v0.10.0接口，不因本轮文档修正升级依赖。
+原始布局设计依据[server-go v0.9.0发布版《Go服务项目组织约定》](https://github.com/FlyTOmeLight/server-go/blob/v0.9.0/docs/go-project-layout.md)：Controller与业务Service按领域放internal/app，Service定义事务，internal/table拥有模型、查询与更新，internal/client转换外部协议，公开service只装配和管理生命周期。当前 go.mod 已使用 server-go `v0.13.0`；实际目录和资源所有权见 [布局约束](layout.md)。
 
 本项目私有业务收敛为agent、execution、memory、access四域。Session、聊天/应用提交、Run查询、Trace/SSE和上下文准备同属execution；浏览器与Bearer的Agent操作使用同一agent业务，不另建workspace业务层。一个业务变化在所属域内完成，不拆Controller壳与另一套Service，也不为Table再加仓库转发层。
 
@@ -253,7 +253,7 @@ func Build(in BuildInput) (BuildResult, error)
 // BuildResult: Messages、Usage、OmittedSources、CollapsedSources；消息含role和tool call关联。
 ```
 
-当前实现范围：`pkg/contextbuilder`提供`Build`、`ValidateGroup`、`EncodeSnapshot`和`DecodeSnapshot`；`pkg/durable/prepare.go`按Run聚合完整历史组，把系统指令、工具定义、历史组、策略与预算编码进`ContextSnapshot`，并与Run、User消息和事件同事务提交。`Spec.History`保持旧的User/Final扁平视图，工具链保存在快照中。接受前已做预算预检；配套worker每次调用模型前使用构建器，按实际工具schema计数。新Run冻结`context-v3`；历史`context-v1`、`context-v2`快照仍可执行，保留各自旧裁剪顺序。Memory模式固定为Off，RecallTx尚待实施。worker正式依赖已固定到含`context-v3`的API提交。
+当前实现范围：`pkg/contextbuilder`提供`Build`、`ValidateGroup`、`EncodeSnapshot`和`DecodeSnapshot`；`pkg/durable/prepare.go`按Run聚合完整历史组，把系统指令、工具定义、历史组、策略与预算编码进`ContextSnapshot`，并与Run、User消息和事件同事务提交。`Spec.History`保持旧的User/Final扁平视图，工具链保存在快照中。接受前已做预算预检；配套worker每次调用模型前使用构建器，按实际工具schema计数。新Run冻结`context-v3`；历史`context-v1`、`context-v2`快照仍可执行，保留各自旧裁剪顺序。Memory默认Off，显式Recall通过注入的`RecallTx`在接受事务内查询本地生效投影并冻结。worker正式依赖已固定到含`context-v3`的API提交。
 
 执行核心在durable/context.go中保存带格式/策略版本及digest的ContextSnapshot信封，payload由上下文模块编码与解释；durable不导入Memory或builder实现。Run与快照同事务提交，回放读取原记录。Memory、context_builder、execution之间不双向导入；类型转换集中在准备编排和worker adapter，后续更换检索或构建策略不重写租约、步骤和状态协议。
 
@@ -277,7 +277,11 @@ worker每次请求模型前，将冻结材料与本轮Eino消息映射为规范�
 
 OutputAudience表示本次结果预期可见的人群/范围，由入口授权确定；MemoryVersion的OutputVisibility表示材料允许用于私人或项目结果，默认Private，ProjectShared为Project。两者必须同时满足，不能仅凭读取权限扩大材料的输出可见性。
 
-基础Memory使用artifact-go保存不可变内容历史，本地PostgreSQL保存Entry、生效版本引用、完整内容检索投影及持久操作回执。人工维护先持久化操作意图，在事务外发布受保护的JSON版本，再以本地revision检查原子更新生效引用、投影和回执；未生效的存档版本不进入召回。RecallTx只查询本地投影，不在接受Run事务中调用artifact。停用阻止后续召回，不删除远端版本或旧Run快照；显式restore更新在revision检查后发布新版本并恢复原条目。主题唯一键包括subjectKey，操作回执以规范请求命名空间及requestKey唯一；首次并发输家复用赢家操作。版本历史以Applied内容操作为索引，仅展示生效过的版本。查询先按精确身份范围、有效性及材料OutputVisibility与结果OutputAudience的匹配过滤，再做受限词项/标签匹配与稳定排序，不新增向量库或宣称语义检索。没有Scope的调用采用OwnerPrivate；带已验证身份的调用按Memory设计的actor/project范围核验，服务owner不能代替真实actor。模型没有自动写入、扩域或生效权限。
+本地人工Memory已有OwnerPrivate维护、操作回执、生效投影和召回。本次新增可选artifact归档：未配置Endpoint时保持本地模式，不生成远端版本引用；配置后先持久化操作意图，在事务外发布受保护的JSON版本，再以本地revision检查原子更新生效引用、投影和回执。未生效的存档版本不进入召回，`RecallTx`不在接受Run事务中调用artifact。停用阻止后续召回，不删除远端版本或旧Run快照；显式Restore恢复原条目，配置归档时发布新版本。主题部分唯一索引为`memory_entry_subject_identity`，操作回执以`memory_operation_owner_request`约束`(owner_id, request_key)`唯一。schema仅供空库初始化，无历史迁移或回填。
+
+Archive以数据库时钟领取2分钟持久claim，事务外集合创建与发布共用1分钟HTTP总预算，claim token保护绑定与版本写回；完成或出错时释放claim，崩溃后由原请求键在claim过期后重试，远端稳定键维持幂等。当前没有后台Pending恢复循环；`service.Build`拥有创建的archive，`service.New`借用调用方资源，关闭规则见[布局约束](layout.md)。真实artifact部署尚未联合验证。
+
+版本历史API仍为后续目标：以Applied内容操作为索引，仅展示生效过的版本。当前召回按范围、有效性、输出可见性过滤后，进行受限词项/标签匹配与稳定排序，不宣称语义检索。人工HTTP维护仅开放OwnerPrivate；actor/project多主体共享授权仍按[Memory设计](memory-design.md)作为后续契约。模型没有自动写入、扩域或生效权限。
 
 本轮不实现memory_job、自动轨迹提炼、自动候选晋升、记忆工具或LLM摘要调用；后续单独设计。builder首版实现明确排序、完整消息组选择与预算裁剪，不建立空Provider占位。预算单位与实际token核算按目标模型能力确认，不采用未经验证的字节→token换算。未来提取以这些契约与适配边界为依据，当前不增加新Memory仓库、go.mod或插件注册框架。
 
@@ -285,7 +289,7 @@ Q15确认首版Memory默认关闭，普通聊天与内部应用执行使用相�
 
 Recall的受控召回条件和政策选择进入Intent，服务器核验实际范围与可用政策；Off不能同时携带召回参数，避免无效选择被静默忽略。同key从Off改为Recall或更换显式条件返回Conflict，缺省与显式Off可以重放同一请求。解析后的策略版本、材料正文/版本及Budget随Run冻结，解析出的最新记忆正文不进入原请求摘要。同键重放不重解析、不重新召回。
 
-关闭在builder快照payload中保存Off，显式召回但无匹配保存Empty，读取失败则接受事务回滚；三者不可混同。模式由调用方请求，权限与实际政策由服务端约束，模型不自行开启Memory；服务器政策更新影响新接受的Recall请求，已接受Run保持原快照。选择值归pkg/memory/types.go，SDK提交请求复用该纯值；当前状态仍为待实施，首版取舍见 [ADR-0005](adr/0005-context-and-memory-foundation.md)。artifact接入必须补齐tenant_id、project_id、user_id三元数据隔离；Memory核验业务权限并使用固定ArtifactBinding，共享条目不随编辑者切换远端user。账号和凭据治理不属于此次设计；正式SDK的依赖兼容性在实施前验证。完整写入恢复、停用后恢复、历史筛选及约束由[Memory设计](memory-design.md)维护；其中§2.4单列artifact待补的三元数据隔离、集合幂等创建及发布验证，不把这些前提当作已实现能力。
+关闭在builder快照payload中保存Off，显式召回但无匹配保存Empty，读取失败则接受事务回滚；三者不可混同。模式由调用方请求，权限与实际政策由服务端约束，模型不自行开启Memory；服务器政策更新影响新接受的Recall请求，已接受Run保持原快照。选择值归pkg/memory/types.go，SDK提交请求复用该纯值；这条召回冻结链路已实现，首版取舍见 [ADR-0005](adr/0005-context-and-memory-foundation.md)。artifact适配使用v0.5.0的三元数据隔离与集合幂等创建契约，固定ArtifactBinding；OwnerPrivate使用显式配置的tenant与owner存储归属，不提供公共tenant兜底。账号和凭据治理不属于此次设计；真实部署的身份传递与隔离仍需联合验收。完整写入恢复、停用后恢复、历史筛选及约束由[Memory设计](memory-design.md)维护，未实现目标与部署验收条件见其§2.4和§10。
 
 ## 7. 查询、Trace、SSE 与 Outbox
 
@@ -345,7 +349,7 @@ Agent派生关系保存SourceRef（源VersionRef）；Session保存AgentRef与Re
 
 ## 10. 文件级实施地图
 
-这里按第3—9节的契约列目标文件、拥有的符号/事务和验证落点，全部待实施。README的树记录现有工作树，不是本地图。一个文件有完整职责才保留，不按一个方法创建一层转发或空占位；表模型、SDK和业务值分别承接自己的格式/权限边界。
+这里按第3—9节的契约列目标文件、拥有的符号/事务和验证落点；已实现范围见文首和 §6.6，其余为后续目标。README的树记录现有工作树，本节保留目标结构。一个文件有完整职责才保留，不按一个方法创建一层转发或空占位；表模型、SDK和业务值分别承接自己的格式/权限边界。
 
 ### 10.1 设计契约到文件的对应
 
@@ -655,7 +659,7 @@ Memory维护先按[设计验收矩阵](memory-design.md#10-实施顺序与验收
 
 本轮grill-with-docs评审已确认框架范围、资产隔离、场景独立、Memory使用/冻结及上下文裁剪语义，第14节记录决策。实施前核对空库部署条件、框架调用方、worker正式依赖版本与新版checkpoint格式，并验证目标模型的窗口来源、输出预留及实际消息/工具计数能力；缺少计数支持时明确记录能力缺口，不用未经验证的字节换算代替。
 
-Memory接入另须核对artifact三元查询与唯一约束、固定存储绑定映射和正式SDK的server-go兼容性。本轮交付仅为技术设计，不声称重构已经实施或新验收已经通过。
+Memory适配已使用artifact-go `v0.5.0`、server-go `v0.13.0`及固定存储绑定；本地人工维护、召回冻结和本次新增归档的实现边界见§6.6。真实artifact部署的三元隔离、集合幂等及跨服务故障恢复仍须联合验收；版本历史API、自动提炼和后台Pending恢复尚未实现。本文不将目标结构或未执行的验收标为完成。
 
 ## 14. 设计评审决策
 

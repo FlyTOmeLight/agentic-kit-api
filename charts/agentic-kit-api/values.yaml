@@ -10,3 +10,9 @@ database:
   storage: 2Gi
 redis:
   image: redis:7.2-alpine
+artifact:
+  endpoint: ""
+  storeID: artifact
+  tenantID: ""
+  timeoutSeconds: 30
+  maxPayloadBytes: 262144

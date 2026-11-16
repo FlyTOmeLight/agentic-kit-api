@@ -18,7 +18,7 @@ func (c *memoryClient) Create(ctx context.Context, req *CreateMemoryRequest) (*m
 		c.transport,
 		http.MethodPost,
 		"/v1/memories",
-		req.Document,
+		req,
 		http.Header{"Idempotency-Key": {req.IdempotencyKey}},
 		http.StatusCreated,
 	)

@@ -20,3 +20,10 @@ DSN = "${env:DATABASE_URL:postgres://agentic:agentic_local@127.0.0.1:55432/agent
 [Redis]
 Addrs = ["${env:REDIS_ADDR:127.0.0.1:56379}"]
 DB = 0
+
+[Artifact]
+Endpoint = "${env:ARTIFACT_ENDPOINT:}"
+StoreID = "${env:ARTIFACT_STORE_ID:artifact}"
+TenantID = "${env:ARTIFACT_TENANT_ID:}"
+TimeoutSeconds = "${env:ARTIFACT_TIMEOUT_SECONDS:30}"
+MaxPayloadBytes = "${env:ARTIFACT_MAX_PAYLOAD_BYTES:262144}"

@@ -23,6 +23,11 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | POST /v1/runs/{id}/answer | 回答澄清 | stepID、result |
 | POST /v1/runs/{id}/resolve | 提交人工确认的工具结果 | stepID、result |
 | GET /v1/runs/{id}/events | SSE 回放及订阅 | Last-Event-ID header 或 after query，格式 runID:seq |
+| POST /v1/memories | 创建 OwnerPrivate 记忆，返回 201 | document；Idempotency-Key header 必填 |
+| GET /v1/memories | 列出 OwnerPrivate 记忆 | after、limit |
+| GET /v1/memories/{id} | 读取当前生效投影 | 无 |
+| PUT /v1/memories/{id} | 更新活跃记忆或恢复停用记忆 | expectedRevision、可选 restore、document；Idempotency-Key header 必填 |
+| POST /v1/memories/{id}/retire | 停用记忆 | expectedRevision；Idempotency-Key header 必填 |
 
 config 包括 systemPrompt、model、tools、maxTurns，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)；maxTurns 为 1～100。工具名称不能重复，parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`；该工具成功时，worker 直接返回工具结果并结束本轮，不再调用模型；错误结果返回给模型处理。此设置随 Agent 发布版本和 Run 快照冻结。工具 `kind` 仅接受空字符串或 `HTTP`；`AppForgeMCP`、`AppForgeOpenAPI` 及其他未知 kind 一律拒绝；ask_for_clarification 必须 `ReadOnly` 且 kind 为空或 `HTTP`，URL 字段可不填。
 
@@ -47,6 +52,18 @@ SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payloa
 重要事件包括 RunQueued、RunStarted、ModelCompleted、ToolStarted、ToolCompleted、ClarificationRequested、RunNeedsReview、RunResumed、RunRetry、RunCompleted、RunFailed、RunCanceled。RunRetry 的 payload.status 可能为 Failed，客户端以状态字段为准，不仅凭事件名称判断。
 
 模型尚在生成时不会发逐 token delta；ModelCompleted 表示完整模型决策已经保存，RunCompleted 表示最终答案和完成事件已经同事务提交。
+
+## Memory
+
+当前 HTTP 维护入口只开放 OwnerPrivate 范围，owner 取自已接入的身份 middleware；完整的多主体授权尚未实现。Create 返回 201，其余成功操作返回 200。Entry 的 `revision` 表示当前投影修订；启用归档时还返回固定的 `activeVersionRef`，内容操作以该引用为准。当前只读取本地生效投影，版本历史查询尚未开放。
+
+`POST /v1/memories` 的 body 必须包含完整 `document`。`PUT /v1/memories/{id}` 的 body 必须包含 `expectedRevision` 和完整 `document`；`restore` 为 `false` 或省略时执行 Update，只允许修改活跃条目；`restore` 为 `true` 时执行 Restore，只允许恢复已停用条目。两种操作都要求 `expectedRevision` 等于操作开始时的当前 revision，成功后 revision 递增。Scope、agentID、kind、subjectKey 等身份字段不能通过更新改变。对活跃条目请求 Restore、对已停用条目执行普通 Update、revision 不匹配或同键不同参数均返回 409。`POST /v1/memories/{id}/retire` 只接受 `expectedRevision`。
+
+三个写接口都必须通过 `Idempotency-Key` 请求 Header 传幂等键，长度不超过 128；该字段不属于 JSON body，缺失或放进 body 都返回 400 `InvalidParameter`。同一 owner 下相同键、相同操作意图和相同 actor 的重试返回第一次成功生效的结果，即使条目后来又被修改或停用，也不会重做发布或覆盖新状态。相同键对应不同操作意图或 actor 返回 409。客户端应持久保存并复用原键，不应在超时或 503 后自行换键重试。
+
+Memory 写操作除通用的 400、401、403、404、409 外，还会返回以下稳定 503 错误码。`MemoryOperationPending` 表示操作已受理但远端归档或本地生效尚未完成，使用原键重试；`MemoryUnavailable` 表示归档或其他依赖暂不可用，修复依赖后继续原键；`MemoryOperationOutcomeUnknown` 表示本地生效提交结果不明，必须保留原幂等键、原 collection 和原版本身份，用原键继续处理，不能换键或重建集合，也不能当成确定的失败结果；`MemoryVersionUnavailable` 表示此前发布已发生但对应 artifact 版本正文不可用，可能来自源版本 410。遇到 `MemoryVersionUnavailable` 必须保留原幂等键、原 collection 和原版本身份，不能换键或重建集合并自动生效，应保留引用并交由受控修复。
+
+当前不提供版本历史 API：`GET /v1/memories/{id}/versions` 和 `GET /v1/memories/{id}/versions/{versionID}` 仍是待实现契约。客户端目前只能读取 Entry 的 `revision` 和 `activeVersionRef`，不能把 artifact 的任意版本 URI 当作已授权历史入口。
 
 ## 进程探针
 

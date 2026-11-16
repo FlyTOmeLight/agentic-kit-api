@@ -98,6 +98,16 @@ type VersionRef struct {
 	VersionURI string `json:"versionURI"`
 }
 
+// ArtifactBinding is the fixed storage ownership of one entry, resolved at
+// creation time and reused by every later publish, retry and read.
+type ArtifactBinding struct {
+	StoreID    string `json:"storeID"`
+	TenantID   string `json:"tenantID"`
+	ProjectID  string `json:"projectID,omitempty"`
+	UserID     string `json:"userID"`
+	ArtifactID string `json:"artifactID"`
+}
+
 // Entry is the local projection of the currently active memory content.
 type Entry struct {
 	ID               string           `json:"id"`
@@ -111,6 +121,7 @@ type Entry struct {
 	OutputVisibility OutputVisibility `json:"outputVisibility"`
 	Source           Source           `json:"source"`
 	ValidUntil       *int64           `json:"validUntil,omitempty"`
+	Binding          *ArtifactBinding `json:"binding,omitempty"`
 	ActiveVersionRef *VersionRef      `json:"activeVersionRef,omitempty"`
 	Revision         int64            `json:"revision"`
 	RetiredAt        *int64           `json:"retiredAt,omitempty"`
@@ -156,17 +167,19 @@ const (
 
 // Operation is a durable receipt for one memory write intent.
 type Operation struct {
-	ID               string          `json:"id"`
-	OwnerID          string          `json:"ownerID"`
-	RequestKey       string          `json:"requestKey"`
-	IntentDigest     string          `json:"intentDigest"`
-	Type             OperationType   `json:"type"`
-	EntryID          string          `json:"entryID"`
-	ExpectedRevision int64           `json:"expectedRevision"`
-	ActorID          string          `json:"actorID"`
-	Document         json.RawMessage `json:"document,omitempty"`
-	Status           OperationStatus `json:"status"`
-	AppliedRevision  *int64          `json:"appliedRevision,omitempty"`
-	AppliedAt        *int64          `json:"appliedAt,omitempty"`
-	ErrorReason      string          `json:"errorReason,omitempty"`
+	ID               string           `json:"id"`
+	OwnerID          string           `json:"ownerID"`
+	RequestKey       string           `json:"requestKey"`
+	IntentDigest     string           `json:"intentDigest"`
+	Type             OperationType    `json:"type"`
+	EntryID          string           `json:"entryID"`
+	ExpectedRevision int64            `json:"expectedRevision"`
+	ActorID          string           `json:"actorID"`
+	Document         json.RawMessage  `json:"document,omitempty"`
+	Binding          *ArtifactBinding `json:"binding,omitempty"`
+	VersionRef       *VersionRef      `json:"versionRef,omitempty"`
+	Status           OperationStatus  `json:"status"`
+	AppliedRevision  *int64           `json:"appliedRevision,omitempty"`
+	AppliedAt        *int64           `json:"appliedAt,omitempty"`
+	ErrorReason      string           `json:"errorReason,omitempty"`
 }

@@ -1,6 +1,8 @@
 # Agentic Kit 通用 Agent Memory 技术设计
 
-状态：修订提案，待实施。2026-10-17 按三元数据隔离修订；基于当前 API 工作树及 artifact-go `d409b9a` 的代码核对；artifact-go 本地另有部署文档修改，本设计不将其生产状态作为接入前提。替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 已确认的首版范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
+状态：部分实施，2026-11-16 按当前工作树更新。本地 OwnerPrivate 人工 CRUD（删除语义为 Retire）、显式 Restore、生效投影和操作回执已有实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。本次新增可选 artifact 归档与固定绑定，依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。版本历史 API、自动提炼、后台 Pending 恢复、语义检索及版本删除/回收未实现，真实 artifact 部署尚未联合验证。
+
+本文同时保留目标契约：多主体共享授权、版本历史查询及故障验收要求不因领域类型或适配接口已存在而视为完成。当前 HTTP 人工维护只开放 OwnerPrivate，身份读取沿用现有入口，完整认证 middleware 尚未接入。本文替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 的范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
 
 ## 1. 设计结论
 
@@ -22,24 +24,24 @@ flowchart LR
 
 该分工复用版本编号、不可变内容、发布幂等和保护能力，保留 Memory 的领域规则。在线召回不增加远端逐条取版本的调用，也不把网络请求放进接受 Run 的数据库事务。
 
-首版提供人工创建、纠正、停用及恢复、生效版本历史查看、显式召回和冻结；Fact、Preference、Procedure 都由有权限的人明确维护。自动提炼、模型写记忆、候选晋升、技能按需加载和摘要式上下文压缩属于后续设计。
+当前提供人工创建、纠正、停用及恢复、显式召回和冻结；Fact、Preference、Procedure 通过人工维护入口写入。生效版本历史查看仍待实现。自动提炼、模型写记忆、候选晋升、技能按需加载和摘要式上下文压缩属于后续设计。未配置 Artifact Endpoint 时使用本地模式，维护和召回可用，但没有远端版本引用，也不会自动补归档。
 
 ## 2. 已核对的基础与接入前提
 
 ### 2.1 当前 API 基础
 
-[会话提交](../pkg/durable/session_service.go)、[应用执行提交](../pkg/durable/execution_service.go)已经包含幂等、历史材料、Run/消息/事件一致提交；[共享执行存储](../pkg/durable)提供租约、步骤和恢复基础。当前尚无本方案的 Memory 实现，目标模块按框架重构文件地图建立，不向 durable 增加 Memory CRUD 或 artifact 客户端。
+[会话提交](../pkg/durable/session_service.go)、[应用执行提交](../pkg/durable/execution_service.go)已经包含幂等、历史材料、Run/消息/事件一致提交；[共享执行存储](../pkg/durable)提供租约、步骤和恢复基础。Memory 维护与发布编排位于 `internal/app/memory`，纯值位于 `pkg/memory`，远端适配位于 `internal/client/artifact.go`。`pkg/durable/prepare.go` 调用注入的 `RecallTx` 并冻结材料；durable 不承担 Memory CRUD，也不引用 artifact SDK。
 
 ### 2.2 artifact-go 当前能力
 
-以下以相邻仓库源码与 [README](../../artifact-go/README.md)为依据，描述已实现的服务契约，不表示本项目已经接入或完成联合验收。
+当前适配依赖 artifact-go `v0.5.0` 的 SDK 契约，已接入集合创建与版本发布。下表说明消费方式；本地适配和测试不代表真实 artifact 部署已完成联合验收。
 
 | 能力 | 当前契约 | Memory 使用方式 |
 | --- | --- | --- |
 | 集合 | 固定 tenant、可选 project、type、编号规则；同 scope/type 的规范化名称唯一 | 每个 Entry 一个 `agent-memory` 集合，整数版本 |
 | JSON 版本 | `payload` 不可变；`annotations` 可修改 | 正文、来源、条件、有效期和输出限制全部进入 payload |
 | 发布幂等 | `CreateVersion` 的 requestKey 按集合及可信 UserID 隔离；同键同参重放 | 从持久 Memory 操作 ID 派生稳定键，固定调用身份 |
-| 集合创建 | `CreateArtifact` 没有 requestKey，名称冲突不返回原创建结果 | 待补通用创建幂等后使用原键确认，具体交付要求见 §2.4 |
+| 集合创建 | `CreateArtifact` 支持 requestKey，同一存储归属下同键同参确认原集合 | 使用 entryID 稳定派生创建键；不同键同名冲突不接管，见 §2.4 |
 | alias 与 latest | 普通 alias 按 revision 改绑；latest 为最高 ready Sequence | 首版不用它们表达 Memory 生效状态 |
 | 草稿 | 完整内容保存、修订检查、发布指定修订 | 首版直接发布 JSON；有独立编辑工作流后再接草稿 |
 | 保护与保留 | Protected 阻止正常删除及淘汰；集合 retention 默认禁用 | 发布时 `protected=true`，首版保持 retention 关闭 |
@@ -50,7 +52,7 @@ flowchart LR
 
 ### 2.3 数据隔离与接入约束
 
-artifact 的目标隔离键为 `(tenant_id, project_id, user_id)`，project 为空只表示该租户内该用户的非项目数据。当前实现主要按tenant/project过滤，UserID尚未参与所有访问查询；必须先完成用户维度隔离，不能把目标当作现有能力。artifact复用不可变created_by作为逻辑user_id，集合查询、名称唯一、请求幂等、子资源和Resolve均遵循同一三元组。
+artifact `v0.5.0` 提供 `(tenant_id, project_id, user_id)` 三元数据隔离与集合幂等创建契约，project 为空表示该租户内该用户的非项目数据。适配层通过 `WithRequestIdentity` 传递 tenant、精确 project 和 ResourceUserID，并随 Entry/Operation 固定绑定；各入口在真实部署中的隔离行为仍需联合验收。
 
 Memory核验业务访问权后，由适配层提供可信的存储归属上下文。存储user_id与真实维护者可以不同：它随ArtifactBinding固定，真实维护者保存在Memory操作回执和payload中。接入只要求能够传递已核验的三元组；账号、凭据治理及部署身份形式不在本设计范围。
 
@@ -65,21 +67,21 @@ MemoryScope包含owner、actor等业务约束，不能直接等同artifact三元
 
 ProjectShared的存储user不授予其独占的Memory业务权限；创建者离开项目也不改变绑定，其他有权限成员继续通过Memory维护。接入方须能在核验当前维护者权限后承载绑定的归属上下文；不能承载时明确报接入错误，不切换为当前编辑人的user、不新建另一个集合。普通客户端不能直接指定任意ArtifactBinding。owner、agent和输出受众的额外限制仍由Memory检查，artifact不推断这些业务规则。
 
-**SDK与框架依赖。** artifactv1与artifact服务当前同一Go module；实施时核对正式发布版本带来的server-go版本选择并完成兼容验证，不能用本地replace掩盖。仅在internal/client/artifact.go引用该SDK，领域值、durable、builder、worker和本项目公开SDK不暴露其类型。本次不升级依赖。
+**SDK与框架依赖。** 当前 go.mod 使用 artifact-go `v0.5.0` 和 server-go `v0.13.0`，不使用本地 replace。仅 `internal/client` 引用 artifact SDK，领域值、durable、builder、worker 和本项目公开 SDK 不暴露其类型。验证使用 `GOWORK=off`；本地构建与协议测试不能代替真实部署联调。
 
-### 2.4 artifact-go 待补的通用能力
+### 2.4 artifact-go 接入契约与部署验收
 
-具体接口与验收由独立的[数据隔离与集合幂等创建设计](../../artifact-go/docs/service-consumer-design-20261016.md)维护，下表均为待实施：
+三元数据隔离和集合幂等创建已由所依赖的 `v0.5.0` 提供，Memory 适配已消费这些契约。下表保留服务端职责与部署验收条件，不表示真实 artifact 部署已经验证：
 
 | 项目 | artifact-go负责的交付 | Memory消费约束 |
 | --- | --- | --- |
 | 三元数据隔离 | tenant、精确project、user共同限定集合、子资源、Resolve、游标与名称唯一性 | 固定ArtifactBinding，业务共享与访问政策由Memory授权 |
-| 集合幂等创建 | 可选requestKey，集合行保存成功创建事实；首次201、重放200，SDK返回类型不变 | Memory必填稳定键；同三元组同键同参返回同一集合，合法异参409，不同键同名不接管 |
-| 正式发布与兼容验证 | SDK、服务及OpenAPI一致，正式版本通过独立构建与联调 | 使用发布依赖，核对server-go兼容性 |
+| 集合幂等创建 | 可选requestKey，集合行保存成功创建事实；首次201、重放200，SDK返回类型不变 | Memory必填由entryID稳定派生的64字符内键；同三元组同键同参返回同一集合，合法异参409，不同键同名不接管 |
+| 正式发布与兼容验证 | 部署服务与 SDK 契约一致 | 已固定发布依赖；真实部署仍需联合验证 |
 
 集合创建键唯一范围为 `(tenant_id, 精确project scope, user_id, requestKey)`；用集合不可变创建字段比较规范参数，无需另建回执表。名称唯一范围也包含user_id，因此不同用户可使用相同名称与请求键。归档后原键返回原集合当前状态，不重新激活。只有非空键具有成功重放与未知结果确认保证；无键保持非幂等调用，不按NULL键查结果。
 
-Memory为一次Create固定派生集合创建键及版本发布键，两者不随重试变化。已归档集合可以原发布键确认此前成功存档；若此前未发布，遵守归档集合禁止新发布规则，不能换集合继续。无需分页查同名集合或补精确name查询恢复路径。
+Memory的集合创建键按 entryID 稳定派生，版本发布键按操作ID派生，两者不随重试变化。同一Entry的首次Create、后续Update/Restore共享集合键；Entry已有绑定时直接复用，不再创建集合。已归档集合可以原发布键确认此前成功存档；若此前未发布，遵守归档集合禁止新发布规则，不能换集合继续。无需分页查同名集合或补精确name查询恢复路径。
 
 Memory的生效、停用/恢复、主题唯一性、历史筛选与Run快照继续由本项目负责；artifact不增加Memory状态机、active alias、引用计数或自动对账任务。
 
@@ -97,7 +99,7 @@ Memory的生效、停用/恢复、主题唯一性、历史筛选与Run快照继�
 
 Memory 不再建立保存所有正文的 `memory_version` 表，也不实现另一套版本编号、草稿或 alias。当前投影是一次已完成生效事务的本地结果，具有完整正文和来源；它不支持独立编辑，也不是带TTL或随远端可用性失效的缓存。重建投影必须读取其固定版本并校验内容，不能取 latest。投影缺失或与引用不一致时明确报错，不在 Run 事务中远端补读。
 
-一个 artifact 版本可以已存档却从未生效，例如并发纠正输掉本地 revision 检查。Memory版本历史只展示成功生效过的版本：以本地Applied且操作类型为Create/Update/Restore的回执作为索引，按appliedRevision降序游标分页，返回固定版本引用、操作者和生效时间；Retire回执不生成版本历史项。每次恢复也发布一个新版本，因此一个成功内容操作对应一个历史版本，无需远端全版本扫描或去重。
+一个 artifact 版本可以已存档却从未生效，例如并发纠正输掉本地 revision 检查。以下版本历史查询为待实现契约：只展示成功生效过的版本，以本地Applied且操作类型为Create/Update/Restore的回执作为索引，按appliedRevision降序游标分页，返回固定版本引用、操作者和生效时间；Retire回执不生成版本历史项。配置远端存档时，每次恢复也发布一个新版本，因此一个成功内容操作对应一个历史版本，无需远端全版本扫描或去重。
 
 历史列表只读本地元数据，版本详情按回执中的固定引用向artifact读取正文。详情入口必须同时核验Entry权限、该versionID存在成功生效回执且属于绑定集合；只知道同集合中的未采用versionID也不能通过此入口读取。Pending/Rejected及其未采用存档不混入Memory用户版本历史。该筛选只约束Memory API；artifact按三元归属展示完整存档历史，不理解Memory是否采用某版本。源正文缺失时保留历史项并明确报告不可用；artifact暂时离线不阻塞历史列表。当前选用的版本引用与条目停用状态分别返回，不将停用条目标成正在生效。
 
@@ -151,6 +153,8 @@ EvidenceRef 引用已授权 Run/message/step/event 及必要摘要，保存时�
 
 首版增加两类记录；Run 快照复用框架现有目标模型。
 
+当前表为 `memory_entry`、`memory_operation`，仅支持空库或空 schema 初始化，无历史迁移或回填。主题部分唯一索引 `memory_entry_subject_identity` 覆盖完整 scope、agent、kind 和非空 subjectKey；回执复合唯一索引 `memory_operation_owner_request` 覆盖 `(owner_id, request_key)`。更丰富的 Principal/CallerID 命名空间及历史索引属于目标契约，不能视为当前 schema 已具备。
+
 | 记录 | 字段与约束 |
 | --- | --- |
 | MemoryEntry | ID、精确范围、agentID/kind/subjectKey、ArtifactBinding、activeVersionRef、revision、retiredAt、生效完整 payload 与词项/标签投影；引用和内容同时更新 |
@@ -172,17 +176,17 @@ MemoryOperation 既是跨服务恢复记录，也是幂等成功回执和生效�
 ### 6.1 本地准备 → 远端发布 → 本地生效
 
 1. **准备短事务。** 核验当前用户写权限，按规范化请求命名空间和 requestKey 查回执。同键异意图返回 Conflict；Applied 返回原结果，Rejected 返回原拒绝。同键 Pending 继续原操作。新操作核对 expectedRevision、条目状态和文档，按§5的唯一约束保存稳定 operationID、EntryID、完整意图及远端参数；并发输家加载赢家回执，不能另起操作。Update要求条目启用；显式Restore要求条目停用。事务提交后才允许远端调用。
-2. **在事务外创建或确认集合。** 新Entry使用 `memory-<entryID>` 稳定名称、`agent-memory` type、integer scheme以及由操作ID派生的固定创建键，调用§2.4待补的幂等CreateArtifact。原键原参数重试返回同一artifactID，核验结果并持久保存绑定后再发布；不同键的同名冲突不接管。已有Entry的纠正/恢复直接使用固定绑定。Memory不扫描集合列表恢复创建。
+2. **在事务外创建或确认集合。** 新Entry使用 `memory-<entryID>` 稳定名称、`agent-memory` type、integer scheme以及由entryID稳定派生的固定创建键，调用§2.4的幂等CreateArtifact。原键原参数重试返回同一artifactID，核验结果并持久保存绑定后再发布；不同键的同名冲突不接管。首次归档在本地准备事务中把解析出的绑定写回Entry，后续不同actor的纠正/恢复复用该固定绑定，不再创建第二个集合。Memory不扫描集合列表恢复创建。
 3. **在事务外发布版本。** 使用稳定 operationID 作为不超过 64 字符的 requestKey；固定ArtifactBinding中的user_id、tenant/project、规范 payload、`protected=true`、空 files/aliases/annotations。重试原参数，不能使用新键掩盖超时。artifact 返回 ready 的固定身份与 payload 后，核对集合、Entry、scope、schema 和摘要，并将结果交给生效事务。
 4. **生效短事务。** 重新核验写权限，锁操作回执和 Entry，先检查回执终态并重放既有结果；仍为Pending时检查原expectedRevision、范围，以及Update必须启用、Restore必须停用的状态条件。第一次创建在这里插入 Entry 并受主题唯一约束保护；纠正则原子切换 activeVersionRef、完整投影和索引、递增 revision；Restore同时清空retiredAt。操作设为Applied并保存原appliedRevision、appliedAt、操作者及固定版本引用。只有这一步完成才对调用方报告记忆已生效。
 
-不跨 HTTP 保持数据库锁，也不尝试跨库事务。一个 Pending 操作可由同键请求继续；重复并发执行仍使用相同 artifact 发布键，本地锁确保只应用一次。首版不增加自动完成用户写入的后台循环，响应返回可重试的未决结果和原键提示；客户端放弃后不会自动生效。运维可列出 Pending 的非敏感摘要并定位到原调用方。
+不跨 HTTP 保持数据库锁，也不尝试跨库事务。当前 Archive 先以数据库时钟领取 2 分钟持久 claim，再执行事务外 HTTP；集合创建与发布共用 1 分钟总预算。绑定与版本引用写回必须匹配 claim token、Pending 状态且 claim 未过期，旧执行者不能覆盖新的领取者。Archive 完成或出错均按 token 释放 claim；进程崩溃时由过期机制释放执行权，调用方随后用原请求键继续。集合创建键由 entryID 稳定派生，版本发布键由原操作 ID 派生；同一Entry的重试与不同actor操作因此固定同一集合和调用身份，远端重复调用仍保持幂等。本地生效另由短事务和 revision 条件保证只应用一次。后台 Pending 恢复循环和运维 Pending 列表接口尚未实现。
 
 ### 6.2 并发与不确定结果
 
 两个基于 revision=4 的纠正可能都在 artifact 存档，但只有一个能把 Memory 更新到 revision=5。另一操作终结为 Rejected/RevisionConflict，其存档版本保持未采用，不能成为Memory生效版本或被下一次召回选中；artifact latest仍可能指向它，Memory不据此选用。新建主题冲突采用相同规则。实现必须持久保存Rejected与已存档版本引用；可用条件插入（ON CONFLICT DO NOTHING）或条件更新检查影响行数，在同一可提交事务内记录拒绝，不能依赖触发唯一异常后已被中止的事务继续写回执。自动删除这类受保护版本不属于首版。
 
-artifact 已发布而本地提交前进程退出时，原键重试重新确认同一版本，再尝试原 CAS。权限已撤销则拒绝生效并保留审计；条目修订变化或状态不再满足本次Update/Restore意图则记录冲突。发布超时/结果不明时保留 Pending，不能当成确定失败或创建新版本。
+artifact 已发布而本地提交前进程退出时，原键重试在持久 claim 过期后继续；已保存版本引用时复用该引用，否则以原远端键确认同一版本，再尝试原 CAS。条目修订变化或状态不再满足本次Update/Restore意图则记录冲突。发布超时/结果不明时保留 Pending，不能当成确定失败或创建新版本。完整权限撤销检查仍依赖后续访问模型接入。
 
 本地生效提交结果不明时，按原键读取主库回执；仍不能确定则返回 503 `MemoryOperationOutcomeUnknown`，下次继续原键。同键 Applied 回放不回拨生效指针，不覆盖后来纠正，也不重新访问 artifact；返回原 appliedRevision/版本引用，当前 Entry 如另行返回必须明确标为当前状态。每次回放仍核验当前访问权限。
 
@@ -210,7 +214,7 @@ Agent 版本不因本设计增加自动开启学习的开关。服务端政策�
 
 ### 7.2 使用本地生效投影的 RecallTx
 
-沿用框架的同事务 prepare：durable 先处理原请求回放，再锁会话、读取规范事实；`app/execution/context.go` 调用 Memory 的 `RecallTx`，从同一个数据库事务读取 Entry 与完整生效投影。它不调用 artifact。
+沿用框架的同事务 prepare：durable 先处理原请求回放，再锁会话、读取规范事实；当前由 `pkg/durable/prepare.go` 调用注入的 Memory `RecallTx`，从同一个数据库事务读取 Entry 与完整生效投影。它不调用 artifact；迁移到目标 `app/execution/context.go` 属于后续目录重组。
 
 查询先过滤精确 MemoryScope、Agent 限制、停用/过期、条件及 OutputVisibility/OutputAudience，再按受控词项和标签匹配，稳定排序后限制条目数及材料字节。已实现口径：召回请求可携带 `RecallFilter{Terms, Tags, MaxEntries, MaxBytes}`；查询文本与显式 Terms 一起按词项规则（ASCII 连续字母数字为一个词项、小写归一，汉字逐字成词项，见 `memory.MatchTerms`）要求全部命中条目的 subjectKey/summary/body；Tags 要求全部出现在 `Conditions.TaskTags`（大小写不敏感）。排序按 revision 降序、ID 升序稳定；默认上限 `DefaultRecallMaxEntries=8`、`DefaultRecallMaxBytes=32KiB`，显式负值关闭对应上限；字节超限跳过该条并继续选择后续更小条目。中文片段与代码标识符使用明确词项规则并有固定验收样例；不宣称语义检索能力，不先引入向量库。
 
@@ -248,37 +252,39 @@ API 本库与 artifact 库分别备份。跨库恢复后先核对 Pending 操作
 
 ## 9. API、模块与装配
 
-下表是目标协议，当前 HTTP/SDK 尚未提供。所有入口核验实时权限，身份来自认证，artifact store/scope/ID 由服务端映射。
+当前 HTTP/SDK 已提供 OwnerPrivate 人工创建、读取、更新、Retire 和显式 Restore，执行提交已支持 Off/Recall；版本历史两条 GET 入口尚未提供。维护入口使用现有 `auth.UserID` 作为 owner，完整认证与多主体授权仍待接入。当前请求和响应以 [HTTP 契约](api.md)为准，下表保留目标协议，尤其不能把历史入口视为已上线能力。
 
 | 操作 | 必需输入与结果 |
 | --- | --- |
 | POST `/v1/memories` | request key、领域范围选择、完整内容；返回 Entry、固定版本和 appliedRevision |
 | PUT `/v1/memories/{id}` | request key、expectedRevision、完整新内容及可选restore；restore=true显式恢复停用条目并发布新版本，返回本次生效结果 |
 | GET `/v1/memories`、`/{id}` | 仅列举授权 Entry；当前内容来自生效投影 |
-| GET `/v1/memories/{id}/versions` | 经Entry授权，按本地Applied内容操作分页列出生效过的版本元数据；不查询artifact列表 |
-| GET `/v1/memories/{id}/versions/{versionID}` | 先核验该Entry的成功生效回执，再按固定绑定取正文；未采用版本404，不接受任意artifact URI |
+| GET `/v1/memories/{id}/versions`（待实现） | 经Entry授权，按本地Applied内容操作分页列出生效过的版本元数据；不查询artifact列表 |
+| GET `/v1/memories/{id}/versions/{versionID}`（待实现） | 先核验该Entry的成功生效回执，再按固定绑定取正文；未采用版本404，不接受任意artifact URI |
 | POST `/v1/memories/{id}/retire` | request key、expectedRevision；返回停用后的 revision |
 
 维护请求键统一通过 `Idempotency-Key` 传入；服务端请求命名空间包含可信 Principal/CallerID、Owner、精确 MemoryScope，摘要包含归一后的操作类型（包括restore选择）、Entry、expectedRevision与规范内容；缺省restore与false等价，改变恢复意图为同键异参。Create的意图摘要只包含调用者明确提交并规范化的创建参数及可信身份，不包含服务器后来分配的EntryID、operationID、时间或远端版本；这些值由唯一回执固定后生成发布文档，避免同键重试因新ID而误判异参。Update/Restore/Retire包含已有目标EntryID。跨用户或应用不共享回执。MemoryOperation 的内部 ID 用作 artifact requestKey，避免把外部任意长度的键直接传给 artifact。
 
 参数错误400；未认证401；范围内无能力403；不可见或不存在的Entry/版本404；修订或同键异意图409；操作结果未决、版本源不可用或依赖错误按稳定错误码映射503。已通过Memory授权但无法使用固定存储归属时，按接入故障处理，不通过换user或换集合恢复。正文和私密证据不进入普通日志或错误消息。
 
-| 目标位置 | 责任 |
+| 当前实现位置 | 责任 |
 | --- | --- |
 | `pkg/memory/types.go` | MemoryScope、MemorySelection、Entry/VersionRef/Document 等纯领域值 |
-| `internal/app/memory/service.go`、`write.go` | 权限、持久操作准备、远端发布编排、本地生效、停用及恢复 |
-| `internal/app/memory/recall.go`、`access.go` | RecallTx、范围和输出受众、稳定排序 |
-| `internal/table/memory.go`、`memory_query.go` | Entry 投影、Operation、查询与 CAS；无远端调用 |
+| `internal/app/memory/service.go` | OwnerPrivate 维护、持久操作准备、claim、远端发布编排、本地 CAS 生效、停用及恢复 |
+| `internal/app/memory/recall.go` | RecallTx、范围和输出受众、稳定排序 |
+| `internal/table/memory.go` | Entry 投影、Operation、索引及领域值转换；查询与 CAS 位于 Memory service |
 | `internal/client/artifact.go` | SDK、可信三元存储上下文、固定绑定、错误与幂等集合创建协议转换 |
-| `internal/app/execution/context.go` | 同事务召回、材料映射和冻结；Off 跳过 Memory |
+| `pkg/durable/prepare.go` | 同事务召回、材料映射和冻结；Off 跳过 Memory |
 | `pkg/contextbuilder`、`pkg/durable/context.go` | 前者构建模型输入，后者保存不透明快照 |
-| `service/build.go`、`service/service.go`、配置与 schema | Artifact 客户端资源注入/关闭、服务配置、两类本地记录初始化 |
+| `service/build.go`、`service/api.go`、配置与 schema | Artifact 客户端资源注入/关闭、服务配置、两类本地记录初始化 |
 | `sdk/go/agenticv1` | Memory 管理及执行时显式选择的请求/响应与客户端 |
 | worker 的 Eino adapter | 消费冻结材料；不接入 artifact SDK 或 Memory CRUD |
 
-Memory.Service 在消费处定义只含实际 artifact 行为的小接口，由 internal/client 实现，隔离外部错误、身份与所有权；不建立多后端注册器。组合 New 借用已构造的 artifact 客户端，不关闭它；独立 Build 构造客户端并在服务停止后关闭。配置保留服务端点、OwnerPrivate必要的存储归属映射、超时与正文上限；调用使用Entry/Operation固定的ArtifactBinding，不能在 HTTP 热重载时切换存储绑定。尚未启用 Memory 管理的部署可以不配置该客户端，Off 仍可工作；有已有投影的 Recall 不要求远端在线。
+Memory.Service 在消费处定义只含实际 artifact 行为的小接口，由 internal/client 实现，隔离外部错误、身份与所有权；不建立多后端注册器。组合 New 借用已构造的 archive，不关闭它；独立 Build 拥有创建的客户端，New/AddService 失败时关闭，装配成功后由 API 在任务停止成功后关闭一次，停止超时则保留资源。配置字段、默认值和上限见 [README](../README.md#配置与启动)。OwnerPrivate 的 tenant 必须显式配置，没有公共兜底；调用使用 Entry/Operation 固定的 ArtifactBinding，HTTP 热重载不迁移存储绑定。Endpoint 为空保持本地维护模式，不生成远端引用；Off 和本地投影 Recall 均可工作。
 
 ## 10. 实施顺序与验收
+
+当前 OwnerPrivate 维护、artifact 适配、持久 claim 和 RecallTx 冻结链路已实现；配置包测试与 Helm 默认值、覆盖值渲染已通过。持久化、发布故障、资源生命周期及全仓验证结果以[验证记录](verification.md)为准。以下仍是完整目标的验收清单，包含尚未开放的共享范围和版本历史 API，不表示各项已通过。
 
 1. **接入条件。** 先完成§2.4列出的artifact三元数据隔离、集合幂等创建及正式SDK兼容验证。分别改变tenant/project/user验证所有入口；验证Memory适配能使用固定绑定，ProjectShared编辑者变化不改变远端归属。
 2. **人工维护闭环。** 两类本地记录、集合绑定、发布、纠正、停用/恢复及仅生效历史的API/SDK；验证中断与并发下的原键恢复。成功标准是 artifact 存档和本地生效可分别观察、未生效版本不被使用。
@@ -303,7 +309,7 @@ Memory.Service 在消费处定义只含实际 artifact 行为的小接口，由 
 | 预算与材料选择 | 中文/代码标签固定用例、稳定顺序、完整工具链、动态工具输出超限及明确失败 |
 | 历史归属与保留 | 仅Applied的Create/Update/Restore进入列表，Retire/Pending/Rejected排除；猜测未采用versionID返回404；远端离线仍可分页；源正文缺失保留元数据并报不可用 |
 
-实现时用隔离数据库和真实 artifact HTTP/SDK 覆盖跨服务故障；API/worker 执行项目要求的 integration、race、vet、build、Swagger 与真实强杀接管验证。正式依赖必须 GOWORK=off、无本地 replace。本文仅修改设计，以上新增验收尚未执行。
+部署验收仍需用隔离数据库和真实 artifact 服务覆盖跨服务故障；API/worker 按变更范围执行 integration、race、vet、build、Swagger 与跨进程接管验证。正式依赖验证使用 GOWORK=off、无本地 replace。真实 artifact 部署、共享范围授权和版本历史验收尚未完成；自动提炼、后台 Pending 恢复与版本回收仍未实现。
 
 ## 11. 后续演进边界
 

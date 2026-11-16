@@ -3,11 +3,13 @@ module github.com/FlyTOmeLight/agentic-kit-api
 go 1.27.1
 
 require (
-	github.com/FlyTOmeLight/server-go v0.12.0
+	github.com/FlyTOmeLight/artifact-go v0.5.0
+	github.com/FlyTOmeLight/server-go v0.13.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/swaggo/swag v1.16.6
+	gorm.io/driver/postgres v1.6.3
 	gorm.io/gorm v1.31.2
 	resty.dev/v3 v3.0.0-rc.4
 )
@@ -121,7 +123,6 @@ require (
 	gorm.io/driver/clickhouse v0.7.0 // indirect
 	gorm.io/driver/gaussdb v0.1.0 // indirect
 	gorm.io/driver/mysql v1.6.0 // indirect
-	gorm.io/driver/postgres v1.6.3 // indirect
 	gorm.io/driver/sqlite v1.6.0 // indirect
 	gorm.io/plugin/soft_delete v1.2.1 // indirect
 )

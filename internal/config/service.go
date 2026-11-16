@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,17 @@ type Service struct {
 	HTTPServer conf.HTTPServerConfig
 	DB         db.Config
 	Redis      frameworkredis.Config
+	Artifact   Artifact
+}
+
+// Artifact configures the Memory archive adapter. An empty Endpoint disables
+// remote archiving; memory writes then stay local without version references.
+type Artifact struct {
+	Endpoint        string
+	StoreID         string
+	TenantID        string
+	TimeoutSeconds  int
+	MaxPayloadBytes int64
 }
 
 // Load decodes the framework snapshot used by the server.
@@ -52,7 +64,7 @@ func (cfg Service) ValidateDatabase() error {
 	return nil
 }
 
-// ValidateAPI checks the standalone HTTP and notification settings.
+// ValidateAPI checks the standalone API settings.
 func (cfg Service) ValidateAPI() error {
 	if err := cfg.ValidateDatabase(); err != nil {
 		return err
@@ -74,6 +86,26 @@ func (cfg Service) ValidateAPI() error {
 		if strings.TrimSpace(addr) == "" {
 			return errors.New("Redis.Addrs must not contain empty addresses")
 		}
+	}
+	if cfg.Artifact.Endpoint == "" {
+		return nil
+	}
+	endpoint, err := url.Parse(cfg.Artifact.Endpoint)
+	if err != nil || !endpoint.IsAbs() ||
+		(endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" {
+		return errors.New("Artifact.Endpoint must be an absolute http(s) URL")
+	}
+	if strings.TrimSpace(cfg.Artifact.StoreID) == "" {
+		return errors.New("Artifact.StoreID is required")
+	}
+	if strings.TrimSpace(cfg.Artifact.TenantID) == "" {
+		return errors.New("Artifact.TenantID is required")
+	}
+	if cfg.Artifact.TimeoutSeconds <= 0 || cfg.Artifact.TimeoutSeconds > 60 {
+		return errors.New("Artifact.TimeoutSeconds must be between 1 and 60")
+	}
+	if cfg.Artifact.MaxPayloadBytes <= 0 || cfg.Artifact.MaxPayloadBytes > 256*1024 {
+		return errors.New("Artifact.MaxPayloadBytes must be between 1 and 262144")
 	}
 	return nil
 }

@@ -64,7 +64,7 @@ func newRouter(
 		t.Fatal(err)
 	}
 	t.Cleanup(log.Close)
-	routes := newRoutes(store, redisClient)
+	routes := newRoutes(store, redisClient, nil)
 	h, err := host.NewHTTPHost(manager, log, nil, testRoutes{register: func(g *gin.RouterGroup) {
 		// Test double for the future Forge middleware: it only establishes the
 		// identity context and does not authenticate or authorize requests.
