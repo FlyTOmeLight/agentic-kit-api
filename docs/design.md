@@ -66,6 +66,18 @@ Run 锁保护执行步骤，Session 锁保护消息编号。提交持有 Session
 
 NeedsReview 接口要求用户提供已经确认的外部结果；它不是“无条件重跑”按钮。人工确认、取消同样写事件。取消阻止后续状态提交和自动领取，但不会撤销已经完成的外部操作。
 
+## 模型用量与恢复
+
+模型响应必须带 provider 报告的 usage。Worker 在 `ResponseMeta` 或 `Usage` 缺失时返回 `ErrModelUsageUnavailable`，不把未知用量当成 0，也不继续执行工具或摘要。provider 明确返回的 0 是已知用量，按 0 记账，不能与缺失混为一谈。OpenAI 适配层保留原始响应的 usage 字段，防止 SDK 在字段缺失时合成零值。
+
+每次调用按 `(run_id, turn, call)` 幂等记账。`call="model"` 使用模型轮次，`call="summary"` 使用 `State.SummaryCalls`。摘要计数递增后随 usage 和 state 同事务持久化，写入失败还原计数并传播错误。Token 总量优先取 `TotalTokens`，其为 0 时取 `PromptTokens + CompletionTokens`。重复提交同一编号不重复计费；Run 的 tokens/cost、Goal 的汇总用量、Run state 和 `UsageRecorded` 事件在同一事务提交。`RecordUsageWithCost` 和 `Usage.CostUSD` 已支持费用字段；Worker 当前没有供应方定价，走 `RecordUsage`，cost 记为 0。
+
+Worker 在模型调用前和上下文构建后各检查一次 Goal 预算。响应 usage 提交后、执行工具前再检查一次；预算错误确定性地终止本轮，不把新模型或工具工作派发出去。摘要调用在发起前检查预算，usage 记账失败、usage 未知或预算错误直接传播，不降级为普通压缩失败继续主模型。
+
+成功模型响应先写入 `State.PendingModel`，与递增后的 Turn、usage 和 Run state 同事务保存。接管时发现 PendingModel 就直接应用已保存响应，不再请求模型，避免同一响应重复产生费用。模型返回错误但同时带有响应和已知 usage 时，先记账再传播调用错误；未知 usage 无法记账时拒绝继续。流式响应全量读取并合并成一条消息后才校验 usage、记账并返回单条消息流，工具不会在用量确认前执行。
+
+预算没有预占。检查与记账之间存在在途窗口，并发调用或单次超预算响应可以越过上限；响应已产生但记账事务尚未提交时进程退出，费用事实未知，重试可能再次产生费用。当前设计保证已提交用量可恢复且不重复，不承诺严格硬上限。`RecordUsageWithCost` 先读取 Run 的 owner/goal 绑定，再锁 Goal，最后锁 Run；调用方应保持该 Goal→Run 锁序。
+
 ## 事件一致性
 
 状态、结果与事件在同一个 PostgreSQL 事务提交。每个任务的 event_seq 在该任务行的锁保护下递增，作为任务内的事件顺序。

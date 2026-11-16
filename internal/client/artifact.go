@@ -11,10 +11,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/FlyTOmeLight/artifact-go/sdk/go/artifactv1"
 	frameworkerrors "github.com/FlyTOmeLight/server-go/errors"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
+	"github.com/FlyTOmeLight/artifact-go/sdk/go/artifactv1"
 )
 
 const artifactType = "agent"

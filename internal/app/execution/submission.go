@@ -14,12 +14,14 @@ import (
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	execpkg "github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
 // Service accepts chat and application runs through the shared durable algorithm.
 type Service struct {
 	store    *durable.Store
 	artifact client.ArtifactStore
+	recaller durable.MemoryRecaller
 
 	collections sync.Map // agentID → artifact collection ID
 }
@@ -28,14 +30,25 @@ func NewService(store *durable.Store, artifact client.ArtifactStore) *Service {
 	return &Service{store: store, artifact: artifact}
 }
 
+// WithMemoryRecaller wires recall memory into the accept transaction when a
+// submission selects Recall. Call it during construction, before serving.
+func (s *Service) WithMemoryRecaller(recaller durable.MemoryRecaller) *Service {
+	s.recaller = recaller
+	return s
+}
+
 func (s *Service) SubmitChat(
 	ctx context.Context,
 	identity client.Identity,
 	owner, session, key, query string,
 	ttl time.Duration,
 	maxAttempts int,
+	memorySelection memory.Selection,
+	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
-	cmd, prepare, replay, err := s.prepareChat(ctx, identity, owner, session, key, query, ttl, maxAttempts)
+	cmd, prepare, replay, err := s.prepareChat(
+		ctx, identity, owner, session, key, query, ttl, maxAttempts, memorySelection, filter,
+	)
 	if err != nil || replay != nil {
 		return replay, false, err
 	}
@@ -48,9 +61,10 @@ func (s *Service) prepareChat(
 	owner, session, key, query string,
 	ttl time.Duration,
 	maxAttempts int,
+	memorySelection memory.Selection,
+	filter memory.RecallFilter,
 ) (execpkg.SubmitCommand, durable.PrepareSubmission, *execpkg.Run, error) {
-	input, _ := json.Marshal(struct{ Session, Query string }{Session: session, Query: query})
-	hash := durable.Hash(input)
+	hash := chatRequestHash(session, query, memorySelection, filter)
 	if run, err := s.replay(ctx, owner, key, hash); err != nil || run != nil {
 		return execpkg.SubmitCommand{}, nil, run, err
 	}
@@ -71,16 +85,18 @@ func (s *Service) prepareChat(
 		return execpkg.SubmitCommand{}, nil, nil, err
 	}
 	cmd := execpkg.SubmitCommand{
-		Owner:       owner,
-		RequestKey:  key,
-		RequestHash: hash,
-		TTL:         ttl,
-		MaxAttempts: maxAttempts,
-		Kind:        execpkg.SubmitChat,
-		SessionID:   session,
-		Query:       query,
+		Owner:        owner,
+		RequestKey:   key,
+		RequestHash:  hash,
+		TTL:          ttl,
+		MaxAttempts:  maxAttempts,
+		Kind:         execpkg.SubmitChat,
+		SessionID:    session,
+		Query:        query,
+		Memory:       normalizeMemorySelection(memorySelection),
+		MemoryFilter: filter,
 	}
-	return cmd, durable.PrepareChatSubmission(config, agentRow.ID, agentRow.PublishedVersion), nil, nil
+	return cmd, durable.PrepareChatSubmission(config, agentRow.ID, agentRow.PublishedVersion, s.recaller), nil, nil
 }
 
 func (s *Service) SubmitApplication(
@@ -89,12 +105,10 @@ func (s *Service) SubmitApplication(
 	owner, key string,
 	spec execpkg.ExecutionSpec,
 	ttl time.Duration,
+	memorySelection memory.Selection,
+	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
-	input, _ := json.Marshal(struct {
-		Spec execpkg.ExecutionSpec
-		TTL  time.Duration
-	}{Spec: spec, TTL: ttl})
-	hash := durable.Hash(input)
+	hash := applicationRequestHash(spec, ttl, memorySelection, filter)
 	if run, err := s.replay(ctx, owner, key, hash); err != nil || run != nil {
 		return run, false, err
 	}
@@ -116,8 +130,60 @@ func (s *Service) SubmitApplication(
 		Kind:          execpkg.SubmitApplication,
 		ExecutionSpec: spec,
 		GoalID:        spec.GoalID,
+		Query:         spec.Query,
+		Memory:        normalizeMemorySelection(memorySelection),
+		MemoryFilter:  filter,
 	}
-	return s.store.Accept(ctx, cmd, durable.PrepareApplicationSubmission(config, agentRow.ID, spec.AgentVersion))
+	return s.store.Accept(
+		ctx,
+		cmd,
+		durable.PrepareApplicationSubmission(config, agentRow.ID, spec.AgentVersion, s.recaller),
+	)
+}
+
+func normalizeMemorySelection(selection memory.Selection) memory.Selection {
+	if selection == "" {
+		return memory.SelectionOff
+	}
+	return selection
+}
+
+func emptyRecallFilter(filter memory.RecallFilter) bool {
+	return len(filter.Terms) == 0 && len(filter.Tags) == 0 &&
+		filter.MaxEntries == 0 && filter.MaxBytes == 0
+}
+
+func chatRequestHash(session, query string, selection memory.Selection, filter memory.RecallFilter) string {
+	selection = normalizeMemorySelection(selection)
+	if selection == memory.SelectionOff && emptyRecallFilter(filter) {
+		input, _ := json.Marshal(struct{ Session, Query string }{Session: session, Query: query})
+		return durable.Hash(input)
+	}
+	input, _ := json.Marshal(struct {
+		Session string
+		Query   string
+		Memory  memory.Selection
+		Filter  memory.RecallFilter
+	}{Session: session, Query: query, Memory: selection, Filter: filter})
+	return durable.Hash(input)
+}
+
+func applicationRequestHash(spec execpkg.ExecutionSpec, ttl time.Duration, selection memory.Selection, filter memory.RecallFilter) string {
+	selection = normalizeMemorySelection(selection)
+	if selection == memory.SelectionOff && emptyRecallFilter(filter) {
+		input, _ := json.Marshal(struct {
+			Spec execpkg.ExecutionSpec
+			TTL  time.Duration
+		}{Spec: spec, TTL: ttl})
+		return durable.Hash(input)
+	}
+	input, _ := json.Marshal(struct {
+		Spec   execpkg.ExecutionSpec
+		TTL    time.Duration
+		Memory memory.Selection
+		Filter memory.RecallFilter
+	}{Spec: spec, TTL: ttl, Memory: selection, Filter: filter})
+	return durable.Hash(input)
 }
 
 // replay returns the accepted run for an idempotent retry without touching

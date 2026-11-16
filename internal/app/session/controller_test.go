@@ -12,6 +12,7 @@ import (
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
 type submittedMessage struct {
@@ -26,6 +27,8 @@ func (s *submittedMessage) Submit(
 	_, session, key, query string,
 	_ time.Duration,
 	_ int,
+	_ memory.Selection,
+	_ memory.RecallFilter,
 ) (*durable.Run, bool, error) {
 	s.called = true
 	s.session, s.key, s.query = session, key, query
@@ -75,5 +78,26 @@ func TestSubmitMessageSourcesRemainSeparate(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestSubmitMessageRejectsFilterWithoutRecall(t *testing.T) {
+	submitted := &submittedMessage{}
+	router := gin.New()
+	NewController(submitted).RegisterRoutes(router.Group("/v1"))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sessions/original/messages",
+		strings.NewReader(`{"query":"original input","memory":"Off","memoryFilter":{"tags":["go"]}}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "key")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+	}
+	if submitted.called {
+		t.Fatal("Submit was called for Off with a filter")
 	}
 }

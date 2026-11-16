@@ -6,6 +6,7 @@ import (
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/agent"
 	appexec "github.com/FlyTOmeLight/agentic-kit-api/internal/app/execution"
+	appmemory "github.com/FlyTOmeLight/agentic-kit-api/internal/app/memory"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/run"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/session"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
@@ -18,6 +19,7 @@ type routes struct {
 	agent        *agent.Controller
 	session      *session.Controller
 	run          *run.Controller
+	memory       *appmemory.Controller
 	sandbox      *sandboxcenter.Controller
 	sandboxStore *sandboxcenter.Store
 }
@@ -31,10 +33,17 @@ func newRoutes(
 	callbackCfg config.CallbackConfig,
 ) *routes {
 	exec := appexec.NewService(store, artifact)
+	var memoryCtrl *appmemory.Controller
+	if store != nil {
+		memorySvc := appmemory.NewService(store.DB())
+		memoryCtrl = appmemory.NewController(memorySvc)
+		exec = exec.WithMemoryRecaller(memorySvc)
+	}
 	r := &routes{
 		agent:        agent.NewController(agent.NewService(store.DB(), artifact)),
 		session:      session.NewController(session.NewService(store, exec)),
 		run:          run.NewController(store, exec, cache, callbackCfg),
+		memory:       memoryCtrl,
 		sandboxStore: sandboxStore,
 	}
 	if sandboxProvider != nil {
@@ -56,5 +65,8 @@ func (r *routes) register(router *core.RouterGroup) {
 		r.sandbox.RegisterRoutes(v1)
 	} else if r.sandboxStore != nil {
 		sandboxcenter.RegisterStoreRoutes(v1, r.sandboxStore)
+	}
+	if r.memory != nil {
+		r.memory.RegisterRoutes(v1)
 	}
 }

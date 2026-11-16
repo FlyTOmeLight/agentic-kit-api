@@ -33,13 +33,20 @@ func failedGoalIteration(t *testing.T, store *Store) (*Goal, *Run) {
 		t.Fatal(err)
 	}
 	claimed := claim(t, store, "worker")
+	if err = store.RecordUsageWithCost(
+		ctx,
+		claimed.Lease(),
+		1,
+		"previous-model",
+		7,
+		0.25,
+		json.RawMessage(`{"version":3}`),
+	); err != nil {
+		t.Fatal(err)
+	}
 	if err = store.CommitBoundary(ctx, claimed.Lease(), Boundary{
 		Kind: BoundaryComplete, State: json.RawMessage(`{"version":3}`), Output: "previous answer",
 	}); err != nil {
-		t.Fatal(err)
-	}
-	if err = store.db.Model(&table.Run{}).Where("id = ?", run.ID).
-		Updates(map[string]any{"tokens_used": 7, "cost_usd": 0.25}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if _, err = store.RecordEvaluation(

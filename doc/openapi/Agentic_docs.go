@@ -1268,6 +1268,271 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "/v1/memories": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "列出记忆",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "游标",
+                        "name": "after",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "数量",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/agenticv1.MemoryEntry"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "创建记忆",
+                "parameters": [
+                    {
+                        "description": "JSON 请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/agenticv1.CreateMemoryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "成功",
+                        "schema": {
+                            "$ref": "#/definitions/agenticv1.MemoryEntry"
+                        }
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "状态或幂等冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/memories/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "查询记忆",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功",
+                        "schema": {
+                            "$ref": "#/definitions/agenticv1.MemoryEntry"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "更新记忆",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "JSON 请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/agenticv1.UpdateMemoryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功",
+                        "schema": {
+                            "$ref": "#/definitions/agenticv1.MemoryEntry"
+                        }
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "状态或修订冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/memories/{id}/retire": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "停用记忆",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "JSON 请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/agenticv1.RetireMemoryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功",
+                        "schema": {
+                            "$ref": "#/definitions/agenticv1.MemoryEntry"
+                        }
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "状态或修订冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/runs/{id}": {
             "get": {
                 "security": [
@@ -2553,6 +2818,17 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "agenticv1.CreateMemoryRequest": {
+            "type": "object",
+            "required": [
+                "document"
+            ],
+            "properties": {
+                "document": {
+                    "$ref": "#/definitions/agenticv1.MemoryDocument"
+                }
+            }
+        },
         "agenticv1.CreateSessionRequest": {
             "type": "object",
             "required": [
@@ -2619,6 +2895,117 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "agenticv1.MemoryDocument": {
+            "type": "object",
+            "properties": {
+                "agentID": {
+                    "type": "string"
+                },
+                "body": {
+                    "type": "object"
+                },
+                "conditions": {
+                    "$ref": "#/definitions/memory.Conditions"
+                },
+                "entryID": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "outputVisibility": {
+                    "type": "string"
+                },
+                "schemaVersion": {
+                    "type": "integer"
+                },
+                "scope": {
+                    "$ref": "#/definitions/memory.Scope"
+                },
+                "source": {
+                    "$ref": "#/definitions/memory.Source"
+                },
+                "subjectKey": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "validUntil": {
+                    "type": "integer"
+                }
+            }
+        },
+        "agenticv1.MemoryEntry": {
+            "type": "object",
+            "properties": {
+                "activeVersionRef": {
+                    "$ref": "#/definitions/memory.VersionRef"
+                },
+                "agentID": {
+                    "type": "string"
+                },
+                "body": {
+                    "type": "object"
+                },
+                "conditions": {
+                    "$ref": "#/definitions/memory.Conditions"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "outputVisibility": {
+                    "type": "string"
+                },
+                "retiredAt": {
+                    "type": "integer"
+                },
+                "revision": {
+                    "type": "integer"
+                },
+                "scope": {
+                    "$ref": "#/definitions/memory.Scope"
+                },
+                "source": {
+                    "$ref": "#/definitions/memory.Source"
+                },
+                "subjectKey": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "validUntil": {
+                    "type": "integer"
+                }
+            }
+        },
+        "agenticv1.MemoryRecallFilter": {
+            "type": "object",
+            "properties": {
+                "maxBytes": {
+                    "type": "integer"
+                },
+                "maxEntries": {
+                    "type": "integer"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "terms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "agenticv1.Page-agenticv1_Agent": {
             "type": "object",
             "properties": {
@@ -2667,6 +3054,18 @@ const docTemplateAgentic = `{
             "type": "object",
             "properties": {
                 "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
+        "agenticv1.RetireMemoryRequest": {
+            "type": "object",
+            "required": [
+                "expectedRevision"
+            ],
+            "properties": {
+                "expectedRevision": {
                     "type": "integer",
                     "minimum": 1
                 }
@@ -2769,6 +3168,16 @@ const docTemplateAgentic = `{
                 "query"
             ],
             "properties": {
+                "memory": {
+                    "type": "string",
+                    "enum": [
+                        "Off",
+                        "Recall"
+                    ]
+                },
+                "memoryFilter": {
+                    "$ref": "#/definitions/agenticv1.MemoryRecallFilter"
+                },
                 "query": {
                     "type": "string"
                 }
@@ -2800,6 +3209,16 @@ const docTemplateAgentic = `{
         "agenticv1.SubmitExecutionRequest": {
             "type": "object",
             "properties": {
+                "memory": {
+                    "type": "string",
+                    "enum": [
+                        "Off",
+                        "Recall"
+                    ]
+                },
+                "memoryFilter": {
+                    "$ref": "#/definitions/agenticv1.MemoryRecallFilter"
+                },
                 "spec": {
                     "$ref": "#/definitions/agenticv1.ExecutionSpec"
                 },
@@ -2840,6 +3259,22 @@ const docTemplateAgentic = `{
                     "maxLength": 200
                 },
                 "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
+        "agenticv1.UpdateMemoryRequest": {
+            "type": "object",
+            "required": [
+                "document",
+                "expectedRevision"
+            ],
+            "properties": {
+                "document": {
+                    "$ref": "#/definitions/agenticv1.MemoryDocument"
+                },
+                "expectedRevision": {
                     "type": "integer",
                     "minimum": 1
                 }
@@ -3145,6 +3580,109 @@ const docTemplateAgentic = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "memory.Conditions": {
+            "type": "object",
+            "properties": {
+                "taskTags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "toolNames": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "memory.Scope": {
+            "type": "object",
+            "properties": {
+                "actor": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "owner": {
+                    "type": "string"
+                },
+                "project": {
+                    "type": "string"
+                },
+                "tenant": {
+                    "type": "string"
+                }
+            }
+        },
+        "memory.Source": {
+            "type": "object",
+            "properties": {
+                "actor": {
+                    "type": "string"
+                },
+                "class": {
+                    "type": "string"
+                },
+                "evidence": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/memory.SourceEvidence"
+                    }
+                }
+            }
+        },
+        "memory.SourceEvidence": {
+            "type": "object",
+            "properties": {
+                "eventID": {
+                    "type": "string"
+                },
+                "messageID": {
+                    "type": "string"
+                },
+                "runID": {
+                    "type": "string"
+                },
+                "stepID": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                }
+            }
+        },
+        "memory.VersionRef": {
+            "type": "object",
+            "properties": {
+                "artifactID": {
+                    "type": "string"
+                },
+                "projectID": {
+                    "type": "string"
+                },
+                "sequence": {
+                    "type": "integer"
+                },
+                "storeID": {
+                    "type": "string"
+                },
+                "tenantID": {
+                    "type": "string"
+                },
+                "userID": {
+                    "type": "string"
+                },
+                "versionID": {
+                    "type": "string"
+                },
+                "versionURI": {
                     "type": "string"
                 }
             }

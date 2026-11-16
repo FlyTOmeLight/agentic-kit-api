@@ -90,7 +90,7 @@ func createDurableRun(t *testing.T, s *durable.Store) *durable.Run {
 		Kind:        execution.SubmitChat,
 		SessionID:   session.ID,
 		Query:       "question",
-	}, durable.PrepareChatSubmission(cfg, agentRow.ID, 1))
+	}, durable.PrepareChatSubmission(cfg, agentRow.ID, 1, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

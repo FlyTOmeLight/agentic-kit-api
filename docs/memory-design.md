@@ -212,11 +212,13 @@ Agent 版本不因本设计增加自动开启学习的开关。服务端政策�
 
 沿用框架的同事务 prepare：durable 先处理原请求回放，再锁会话、读取规范事实；`app/execution/context.go` 调用 Memory 的 `RecallTx`，从同一个数据库事务读取 Entry 与完整生效投影。它不调用 artifact。
 
-查询先过滤精确 MemoryScope、Agent 限制、停用/过期、条件及 OutputVisibility/OutputAudience，再按受控词项和标签匹配，稳定排序后限制条目数及材料字节。中文片段与代码标识符使用明确词项规则并有固定验收样例；不宣称语义检索能力，不先引入向量库。
+查询先过滤精确 MemoryScope、Agent 限制、停用/过期、条件及 OutputVisibility/OutputAudience，再按受控词项和标签匹配，稳定排序后限制条目数及材料字节。已实现口径：召回请求可携带 `RecallFilter{Terms, Tags, MaxEntries, MaxBytes}`；查询文本与显式 Terms 一起按词项规则（ASCII 连续字母数字为一个词项、小写归一，汉字逐字成词项，见 `memory.MatchTerms`）要求全部命中条目的 subjectKey/summary/body；Tags 要求全部出现在 `Conditions.TaskTags`（大小写不敏感）。排序按 revision 降序、ID 升序稳定；默认上限 `DefaultRecallMaxEntries=8`、`DefaultRecallMaxBytes=32KiB`，显式负值关闭对应上限；字节超限跳过该条并继续选择后续更小条目。中文片段与代码标识符使用明确词项规则并有固定验收样例；不宣称语义检索能力，不先引入向量库。
 
 一次查询读取引用与内容的一致行；其语句快照是本次选择时点。并发纠正/停用在该时点之后提交，已选结果仍可进入此次 Run；在其之后开始的召回读取新状态。首版不要求对整个记忆集合加锁，也不承诺多条 Entry 属于同一知识发布批次。
 
 将选中条目的完整正文、条件、来源、固定版本引用及顺序映射为 ContextBlock；与策略和预算一起编码到 ContextSnapshot，并与 Session/Run/用户消息/事件原子提交。无匹配保存 Recall/Empty，Off 保存明确关闭；本地读取或投影校验失败使接受事务回滚，不能静默降为 Empty。投影正常时 artifact 暂时离线不影响 Recall，这来自已完成的本地生效契约。
+
+已实现 scope 构造口径：普通聊天无业务 tenant/project 上下文，固定 OwnerPrivate。应用执行从接受时已核验的 workspace scope 派生（`pkg/durable/prepare.go` 的 `memoryScopeFromFacts`）：tenant+actor 且 project 为空为 ActorPrivate；tenant+project+actor 为 ActorProject；组件缺失时回退 OwnerPrivate，绝不扩宽为 ProjectShared。应用执行与聊天共用同一请求字段：`SubmitExecutionRequest` 携带 `memory`（Off/Recall）与 `memoryFilter`（同 §7.2 的 RecallFilter），Off 携带 filter 报 400 Invalid。
 
 同键已成功提交直接读取原 Run；后续记忆更新、策略变化或 artifact 故障均不触发重新召回。未成功接受的请求可在重试时重新选择，以最终接受的快照为准。
 

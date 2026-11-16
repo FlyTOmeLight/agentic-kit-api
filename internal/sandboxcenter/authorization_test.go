@@ -347,7 +347,7 @@ func TestCompletedRunEvaluationRenewal(t *testing.T) {
 				t.Fatal(err)
 			}
 			if updated.Revision != 2 || !updated.HardExpiresAt.Equal(deadline) ||
-				!updated.HardExpiresAt.After(time.Now().Add(time.Minute)) {
+				!updated.HardExpiresAt.After(updated.RenewedAt.Add(time.Minute)) {
 				t.Fatalf(
 					"renewal not clamped to evaluation deadline: lease=%+v deadline=%v",
 					updated,
@@ -409,7 +409,7 @@ func TestCompletedEvaluationRenewsWithinDeadline(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			requested := time.Now().UTC().Add(test.requestTTL).Truncate(time.Microsecond)
+			requested := databaseNow(t, store).UTC().Add(test.requestTTL).Truncate(time.Microsecond)
 			expected := requested
 			switch test.deadline {
 			case "evaluation_deadline":
@@ -537,7 +537,7 @@ func TestCompletedEvaluationRejectsExpiredRenewalDeadline(t *testing.T) {
 		lease.Revision+1,
 		"renew",
 		"renew-hash",
-		time.Now().Add(-time.Minute),
+		databaseNow(t, store).Add(-time.Minute),
 	); !errors.Is(
 		err,
 		ErrLeaseExpired,

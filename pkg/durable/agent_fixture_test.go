@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,7 +24,26 @@ func createAgentFixture(t *testing.T, s *Store, owner, name string, config Agent
 	if err := s.DB().Create(&row).Error; err != nil {
 		t.Fatal(err)
 	}
+	fixtureVersionConfigs.Store(row.ID, map[int64]AgentConfig{})
 	return &row
+}
+
+// fixtureVersionConfigs keeps the config body each fixture publish used so
+// tests can mirror the production prefetch without an artifact store.
+var fixtureVersionConfigs sync.Map // agentID → map[int64]AgentConfig
+
+// fixtureVersionConfig returns the config published as the given version.
+func fixtureVersionConfig(t *testing.T, agentID string, version int64) AgentConfig {
+	t.Helper()
+	versions, ok := fixtureVersionConfigs.Load(agentID)
+	if !ok {
+		t.Fatalf("no fixture versions for agent %s", agentID)
+	}
+	cfg, ok := versions.(map[int64]AgentConfig)[version]
+	if !ok {
+		t.Fatalf("no fixture config for agent %s version %d", agentID, version)
+	}
+	return cfg
 }
 
 // updateAgentFixture replaces the draft and bumps the revision.
@@ -81,6 +101,10 @@ func publishAgentFixture(t *testing.T, s *Store, owner, id string, revision int6
 	if err := s.DB().Create(&version).Error; err != nil {
 		t.Fatal(err)
 	}
+	versions, _ := fixtureVersionConfigs.Load(id)
+	configs := versions.(map[int64]AgentConfig)
+	configs[version.Number] = row.Draft
+	fixtureVersionConfigs.Store(id, configs)
 	if err := s.DB().Model(&row).
 		Updates(map[string]any{"published_revision": revision, "published_version": version.Number}).
 		Error; err != nil {
@@ -144,7 +168,7 @@ func submitFixture(
 		Kind:        execution.SubmitChat,
 		SessionID:   sessionID,
 		Query:       query,
-	}, PrepareChatSubmission(config, agentID, version))
+	}, PrepareChatSubmission(config, agentID, version, nil))
 }
 
 // sessionPublishedFixture resolves the agent and published version bound to
@@ -186,5 +210,5 @@ func submitExecutionFixture(
 		Kind:          execution.SubmitApplication,
 		ExecutionSpec: spec,
 		GoalID:        spec.GoalID,
-	}, PrepareApplicationSubmission(config, spec.AgentID, spec.AgentVersion))
+	}, PrepareApplicationSubmission(config, spec.AgentID, spec.AgentVersion, nil))
 }

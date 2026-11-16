@@ -224,17 +224,23 @@ func (s *Store) CheckGoalProgress(ctx context.Context, owner, goalID string) (*G
 		goalRow.LastStallMark = currentMark
 	}
 	var newStatus GoalStatus
+	var now time.Time
+	if goalRow.Budget.MaxWallClockSeconds > 0 {
+		if err := tx.Raw("SELECT clock_timestamp()").Scan(&now).Error; err != nil {
+			return nil, err
+		}
+	}
 	switch {
 	case passed:
 		newStatus = GoalComplete
 	case goalRow.StallCount >= 3:
 		newStatus = GoalBlocked
 	case goalRow.Budget.MaxWallClockSeconds > 0 &&
-		time.Since(goalRow.CreatedAt).Seconds() > float64(goalRow.Budget.MaxWallClockSeconds):
+		now.Sub(goalRow.CreatedAt).Seconds() > float64(goalRow.Budget.MaxWallClockSeconds):
 		newStatus = GoalBlocked
-	case goalRow.Budget.MaxTokens > 0 && goalRow.TokensUsed > goalRow.Budget.MaxTokens:
+	case goalRow.Budget.MaxTokens > 0 && goalRow.TokensUsed >= goalRow.Budget.MaxTokens:
 		newStatus = GoalBlocked
-	case goalRow.Budget.MaxCostUSD > 0 && goalRow.CostUSD > goalRow.Budget.MaxCostUSD:
+	case goalRow.Budget.MaxCostUSD > 0 && goalRow.CostUSD >= goalRow.Budget.MaxCostUSD:
 		newStatus = GoalBlocked
 	default:
 		newStatus = GoalActive

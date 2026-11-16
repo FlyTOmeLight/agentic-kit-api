@@ -119,15 +119,15 @@ type Event struct {
 
 func (Event) TableName() string { return "durable_event" }
 
-// Usage records one model call's token usage exactly once per (run, turn,
+// Usage records one model call's token and cost usage exactly once per (run, turn,
 // call). The primary key is the idempotency anchor: a checkpoint replay that
-// re-records the same call is a no-op. Zero tokens marks a call whose
-// provider did not return usage.
+// re-records the same call is a no-op. Zero tokens means known zero usage.
 type Usage struct {
 	RunID     string    `gorm:"type:text;primaryKey;not null"`
 	Turn      int64     `gorm:"type:bigint;primaryKey;not null"`
 	Call      string    `gorm:"type:text;primaryKey;not null"`
 	Tokens    int64     `gorm:"type:bigint;not null;default:0"`
+	CostUSD   float64   `gorm:"type:double precision;not null;default:0"`
 	CreatedAt time.Time `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false"`
 	Run       *Run      `gorm:"foreignKey:RunID;references:ID;constraint:durable_usage_run_id_fkey,OnUpdate:NO ACTION,OnDelete:NO ACTION"`
 }

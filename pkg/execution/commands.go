@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
 // SubmitKind selects how a session is resolved before prepare runs.
@@ -35,6 +36,9 @@ type SubmitCommand struct {
 	// GoalID optionally binds the run to a durable goal for budget tracking
 	// and convergence evaluation.
 	GoalID string
+
+	Memory       memory.Selection
+	MemoryFilter memory.RecallFilter
 }
 
 // SubmissionFacts are passed to prepare after session locks succeed.
@@ -45,6 +49,8 @@ type SubmissionFacts struct {
 	Kind           SubmitKind
 	Query          string
 	ExecutionSpec  ExecutionSpec
+	Memory         memory.Selection
+	MemoryFilter   memory.RecallFilter
 }
 
 // PreparedSubmission is the compiled snapshot ready to persist.

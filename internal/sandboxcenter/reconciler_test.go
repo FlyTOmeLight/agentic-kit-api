@@ -31,8 +31,10 @@ func TestPendingReconciliationScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Backdate the stale provisioning record past the grace window.
-	if err := store.db.Model(&Sandbox{}).Where("id = ?", staleSB.ID).
-		Update("created_at", time.Now().Add(-time.Hour)).Error; err != nil {
+	if err := store.db.Exec(
+		"UPDATE sandbox SET created_at = clock_timestamp() - interval '1 hour' WHERE id = ?",
+		staleSB.ID,
+	).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,7 +55,7 @@ func TestPendingReconciliationScopes(t *testing.T) {
 		expired.RunID,
 		"w",
 		expired.RunEpoch,
-		time.Now().Add(-time.Minute),
+		databaseNow(t, store).Add(-time.Minute),
 	)
 	if err != nil {
 		t.Fatal(err)

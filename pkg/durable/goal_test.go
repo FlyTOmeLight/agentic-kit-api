@@ -307,16 +307,24 @@ func TestCheckGoalProgressBudgetExceeded(t *testing.T) {
 	if claimed.ID != r.ID {
 		t.Fatalf("claimed run %s, want %s", claimed.ID, r.ID)
 	}
+	if err = s.RecordUsage(
+		ctx,
+		claimed.Lease(),
+		1,
+		"token-limit-model",
+		200,
+		json.RawMessage(`{}`),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.TransitionGoal(ctx, "owner", g.ID, GoalActive); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.CommitBoundary(ctx, claimed.Lease(), Boundary{
 		Kind:   BoundaryFail,
 		State:  json.RawMessage(`{}`),
 		Detail: "token limit",
 	}); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.db.Exec(
-		`UPDATE durable_run SET tokens_used = 200 WHERE id = ?`, r.ID,
-	).Error; err != nil {
 		t.Fatal(err)
 	}
 	updated, err := s.CheckGoalProgress(ctx, "owner", g.ID)
@@ -327,7 +335,7 @@ func TestCheckGoalProgressBudgetExceeded(t *testing.T) {
 		t.Fatalf("expected Blocked, got %s", updated.Status)
 	}
 	if updated.TokensUsed != 200 {
-		t.Fatalf("expected 200 tokens, got %d", updated.TokensUsed)
+		t.Fatalf("expected 200 tokens over limit, got %d", updated.TokensUsed)
 	}
 	if err = s.TransitionGoal(ctx, "owner", g.ID, GoalActive); err != nil {
 		t.Fatal(err)

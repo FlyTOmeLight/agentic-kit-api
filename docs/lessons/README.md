@@ -19,6 +19,7 @@
 | 保存屏障期间 Worker 退出，下一轮无人推进 | [保存与迭代不依赖原 Worker 进程](long-task-boundaries.md#goal-跨-run-恢复要验证真实文件与自动状态推进) |
 | 真实命令成功但验收回执未提交时 Worker 退出 | [真实沙箱验收接管](long-task-boundaries.md#真实沙箱验收接管要区分操作完成与回执提交) |
 | 压缩丢历史、工具签名或恢复事实，或会话消息读取被分页截断 | [压缩投影边界](long-task-boundaries.md#压缩只能改变模型投影) |
+| 缺失 usage 被当作 0、摘要绕过预算，或模型响应恢复后重复计费 | [模型用量与恢复](long-task-boundaries.md#模型用量必须可恢复且未知不等于零) |
 | 沙箱缺失退出码被当成成功，或验收释放顺序正确但期限与恢复仍缺失 | [验收边界](long-task-boundaries.md#沙箱命令必须有确定退出码) |
 | 沙箱命令终态仍写入、Pod 截止不能续长，或配置开启但隔离能力不可用 | [沙箱 Runtime 故障探针](sandbox-runtime-probes.md) |
 | 上游 Run 缩短沙箱实际租约，固定续租间隔导致任务中断 | [沙箱续租期限](sandbox-runtime-probes.md#沙箱续租需要使用中心确认的到期时间) |

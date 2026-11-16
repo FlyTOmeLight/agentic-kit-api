@@ -172,10 +172,15 @@ func TestSubtaskBudgetChargesGoal(t *testing.T) {
 	if claimed.ID != child.ID {
 		t.Fatalf("claimed run %s, want child %s", claimed.ID, child.ID)
 	}
-	if err = s.db.WithContext(ctx).
-		Model(&table.Run{}).
-		Where("id = ?", child.ID).
-		Updates(map[string]any{"tokens_used": 42, "cost_usd": 0.5}).Error; err != nil {
+	if err = s.RecordUsageWithCost(
+		ctx,
+		claimed.Lease(),
+		1,
+		"child-model",
+		42,
+		0.5,
+		json.RawMessage(`{}`),
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.CommitBoundary(ctx, claimed.Lease(), Boundary{

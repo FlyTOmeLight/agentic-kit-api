@@ -99,6 +99,15 @@ func createRunClaim(t *testing.T, store *Store, in AcquireInput) {
 	}
 }
 
+func databaseNow(t *testing.T, store *Store) time.Time {
+	t.Helper()
+	var now time.Time
+	if err := store.db.Raw("SELECT clock_timestamp()").Scan(&now).Error; err != nil {
+		t.Fatal(err)
+	}
+	return now
+}
+
 func TestAcquireReplay(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()

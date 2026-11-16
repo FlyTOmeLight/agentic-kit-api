@@ -52,8 +52,10 @@ func TestRequiredSaveBlocksReleaseAndExpiry(t *testing.T) {
 				t.Fatal(err)
 			}
 			if expired {
-				if err := store.db.Model(&Lease{}).Where("id = ?", lease.ID).
-					Update("hard_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+				if err := store.db.Exec(
+					"UPDATE sandbox_lease SET hard_expires_at = clock_timestamp() - interval '1 minute' WHERE id = ?",
+					lease.ID,
+				).Error; err != nil {
 					t.Fatal(err)
 				}
 			}

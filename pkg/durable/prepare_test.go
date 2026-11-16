@@ -11,13 +11,14 @@ import (
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/contextbuilder"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
 func TestFreezeContextDefaultAndModelWindowBudgets(t *testing.T) {
-	defaultSnap, err := freezeContext(execution.Spec{
+	defaultSnap, err := freezeContextWithoutRecall(execution.Spec{
 		SystemPrompt: "you are helpful",
 		Query:        "hello",
-	}, nil)
+	}, nil, memory.SelectionOff)
 	if err != nil {
 		t.Fatalf("default freezeContext: %v", err)
 	}
@@ -40,7 +41,7 @@ func TestFreezeContextDefaultAndModelWindowBudgets(t *testing.T) {
 	}
 
 	maxTokens := 1000
-	windowSnap, err := freezeContext(execution.Spec{
+	windowSnap, err := freezeContextWithoutRecall(execution.Spec{
 		SystemPrompt: "you are helpful",
 		Query:        "hello",
 		Model: agent.ModelSpec{
@@ -48,7 +49,7 @@ func TestFreezeContextDefaultAndModelWindowBudgets(t *testing.T) {
 			ContextWindow: 5000,
 			MaxTokens:     &maxTokens,
 		},
-	}, nil)
+	}, nil, memory.SelectionOff)
 	if err != nil {
 		t.Fatalf("window freezeContext: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestFreezeContextDefaultAndModelWindowBudgets(t *testing.T) {
 
 func TestFreezeContextRejectsPreflightBudgetExceeded(t *testing.T) {
 	maxTokens := 800
-	_, err := freezeContext(execution.Spec{
+	_, err := freezeContextWithoutRecall(execution.Spec{
 		SystemPrompt: strings.Repeat("system instruction ", 30),
 		Query:        strings.Repeat("user query ", 30),
 		Model: agent.ModelSpec{
@@ -80,7 +81,7 @@ func TestFreezeContextRejectsPreflightBudgetExceeded(t *testing.T) {
 			ContextWindow: 1200,
 			MaxTokens:     &maxTokens,
 		},
-	}, nil)
+	}, nil, memory.SelectionOff)
 	if !errors.Is(err, contextbuilder.ErrBudgetExceeded) {
 		t.Fatalf("freezeContext error = %v, want ErrBudgetExceeded", err)
 	}

@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
+
+	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
@@ -97,7 +98,7 @@ func TestEnvironmentBoundToClaimEpoch(t *testing.T) {
 
 	// Force the first claim to expire, then let another worker take over.
 	if err := s.db.Model(&table.Run{}).Where("id = ?", first.ID).
-		Update("lease_until", time.Now().Add(-time.Second)).Error; err != nil {
+		Update("lease_until", gorm.Expr("clock_timestamp()-interval '1 second'")).Error; err != nil {
 		t.Fatal(err)
 	}
 	second := claim(t, s, "worker-b")

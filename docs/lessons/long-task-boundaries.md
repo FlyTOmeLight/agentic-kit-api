@@ -16,9 +16,25 @@
 
 `durable_message` 是审计事实，Eino opaque checkpoint 是执行恢复状态；二者都不应为减少模型输入而裁剪。`CompactionContext` 在有效租约内读取当前 Run 的完整消息，不能把会话 Seq 当作模型输入下标，也不能把会话接口单页 200 条视作全部历史。`CompactRun` 检查完整工具批次切点，摘要、切点和事件同事务保存。
 
-Worker 首次摘要包含冻结 History，后续合并旧摘要和新增覆盖批次。保留批次通过 ToolCall ID 核对后复用 Eino 原消息，保留 reasoning 和工具签名。摘要失败继续使用旧投影；没有旧摘要时保留原输入。独立摘要请求不携带主调用的 tools/tool_choice。压缩不延长 MaxTurns，也不缩小 opaque checkpoint。
+Worker 首次摘要包含冻结 History，后续合并旧摘要和新增覆盖批次。保留批次通过 ToolCall ID 核对后复用 Eino 原消息，保留 reasoning 和工具签名。普通摘要失败继续使用旧投影；没有旧摘要时保留原输入。usage 未知、记账失败和预算错误直接传播，见下节。独立摘要请求不携带主调用的 tools/tool_choice。压缩不延长 MaxTurns，也不缩小 opaque checkpoint。
 
-证据：API `pkg/durable/compaction_test.go` 覆盖切点、幂等/冲突、事件回滚、200+ 消息与 Run 隔离；Worker `internal/engine/compaction_test.go` 覆盖新 Store/Engine 接管、失败重试、冻结 History、多轮合并及元数据保留，`internal/adapters/summarizer_test.go` 检查无工具请求与不完整摘要拒绝。2026-11-09 双仓 `make integration` 通过，包含全量 `-race` 与 `go vet`，使用本地 go.work 和测试 PostgreSQL/Redis。压缩接管测试模拟取消与失租；触发压缩后的进程强杀、真实模型摘要质量与用量仍待单独验证。
+证据：API `pkg/durable/compaction_test.go` 覆盖切点、幂等/冲突、事件回滚、200+ 消息与 Run 隔离；Worker `internal/engine/compaction_test.go` 覆盖新 Store/Engine 接管、失败重试、冻结 History、多轮合并及元数据保留，`internal/adapters/summarizer_test.go` 检查无工具请求与不完整摘要拒绝。压缩接管测试模拟取消与失租；触发压缩后的进程强杀与真实模型摘要质量不在该证据范围。
+
+## 模型用量必须可恢复且未知不等于零
+
+把缺失 usage 当作 0 会绕过预算并丢失计费事实。流式响应如果在 usage 确认前把消息交给工具，响应已经产生费用但平台尚未记账；PendingModel 如果只恢复消息不恢复用量，接管后可能重复请求或重复计费；摘要如果不走同一预算和记账链路，可以绕过 Goal 上限。
+
+Worker 对 `ResponseMeta`/`Usage` 缺失返回 `ErrModelUsageUnavailable`，停止主执行或摘要，不记 0、不执行工具。provider 明确返回的 0 是已知 0，正常写入 usage 行。OpenAI 响应修饰器保留原始 usage 缺失，避免 SDK 合成零值后误判为已知用量。
+
+主模型在调用前、上下文构建后和响应记账后各检查预算。`call="model"` 使用调用前捕获的 Turn；`call="summary"` 使用 `State.SummaryCalls`，递增计数与 usage/state 同事务持久化，写入失败还原计数并传播错误。摘要先检查预算，usage 未知、记账失败和预算错误都确定性传播；只有普通摘要失败才记录压缩失败并继续旧投影。摘要返回内容不完整但 usage 已知时，仍先记账再拒绝摘要。
+
+成功响应暂存为 `PendingModel`，与 Turn、usage 和 Run state 同事务提交；接管直接应用该响应，不再请求模型。记账失败恢复 Turn 和 PendingModel 并传播错误，响应已经返回也不继续工具。流式响应完整缓冲、合并为单条消息后统一校验和记账，最后只返回合并后的消息流，合并元数据也随该消息保留。
+
+API `RecordUsageWithCost` 先读取 Run 的 owner/goal 绑定，锁 Goal，再锁 Run。重复 `(run_id, turn, call)` 不重复计费；新用量与 Run/Goal 汇总、state 和 `UsageRecorded` 事件同事务提交。`Usage.CostUSD` 和 `RecordUsageWithCost` 已存在，但 Worker 没有供应方价格，当前走 `RecordUsage`，实际 cost 为 0。
+
+预算只在调用前检查、响应后记账，没有预占或在途额度。并发调用和单次超预算响应可以超过上限；响应已产生、记账事务尚未提交时进程退出，费用事实未知，重试可能再次产生费用。当前保证已提交用量的幂等恢复，不承诺严格硬上限。
+
+证据：API `pkg/durable/usage_test.go` 覆盖预算阈值、已知 0、幂等重放、旧租约、非 Active Goal 汇总、费用字段、Goal→Run 锁序与父子 Run 并发记账。Worker `internal/engine/usage_test.go` 覆盖缺失/已知 usage、记账前工具阻断和 PendingModel 接管，`internal/engine/compaction_test.go` 覆盖摘要预算、未知 usage 与记录失败，`internal/adapters/summarizer_test.go` 覆盖真实 HTTP usage 与“内容失败但 usage 已知仍记账”。本轮测试结果由主代理最终核实；Goal→Run 锁序的真库复现也待主代理确认。
 
 ## Steering 消费必须保存可恢复状态
 
@@ -104,7 +120,7 @@ API `testutil/sandboxe2e.StartOnSchema` 启动真实中心 HTTP 服务与 Reconc
 
 2026-11-13 补强后的单文件用例在本机 PostgreSQL、OrbStack 以 `-race` 通过，用例耗时 105.26 秒；该文件 `go vet` 与格式检查通过。耗时包含资源准备、故障注入、接管及保存清理，不是接管延迟指标。夹具直接建立 durable 事实，不覆盖 Agent 发布、提交入口或真实模型。检查点仍为单节点 hostPath；命令执行中、Saver 保存中及恢复 initContainer 运行中强杀仍待验证。
 
-当前 Worker 其他 engine 测试仍调用 API 重构中已移除的 `CreateAgent`、`PublishAgent`、`Submit`，包级测试编译失败。以下单文件入口已单独编译通过，可复跑本用例；不将该入口替代全仓回归。仍依赖本地 API checkout 与 go.work/replace。
+本轮全量测试结果由主代理最终核实。以下单文件入口用于单独复跑本用例，不替代全仓回归；仍依赖本地 API checkout 与 go.work/replace。
 
 ```sh
 cd /Users/light/Code/agentic-kit-worker

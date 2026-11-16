@@ -124,6 +124,17 @@ const (
 	SelectionRecall Selection = "Recall"
 )
 
+// RecallFilter narrows one explicit recall request. Terms must all match
+// the entry text; Tags must all appear in Conditions.TaskTags. MaxEntries
+// and MaxBytes bound the frozen material; zero falls back to defaults,
+// negative disables the corresponding bound.
+type RecallFilter struct {
+	Terms      []string `json:"terms,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	MaxEntries int      `json:"maxEntries,omitempty"`
+	MaxBytes   int      `json:"maxBytes,omitempty"`
+}
+
 // OperationType names the intent of a memory write.
 type OperationType string
 
