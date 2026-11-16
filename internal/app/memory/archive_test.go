@@ -129,6 +129,129 @@ func (f *fakeArchiver) PublishVersion(
 	}, nil
 }
 
+type cancelAfterArchiveResult struct {
+	fakeArchiver
+	step      string
+	cancel    context.CancelFunc
+	tombstone bool
+}
+
+func (f *cancelAfterArchiveResult) EnsureCollection(
+	ctx context.Context,
+	binding *memory.ArtifactBinding,
+	entryID, requestKey string,
+) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	artifactID, err := f.fakeArchiver.EnsureCollection(ctx, binding, entryID, requestKey)
+	if f.step == "collection" {
+		f.cancel()
+	}
+	return artifactID, err
+}
+
+func (f *cancelAfterArchiveResult) PublishVersion(
+	ctx context.Context,
+	binding *memory.ArtifactBinding,
+	entryID, requestKey string,
+	doc *memory.Document,
+) (*memory.VersionRef, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ref, err := f.fakeArchiver.PublishVersion(ctx, binding, entryID, requestKey, doc)
+	if f.step == "publish" {
+		f.cancel()
+	}
+	if err == nil && f.tombstone {
+		return nil, &memory.VersionUnavailableError{Ref: *ref}
+	}
+	return ref, err
+}
+
+func TestArchivePersistsRemoteResultAfterCancellation(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		step      string
+		tombstone bool
+	}{
+		{name: "collection", step: "collection"},
+		{name: "version", step: "publish"},
+		{name: "tombstone", step: "publish", tombstone: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			archive := &cancelAfterArchiveResult{
+				step: scenario.step, cancel: cancel, tombstone: scenario.tombstone,
+			}
+			svc, store := testServiceWithArchive(t, archive)
+			doc := factDocument(
+				memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"},
+				"",
+				"preference",
+				"tabs",
+			)
+			_, err := svc.Create(ctx, "owner", "actor", "canceled", doc)
+			if scenario.tombstone {
+				if !errors.Is(err, memory.ErrVersionUnavailable) {
+					t.Fatalf("Create error = %v, want tombstone", err)
+				}
+			} else if !errors.Is(err, context.Canceled) {
+				t.Fatalf("Create error = %v, want cancellation", err)
+			}
+			var receipt table.MemoryOperation
+			if err := store.DB().Where("request_key = ?", "canceled").Take(&receipt).Error; err != nil {
+				t.Fatal(err)
+			}
+			op := receipt.ToDomain()
+			if op.Binding == nil || op.Binding.ArtifactID != "art-"+op.EntryID {
+				t.Fatalf("remote collection identity not saved: %+v", op.Binding)
+			}
+			if (op.VersionRef != nil) != (scenario.step == "publish") {
+				t.Fatalf("saved version = %+v, step = %s", op.VersionRef, scenario.step)
+			}
+			wantStatus := memory.OperationPending
+			if scenario.tombstone {
+				wantStatus = memory.OperationRejected
+			}
+			if op.Status != wantStatus {
+				t.Fatalf("receipt status = %s, want %s", op.Status, wantStatus)
+			}
+			if receipt.ArchiveClaim != "" || receipt.ArchiveUntil != nil {
+				t.Fatalf(
+					"archive claim not released: %q, %v",
+					receipt.ArchiveClaim,
+					receipt.ArchiveUntil,
+				)
+			}
+			var entries int64
+			if err := store.DB().Model(&table.MemoryEntry{}).Count(&entries).Error; err != nil {
+				t.Fatal(err)
+			}
+			if entries != 0 {
+				t.Fatalf("canceled operation activated %d entries", entries)
+			}
+			svc.archive = &archive.fakeArchiver
+			entry, err := svc.Create(context.Background(), "owner", "actor", "canceled", doc)
+			if scenario.tombstone {
+				var unavailable *memory.VersionUnavailableError
+				if !errors.As(err, &unavailable) ||
+					!reflect.DeepEqual(unavailable.Ref, *op.VersionRef) {
+					t.Fatalf("replayed tombstone = %v, want fixed version %+v", err, op.VersionRef)
+				}
+			} else if err != nil || entry.ID != op.EntryID || entry.Revision != 1 {
+				t.Fatalf("replayed entry = %+v, error = %v", entry, err)
+			}
+			if archive.collections.Load() != 1 || archive.publishes.Load() != 1 {
+				t.Fatalf("remote calls = %d collections, %d publishes; want one each",
+					archive.collections.Load(), archive.publishes.Load())
+			}
+		})
+	}
+}
+
 func TestArchiveConcurrentReplayClaimsOnce(t *testing.T) {
 	archive := &fakeArchiver{publishStarted: make(chan struct{}, 2), publishRelease: make(chan struct{})}
 	svc, store := testServiceWithArchive(t, archive)

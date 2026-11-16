@@ -223,7 +223,6 @@ func TestArtifactRejectsInvalidInputWithoutRequests(t *testing.T) {
 		{name: "missing store", binding: &memory.ArtifactBinding{TenantID: "tenant", UserID: "user"}},
 		{name: "missing tenant", binding: &memory.ArtifactBinding{StoreID: "archive", UserID: "user"}},
 		{name: "missing user", binding: &memory.ArtifactBinding{StoreID: "archive", TenantID: "tenant"}},
-		{name: "different store", binding: &memory.ArtifactBinding{StoreID: "other-deployment", TenantID: "tenant", UserID: "user", ArtifactID: "original"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := store.EnsureCollection(
@@ -317,6 +316,40 @@ func TestArtifactRejectsInvalidInputWithoutRequests(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("invalid inputs sent %d requests", calls.Load())
+	}
+}
+
+func TestArtifactPersistedBindingFromDifferentStoreIsUnavailable(t *testing.T) {
+	var calls atomic.Int32
+	store := artifactTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		writer.WriteHeader(http.StatusInternalServerError)
+	})
+	binding := &memory.ArtifactBinding{
+		StoreID:    "previous-deployment",
+		TenantID:   "tenant",
+		UserID:     "user",
+		ArtifactID: "original",
+	}
+	if _, err := store.EnsureCollection(
+		context.Background(),
+		binding,
+		"entry",
+		"collection-key",
+	); !errors.Is(err, memory.ErrUnavailable) || errors.Is(err, memory.ErrInvalid) {
+		t.Fatalf("EnsureCollection error = %v, want only ErrUnavailable", err)
+	}
+	if _, err := store.PublishVersion(
+		context.Background(),
+		binding,
+		"entry",
+		"publish-key",
+		artifactTestDocument(),
+	); !errors.Is(err, memory.ErrUnavailable) || errors.Is(err, memory.ErrInvalid) {
+		t.Fatalf("PublishVersion error = %v, want only ErrUnavailable", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("store mismatch sent %d requests", calls.Load())
 	}
 }
 

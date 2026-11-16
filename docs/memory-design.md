@@ -180,7 +180,7 @@ MemoryOperation 既是跨服务恢复记录，也是幂等成功回执和生效�
 3. **在事务外发布版本。** 使用稳定 operationID 作为不超过 64 字符的 requestKey；固定ArtifactBinding中的user_id、tenant/project、规范 payload、`protected=true`、空 files/aliases/annotations。重试原参数，不能使用新键掩盖超时。artifact 返回 ready 的固定身份与 payload 后，核对集合、Entry、scope、schema 和摘要，并将结果交给生效事务。
 4. **生效短事务。** 重新核验写权限，锁操作回执和 Entry，先检查回执终态并重放既有结果；仍为Pending时检查原expectedRevision、范围，以及Update必须启用、Restore必须停用的状态条件。第一次创建在这里插入 Entry 并受主题唯一约束保护；纠正则原子切换 activeVersionRef、完整投影和索引、递增 revision；Restore同时清空retiredAt。操作设为Applied并保存原appliedRevision、appliedAt、操作者及固定版本引用。只有这一步完成才对调用方报告记忆已生效。
 
-不跨 HTTP 保持数据库锁，也不尝试跨库事务。当前 Archive 先以数据库时钟领取 2 分钟持久 claim，再执行事务外 HTTP；集合创建与发布共用 1 分钟总预算。绑定与版本引用写回必须匹配 claim token、Pending 状态且 claim 未过期，旧执行者不能覆盖新的领取者。Archive 完成或出错均按 token 释放 claim；进程崩溃时由过期机制释放执行权，调用方随后用原请求键继续。集合创建键由 entryID 稳定派生，版本发布键由原操作 ID 派生；同一Entry的重试与不同actor操作因此固定同一集合和调用身份，远端重复调用仍保持幂等。本地生效另由短事务和 revision 条件保证只应用一次。后台 Pending 恢复循环和运维 Pending 列表接口尚未实现。
+不跨 HTTP 保持数据库锁，也不尝试跨库事务。当前 Archive 先以数据库时钟领取 2 分钟持久 claim，再执行事务外 HTTP；集合创建与发布共用 1 分钟总预算。已返回的集合身份、版本引用或墓碑各用独立的 5 秒预算写回，脱离请求取消和远端截止时间；后续远端调用与本地生效仍遵守请求取消。绑定与版本引用写回必须匹配 claim token、Pending 状态且 claim 未过期，旧执行者不能覆盖新的领取者。Archive 完成或出错均按 token 释放 claim；进程崩溃时由过期机制释放执行权，调用方随后用原请求键继续。集合创建键由 entryID 稳定派生，版本发布键由原操作 ID 派生；同一Entry的重试与不同actor操作因此固定同一集合和调用身份，远端重复调用仍保持幂等。固定绑定的 StoreID 与当前适配器不匹配时返回 503 MemoryUnavailable，恢复原存储映射后以原请求键重试。本地生效另由短事务和 revision 条件保证只应用一次。后台 Pending 恢复循环和运维 Pending 列表接口尚未实现。
 
 ### 6.2 并发与不确定结果
 

@@ -13,10 +13,10 @@ import (
 	"reflect"
 	"time"
 
-	artifactv1 "github.com/FlyTOmeLight/artifact-go/sdk/go/artifactv1"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
+	artifactv1 "github.com/FlyTOmeLight/artifact-go/sdk/go/artifactv1"
 )
 
 const (
@@ -249,7 +249,7 @@ func validateBinding(binding *memory.ArtifactBinding, storeID string) error {
 		return fmt.Errorf("%w: artifact binding must include store, tenant and user", memory.ErrInvalid)
 	}
 	if binding.StoreID != storeID {
-		return fmt.Errorf("%w: artifact binding belongs to a different store", memory.ErrInvalid)
+		return fmt.Errorf("%w: artifact binding belongs to a different store", memory.ErrUnavailable)
 	}
 	return nil
 }

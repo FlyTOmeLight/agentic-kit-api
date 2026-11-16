@@ -372,51 +372,48 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 			Updates(map[string]any{"archive_claim": "", "archive_until": nil})
 		err = errors.Join(err, release.Error)
 	}()
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	archiveCtx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	doc, err := operationDocument(op)
 	if err != nil {
 		return false, err
 	}
 	if op.Binding.ArtifactID == "" {
-		artifactID, err := s.archive.EnsureCollection(ctx, op.Binding, op.EntryID, collectionKey(op.EntryID))
+		artifactID, err := s.archive.EnsureCollection(
+			archiveCtx,
+			op.Binding,
+			op.EntryID,
+			collectionKey(op.EntryID),
+		)
 		if err != nil {
 			return false, err
 		}
-		res := s.db.WithContext(ctx).Model(&table.MemoryOperation{}).
-			Where("id = ? AND status = ? AND archive_claim = ? AND archive_until > clock_timestamp()",
-				op.ID, string(memory.OperationPending), claim).
-			Update("binding", mustMarshal(&memory.ArtifactBinding{
+		err = s.persistArchiveResult(ctx, op.ID, claim, map[string]any{
+			"binding": mustMarshal(&memory.ArtifactBinding{
 				StoreID:    op.Binding.StoreID,
 				TenantID:   op.Binding.TenantID,
 				ProjectID:  op.Binding.ProjectID,
 				UserID:     op.Binding.UserID,
 				ArtifactID: artifactID,
-			}))
-		if res.Error != nil {
-			return false, res.Error
-		}
-		if res.RowsAffected == 0 {
-			return false, memory.ErrPending
+			}),
+		})
+		if err != nil {
+			return false, err
 		}
 		op.Binding.ArtifactID = artifactID
 	}
 	if op.VersionRef != nil {
 		return true, nil
 	}
-	ref, err := s.archive.PublishVersion(ctx, op.Binding, op.EntryID, op.ID, doc)
+	ref, err := s.archive.PublishVersion(archiveCtx, op.Binding, op.EntryID, op.ID, doc)
 	if err != nil {
 		var unavailable *memory.VersionUnavailableError
 		if errors.As(err, &unavailable) {
-			result := s.db.WithContext(ctx).Model(&table.MemoryOperation{}).
-				Where("id = ? AND status = ? AND archive_claim = ? AND archive_until > clock_timestamp()",
-					op.ID, string(memory.OperationPending), claim).
-				Updates(map[string]any{
-					"version_ref":  mustMarshal(&unavailable.Ref),
-					"status":       string(memory.OperationRejected),
-					"error_reason": memoryVersionUnavailableReason,
-				})
-			if saveErr := requireUpdated(result); saveErr != nil {
+			if saveErr := s.persistArchiveResult(ctx, op.ID, claim, map[string]any{
+				"version_ref":  mustMarshal(&unavailable.Ref),
+				"status":       string(memory.OperationRejected),
+				"error_reason": memoryVersionUnavailableReason,
+			}); saveErr != nil {
 				return false, saveErr
 			}
 			op.VersionRef = &unavailable.Ref
@@ -425,18 +422,23 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 		}
 		return false, err
 	}
-	res := s.db.WithContext(ctx).Model(&table.MemoryOperation{}).
-		Where("id = ? AND status = ? AND archive_claim = ? AND archive_until > clock_timestamp()",
-			op.ID, string(memory.OperationPending), claim).
-		Update("version_ref", mustMarshal(ref))
-	if res.Error != nil {
-		return false, res.Error
-	}
-	if res.RowsAffected == 0 {
-		return false, memory.ErrPending
+	if err := s.persistArchiveResult(ctx, op.ID, claim, map[string]any{
+		"version_ref": mustMarshal(ref),
+	}); err != nil {
+		return false, err
 	}
 	op.VersionRef = ref
 	return true, nil
+}
+
+func (s *Service) persistArchiveResult(ctx context.Context, operationID, claim string, values map[string]any) error {
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	result := s.db.WithContext(saveCtx).Model(&table.MemoryOperation{}).
+		Where("id = ? AND status = ? AND archive_claim = ? AND archive_until > clock_timestamp()",
+			operationID, string(memory.OperationPending), claim).
+		Updates(values)
+	return requireUpdated(result)
 }
 
 // activate applies the archived version to the entry projection in one
