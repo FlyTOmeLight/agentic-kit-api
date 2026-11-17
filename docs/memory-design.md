@@ -311,7 +311,7 @@ Memory.Service 在消费处定义只含实际 artifact 行为的小接口，由 
 | 预算与材料选择 | 中文/代码标签固定用例、稳定顺序、完整工具链、动态工具输出超限及明确失败 |
 | 历史归属与保留 | 仅Applied的Create/Update/Restore进入列表，Retire/Pending/Rejected排除；猜测未采用versionID返回404；远端离线仍可分页；源正文缺失保留元数据并报不可用 |
 
-部署验收仍需用隔离数据库和真实 artifact 服务覆盖跨服务故障；API/worker 按变更范围执行 integration、race、vet、build、Swagger 与跨进程接管验证。正式依赖验证使用 GOWORK=off、无本地 replace。真实 artifact 部署、共享范围授权和版本历史验收尚未完成；自动提炼与版本回收仍未实现。后台 Pending 恢复已实现并通过编译与恢复循环单元测试；数据库恢复用例和真实 artifact 故障联调仍待完成。
+部署验收仍需用隔离数据库和真实 artifact 服务覆盖跨服务故障；API/worker 按变更范围执行 integration、race、vet、build、Swagger 与跨进程接管验证。正式依赖验证使用 GOWORK=off、无本地 replace。真实 artifact 部署、共享范围授权和版本历史验收尚未完成；自动提炼与版本回收仍未实现。后台 Pending 恢复已实现，恢复循环与数据库恢复用例（含 Create/Update/Restore、claim 跳过、损坏与无 binding 回执推进）均已通过；真实 artifact 故障联调仍待完成。
 
 ## 11. 后续演进边界
 
