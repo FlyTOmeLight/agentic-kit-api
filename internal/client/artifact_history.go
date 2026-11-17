@@ -32,7 +32,7 @@ func (s *ArtifactStore) ReadVersion(ctx context.Context, ref memory.VersionRef) 
 		return nil, fmt.Errorf("%w: fixed version reference is incomplete", memory.ErrInvalid)
 	}
 	resp, err := s.sdk.GetVersion(
-		artifactv1.WithRequestIdentity(ctx, identityFor(binding, ref.VersionID)),
+		artifactv1.WithRequestIdentity(ctx, s.identityFor(binding, ref.VersionID)),
 		&artifactv1.GetVersionRequest{
 			VersionPath: artifactv1.VersionPath{
 				ArtifactPath: artifactv1.ArtifactPath{ArtifactID: ref.ArtifactID},

@@ -39,6 +39,8 @@ type ArtifactConfig struct {
 	// verified business tenant.
 	TenantID string
 
+	BearerToken string
+
 	Timeout time.Duration
 
 	// MaxPayloadBytes bounds the immutable document payload; it must satisfy
@@ -136,7 +138,7 @@ func (s *ArtifactStore) EnsureCollection(
 		return "", fmt.Errorf("%w: entry ID and collection request key are required", memory.ErrInvalid)
 	}
 	resp, err := s.sdk.CreateArtifact(
-		artifactv1.WithRequestIdentity(ctx, identityFor(binding, entryID)),
+		artifactv1.WithRequestIdentity(ctx, s.identityFor(binding, entryID)),
 		&artifactv1.CreateArtifactRequest{
 			RequestKey:    requestKey,
 			Type:          memoryArtifactType,
@@ -188,7 +190,7 @@ func (s *ArtifactStore) PublishVersion(
 		)
 	}
 	resp, err := s.sdk.CreateVersion(
-		artifactv1.WithRequestIdentity(ctx, identityFor(binding, entryID)),
+		artifactv1.WithRequestIdentity(ctx, s.identityFor(binding, entryID)),
 		&artifactv1.CreateVersionRequest{
 			ArtifactPath: artifactv1.ArtifactPath{ArtifactID: binding.ArtifactID},
 			RequestKey:   requestKey,
@@ -254,13 +256,14 @@ func validateBinding(binding *memory.ArtifactBinding, storeID string) error {
 	return nil
 }
 
-func identityFor(binding *memory.ArtifactBinding, requestID string) artifactv1.RequestIdentity {
+func (s *ArtifactStore) identityFor(binding *memory.ArtifactBinding, requestID string) artifactv1.RequestIdentity {
 	if binding == nil {
-		return artifactv1.RequestIdentity{RequestID: requestID}
+		return artifactv1.RequestIdentity{RequestID: requestID, BearerToken: s.cfg.BearerToken}
 	}
 	identity := artifactv1.RequestIdentity{
-		TenantID:  binding.TenantID,
-		RequestID: requestID,
+		TenantID:    binding.TenantID,
+		RequestID:   requestID,
+		BearerToken: s.cfg.BearerToken,
 	}
 	if binding.ProjectID != "" {
 		project := binding.ProjectID

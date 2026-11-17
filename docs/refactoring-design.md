@@ -2,7 +2,7 @@
 
 状态：部分实施，2026-11-17 按当前工作树更新。本地人工 Memory、召回冻结和上下文构建已有实现，本次新增可选 artifact 归档与后台 Pending 恢复；完整访问模型、目录重组及下文其余目标尚未全部落地。范围和决策见第14节，第10节仍为目标文件地图；当前行为以代码、[HTTP契约](api.md)、[恢复设计](design.md)和[布局约束](layout.md)为准。
 
-当前进度：`pkg/contextbuilder` 已实现完整消息组、预算预检、工具结果预览、历史裁剪和 `context-v3` 当前轮工具结果投影；模型窗口与输出预留随 Run 冻结，配套 worker 每轮调用模型前执行 `Build`。本地 OwnerPrivate 人工创建、读取、纠正、停用、显式 Restore、版本历史查询和 `RecallTx` 已有，显式 Recall 在接受事务内冻结完整材料。artifact 归档使用 artifact-go `v0.5.0`、server-go `v0.13.0`，通过持久回执连接远端发布与本地 CAS 生效；配置归档时 API 后台会继续未完成的 Create/Update/Restore。自动提炼未实现，真实 artifact 部署尚未联合验证，详见 [Memory设计](memory-design.md)。
+当前进度：`pkg/contextbuilder` 已实现完整消息组、预算预检、工具结果预览、历史裁剪和 `context-v3` 当前轮工具结果投影；模型窗口与输出预留随 Run 冻结，配套 worker 每轮调用模型前执行 `Build`。本地 OwnerPrivate 人工创建、读取、纠正、停用、显式 Restore、版本历史查询和 `RecallTx` 已有，显式 Recall 在接受事务内冻结完整材料。artifact 归档使用 artifact-go `v0.5.0`、server-go `v0.13.0`，通过持久回执连接远端发布与本地 CAS 生效；配置归档时 API 后台会继续未完成的 Create/Update/Restore。本地真实 artifact HTTP 服务与 PostgreSQL 已完成认证、隔离和代理故障恢复联调；外部部署验收和自动提炼尚未完成，详见 [Memory设计](memory-design.md)。
 
 原始设计基线：2026-10-14 的工作树，Go 1.27.1、server-go v0.9.0。下文保留当时的目标结构与问题分析；当前依赖及实现状态以上述进度和代码为准，不把本地框架 main 的接口当作发布版能力。
 

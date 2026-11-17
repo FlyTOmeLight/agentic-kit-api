@@ -6,6 +6,8 @@
 
 `make integration` 先检查 `TEST_DATABASE_URL` 和 `TEST_REDIS_URL`，再运行全仓库 race 测试与 vet。验证使用隔离数据库或 schema，避免修改已有业务数据。依赖升级还需关闭 workspace 验证正式模块，具体启动和命令以 [README](../../README.md) 与 [Makefile](../../Makefile) 为准。
 
+Memory 真实 artifact 联调另需 `ARTIFACT_TEST_PG_DSN`；未设置时，artifact fixture 会跳过用例，即使上述两个变量齐全也不能证明归档联调通过。使用同一测试 PostgreSQL 地址即可，artifact 与 Memory 各自创建并清理随机 schema。通过 `go test -v -run '^TestArtifactIntegration'` 确认用例实际执行。证据：[真实 artifact 联调测试](../../internal/app/memory/artifact_integration_test.go)。其中 Pending 恢复通过代理丢弃已经提交的发布响应，再注入 503 后恢复连接；这验证同键重放与本地激活，不代表已经做过独立进程强杀或外部网络故障演练。
+
 ## 生命周期与 SSE 使用真实 HTTP 连接验证
 
 handler 测试可以覆盖绑定和响应，但无法完整验证 app.Run 装配、就绪状态、后台任务退出和 SSE 写入期限。SSE 依赖真实连接提供逐次写入期限，测试中的 ResponseRecorder 不能代替这项能力。

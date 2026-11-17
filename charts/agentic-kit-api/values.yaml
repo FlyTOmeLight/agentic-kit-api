@@ -14,5 +14,6 @@ artifact:
   endpoint: ""
   storeID: artifact
   tenantID: ""
+  # Supply ARTIFACT_BEARER_TOKEN in existingSecret; do not put it in values.
   timeoutSeconds: 30
   maxPayloadBytes: 262144

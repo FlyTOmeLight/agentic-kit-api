@@ -1,0 +1,313 @@
+package memory
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"reflect"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	artifactservice "github.com/FlyTOmeLight/artifact-go/service"
+	"github.com/FlyTOmeLight/artifact-go/tests/fixture"
+	"github.com/FlyTOmeLight/server-go/db"
+	serrors "github.com/FlyTOmeLight/server-go/errors"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
+)
+
+func TestArtifactIntegrationScopeAndReplay(t *testing.T) {
+	binding := memory.ArtifactBinding{
+		StoreID: "artifact-test", TenantID: "tenant", ProjectID: "project", UserID: "owner",
+	}
+	grants := map[string]memory.ArtifactBinding{"authorized": binding}
+	for _, dimension := range []string{"tenant", "project", "user"} {
+		other := binding
+		switch dimension {
+		case "tenant":
+			other.TenantID = "other-tenant"
+		case "project":
+			other.ProjectID = "other-project"
+		case "user":
+			other.UserID = "other-owner"
+		}
+		grants[dimension] = other
+	}
+	server := realArtifactServer(t, grants)
+	archive := realArtifactStore(t, server.URL, "authorized")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	collectionID, err := archive.EnsureCollection(ctx, &binding, "entry", "collection-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding.ArtifactID = collectionID
+	replayedID, err := archive.EnsureCollection(ctx, &binding, "entry", "collection-key")
+	if err != nil || replayedID != collectionID {
+		t.Fatalf("collection replay = %q, %v", replayedID, err)
+	}
+	doc := factDocument(memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}, "editor", "first", "tabs")
+	doc.EntryID = "entry"
+	doc.SchemaVersion = 1
+	first, err := archive.PublishVersion(ctx, &binding, "entry", "publish-key", &doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := archive.PublishVersion(ctx, &binding, "entry", "publish-key", &doc)
+	if err != nil || !reflect.DeepEqual(replayed, first) {
+		t.Fatalf("version replay = %+v, %v; want %+v", replayed, err, first)
+	}
+	read, err := archive.ReadVersion(ctx, *first)
+	if err != nil || !reflect.DeepEqual(read, &doc) {
+		t.Fatalf("fixed version = %+v, %v; want %+v", read, err, doc)
+	}
+	doc.Summary = "different parameters"
+	if _, err := archive.PublishVersion(
+		ctx,
+		&binding,
+		"entry",
+		"publish-key",
+		&doc,
+	); !errors.Is(
+		err,
+		memory.ErrConflict,
+	) {
+		t.Fatalf("same key with changed document = %v", err)
+	}
+	for _, dimension := range []string{"tenant", "project", "user"} {
+		t.Run(dimension, func(t *testing.T) {
+			grant := grants[dimension]
+			foreign := *first
+			foreign.TenantID, foreign.ProjectID, foreign.UserID = grant.TenantID, grant.ProjectID, grant.UserID
+			if got, err := archive.ReadVersion(
+				ctx,
+				foreign,
+			); got != nil ||
+				!errors.Is(err, memory.ErrUnavailable) ||
+				errors.Is(err, memory.ErrVersionUnavailable) {
+				t.Fatalf("unauthorized scope = %+v, %v", got, err)
+			}
+			otherArchive := realArtifactStore(t, server.URL, dimension)
+			if got, err := otherArchive.ReadVersion(
+				ctx,
+				foreign,
+			); got != nil ||
+				!errors.Is(err, memory.ErrVersionUnavailable) {
+				t.Fatalf("authorized foreign scope exposed version = %+v, %v", got, err)
+			}
+		})
+	}
+	for _, token := range []string{"", "invalid"} {
+		unauthorized := realArtifactStore(t, server.URL, token)
+		if got, err := unauthorized.ReadVersion(
+			ctx,
+			*first,
+		); got != nil ||
+			!errors.Is(err, memory.ErrUnavailable) ||
+			errors.Is(err, memory.ErrVersionUnavailable) {
+			t.Fatalf("unauthenticated read = %+v, %v", got, err)
+		}
+	}
+}
+
+func TestArtifactIntegrationPendingRecoveryAndHistory(t *testing.T) {
+	binding := memory.ArtifactBinding{TenantID: "tenant", UserID: "owner"}
+	server := realArtifactServer(t, map[string]memory.ArtifactBinding{"authorized": binding})
+	target, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var dropPublish, offline atomic.Bool
+	type publishedVersion struct {
+		ID         string `json:"id"`
+		Sequence   int64  `json:"sequence"`
+		VersionURI string `json:"versionUri"`
+	}
+	lost := make(chan publishedVersion, 1)
+	proxy.ModifyResponse = func(response *http.Response) error {
+		if response.Request.Method != http.MethodPost ||
+			!strings.HasSuffix(response.Request.URL.Path, "/versions") ||
+			response.StatusCode >= 300 || !dropPublish.CompareAndSwap(true, false) {
+			return nil
+		}
+		payload, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil {
+			return err
+		}
+		var version publishedVersion
+		if err := json.Unmarshal(payload, &version); err != nil {
+			return err
+		}
+		lost <- version
+		return errors.New("injected loss of committed publish response")
+	}
+	proxy.ErrorHandler = func(writer http.ResponseWriter, _ *http.Request, _ error) {
+		writer.WriteHeader(http.StatusServiceUnavailable)
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if offline.Load() {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		proxy.ServeHTTP(writer, request)
+	}))
+	t.Cleanup(gateway.Close)
+	archive := realArtifactStore(t, gateway.URL, "authorized")
+	svc, store := testServiceWithArchive(t, archive)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	doc := factDocument(memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}, "editor", "first", "tabs")
+	entry, err := svc.Create(ctx, "owner", "editor", "create", doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.ActiveVersionRef == nil || entry.ActiveVersionRef.Sequence != 1 {
+		t.Fatalf("first version = %+v", entry.ActiveVersionRef)
+	}
+	first := *entry.ActiveVersionRef
+	doc.Summary = "second"
+	dropPublish.Store(true)
+	if _, err := svc.Update(
+		ctx,
+		"owner",
+		"editor",
+		"update",
+		entry.ID,
+		entry.Revision,
+		doc,
+	); !errors.Is(
+		err,
+		memory.ErrUnavailable,
+	) {
+		t.Fatalf("lost response = %v", err)
+	}
+	var committed publishedVersion
+	select {
+	case committed = <-lost:
+	case <-ctx.Done():
+		t.Fatal("no committed publish response captured")
+	}
+	if committed.ID == "" || committed.Sequence != 2 {
+		t.Fatalf("committed version = %+v", committed)
+	}
+	var pending table.MemoryOperation
+	if err := store.DB().
+		Where("owner_id = ? AND request_key = ?", "owner", "update").
+		Take(&pending).
+		Error; err != nil {
+		t.Fatal(err)
+	}
+	if pending.Status != string(memory.OperationPending) || pending.ToDomain().VersionRef != nil {
+		t.Fatalf("unknown publication must stay pending without a confirmed reference: %+v", pending.ToDomain())
+	}
+	offline.Store(true)
+	page, err := svc.ListVersions(ctx, "owner", entry.ID, 0, 10)
+	if err != nil || len(page.Items) != 1 || page.Items[0].VersionRef != first || !page.Items[0].Active {
+		t.Fatalf("history while pending and offline = %+v, %v", page, err)
+	}
+	resumed, err := svc.ResumePending(ctx, ResumeBatch)
+	if resumed != 0 || !errors.Is(err, memory.ErrUnavailable) {
+		t.Fatalf("offline recovery = %d, %v", resumed, err)
+	}
+	var offlineOperation table.MemoryOperation
+	if err := store.DB().WithContext(ctx).
+		Where("id = ?", pending.ID).Take(&offlineOperation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if offlineOperation.Status != string(memory.OperationPending) {
+		t.Fatalf("offline operation = %+v", offlineOperation.ToDomain())
+	}
+	offline.Store(false)
+	resumed, err = NewService(store.DB(), archive).ResumePending(ctx, ResumeBatch)
+	if err != nil || resumed != 1 {
+		t.Fatalf("recovery = %d, %v", resumed, err)
+	}
+	entry, err = svc.Get(ctx, "owner", entry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Revision != 2 || entry.Summary != "second" || entry.ActiveVersionRef == nil ||
+		entry.ActiveVersionRef.VersionID != committed.ID || entry.ActiveVersionRef.Sequence != committed.Sequence ||
+		entry.ActiveVersionRef.VersionURI != committed.VersionURI {
+		t.Fatalf("recovered entry = %+v; committed = %+v", entry, committed)
+	}
+	page, err = svc.ListVersions(ctx, "owner", entry.ID, 0, 10)
+	if err != nil || len(page.Items) != 2 || !page.Items[0].Active || page.Items[1].Active {
+		t.Fatalf("recovered history = %+v, %v", page, err)
+	}
+	version, err := svc.GetVersion(ctx, "owner", entry.ID, first.VersionID)
+	if err != nil || version.Document.Summary != "first" || version.Active {
+		t.Fatalf("original fixed version = %+v, %v", version, err)
+	}
+	version, err = svc.GetVersion(ctx, "owner", entry.ID, committed.ID)
+	if err != nil || version.Document.Summary != "second" || !version.Active {
+		t.Fatalf("recovered version = %+v, %v", version, err)
+	}
+	if _, err := svc.GetVersion(ctx, "other-owner", entry.ID, committed.ID); !errors.Is(err, memory.ErrNotFound) {
+		t.Fatalf("foreign owner read = %v", err)
+	}
+	if resumed, err := svc.ResumePending(ctx, ResumeBatch); err != nil || resumed != 0 {
+		t.Fatalf("repeated recovery = %d, %v", resumed, err)
+	}
+}
+
+func realArtifactServer(t *testing.T, grants map[string]memory.ArtifactBinding) *httptest.Server {
+	t.Helper()
+	database := fixture.Open(t, db.DriverPostgreSQL)
+	return fixture.HTTP(t, database, func(request *http.Request) (artifactservice.RequestIdentity, error) {
+		token, present := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
+		grant, authorized := grants[token]
+		if !present || !authorized {
+			return artifactservice.RequestIdentity{}, serrors.NewError(
+				http.StatusUnauthorized,
+				"Unauthorized",
+				"test credential required",
+			)
+		}
+		if request.Header.Get("x-forge-tenant-id") != grant.TenantID ||
+			request.Header.Get("x-forge-project-id") != grant.ProjectID ||
+			request.Header.Get("X-Resource-User-ID") != grant.UserID {
+			return artifactservice.RequestIdentity{}, serrors.NewError(
+				http.StatusForbidden,
+				"Forbidden",
+				"scope not granted",
+			)
+		}
+		identity := artifactservice.RequestIdentity{
+			UserID: "memory-service", TenantID: grant.TenantID,
+			ResourceUserID: &grant.UserID, OwnershipState: artifactservice.OwnershipActive,
+		}
+		if grant.ProjectID != "" {
+			identity.ProjectID = &grant.ProjectID
+		}
+		return identity, nil
+	})
+}
+
+func realArtifactStore(t *testing.T, endpoint, token string) *client.ArtifactStore {
+	t.Helper()
+	archive, err := client.NewArtifactStore(client.ArtifactConfig{
+		Endpoint: endpoint, BearerToken: token, StoreID: "artifact-test", TenantID: "tenant",
+		Timeout: 3 * time.Second, MaxPayloadBytes: 256 * 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := archive.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return archive
+}

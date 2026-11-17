@@ -252,3 +252,24 @@ worker 在隔离工作树通过本地 replace 指向 API 改动，`GOWORK=off ma
 2026-11-17：新增 OwnerPrivate 版本列表与详情，列表基于本地已生效内容操作回执，详情先检查条目归属和生效回执，再读取固定归档版本。纯本地模式的历史列表为空；Retire 不产生历史版本，停用时不标记活跃项。
 
 验证：设置本地 PostgreSQL 和 Redis、使用 `GOWORK=off make integration`，全仓 race 测试和 `go vet` 通过；`make doc` 生成 OpenAPI。新增测试覆盖分页、跨 owner 拒绝、未采用版本、Pending/Rejected 过滤、停用和恢复、正文缺失、本地模式、归档服务模拟与 SDK 请求。归档适配使用 HTTP fake，尚未与真实 artifact 服务联合验证。
+
+## Memory 真实 artifact 联合验证
+
+2026-11-17：在 `test/memory-artifact-integration` 分支及 `.worktrees/context` 隔离工作树完成本地联合验证，未修改 API 根工作树或 artifact-go 根工作树。本节更新前述真实服务联调尚未执行的状态；外部部署验收仍未完成。
+
+测试直接使用正式依赖 artifact-go `v0.5.0` 的 `service` 与 `tests/fixture`，由 server-go HTTP host 启动真实 artifact HTTP 服务。artifact 与 Memory 分别使用本机 PostgreSQL 的随机 schema，并在测试后清理；未使用本地 replace。身份解析器使用测试授权表验证 Bearer 服务凭据，再核验 tenant、project、resource-user 三元作用域。
+
+- 认证与配置：新增 `Artifact.BearerToken` 和 `ARTIFACT_BEARER_TOKEN`，启用 Endpoint 时拒绝缺失或空白凭据。集合创建、版本发布、固定版本读取均携带凭据；Helm 通过 `existingSecret` 注入。服务凭据不替代作用域授权。
+- 幂等与隔离：`TestArtifactIntegrationScopeAndReplay` 覆盖集合及版本原键重放、同键异参冲突、固定版本读取、跨 tenant/project/user 隔离，以及空或无效 token 拒绝。
+- 发布结果未知与恢复：`TestArtifactIntegrationPendingRecoveryAndHistory` 通过反向代理丢弃远端已经提交的发布响应，确认本地回执保持 Pending；随后注入 503，确认恢复失败期间不激活新版本、历史只展示已生效版本。恢复连接后以原键继续，核对 VersionID、Sequence、VersionURI 与远端已提交版本一致，并检查历史、详情、跨 owner 拒绝及重复恢复无新增操作。
+
+验证结果（全部 `GOWORK=off`）：
+
+- 设置 `TEST_DATABASE_URL`、`TEST_REDIS_URL`、`ARTIFACT_TEST_PG_DSN` 后，`make integration` 全仓 race 测试与 `go vet` 通过。
+- 格式化后的定向复验 `go test -v -count=1 -run '^TestArtifactIntegration' ./internal/app/memory` 通过，2 个顶层测试及 3 个作用域子测试，共 5 个用例，无跳过。
+- `CGO_ENABLED=0 make build`、`make doc`、`gorgeous ./...` 通过；OpenAPI 生成文件无变化。
+- 1 个子代理完成配置与认证传递的只读审查，发现并修正 README 中入站 token 与出站服务凭据的文案歧义。
+
+测试 fixture 引入 13 个间接模块依赖，其中 AWS SDK/S3/STS 链来自 artifact 服务的 storage 装配，`creasty/defaults` 来自 server-go binder。新增 artifact service/fixture 导入仅在测试文件，正式构建已通过；artifact-go 与 server-go 仍分别固定 `v0.5.0`、`v0.13.0`。
+
+未验证：外部实际部署、真实凭据签发和身份解析器、独立进程强杀、真实网络超时与恢复节奏、线上性能容量。本次代理故障注入证明同键恢复与本地激活行为，不等同于上述外部故障演练。自动提炼与语义检索不在本次范围。

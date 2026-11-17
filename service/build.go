@@ -75,6 +75,7 @@ func buildArchiver(cfg *Config) (*client.ArtifactStore, error) {
 		Endpoint:        cfg.Artifact.Endpoint,
 		StoreID:         cfg.Artifact.StoreID,
 		TenantID:        cfg.Artifact.TenantID,
+		BearerToken:     cfg.Artifact.BearerToken,
 		Timeout:         time.Duration(cfg.Artifact.TimeoutSeconds) * time.Second,
 		MaxPayloadBytes: cfg.Artifact.MaxPayloadBytes,
 	})

@@ -66,12 +66,15 @@ GOWORK=off go run ./cmd/server -config conf/server/config.toml
 | `Endpoint` | `ARTIFACT_ENDPOINT` | `artifact.endpoint` | 空 |
 | `StoreID` | `ARTIFACT_STORE_ID` | `artifact.storeID` | `artifact` |
 | `TenantID` | `ARTIFACT_TENANT_ID` | `artifact.tenantID` | 空，无公共租户兜底 |
+| `BearerToken` | `ARTIFACT_BEARER_TOKEN` | `existingSecret` 中的 `ARTIFACT_BEARER_TOKEN` | 空 |
 | `TimeoutSeconds` | `ARTIFACT_TIMEOUT_SECONDS` | `artifact.timeoutSeconds` | `30` |
 | `MaxPayloadBytes` | `ARTIFACT_MAX_PAYLOAD_BYTES` | `artifact.maxPayloadBytes` | `262144` |
 
-Endpoint 为空时保持本地模式，Memory 写入本地投影，不生成远端版本引用，其余 Artifact 字段不参与校验。配置 Endpoint 后，启动时要求绝对 HTTP(S) URL、非空 StoreID/TenantID、1–60 秒超时及 1–262144 字节 payload 上限；OwnerPrivate 使用配置的 tenant 与 owner 固定存储归属。timeout 是客户端请求超时，Archive 的集合创建与发布另受 1 分钟总预算约束。已有绑定不会因配置变化自动迁移，本地条目也不会自动补归档。Helm 将这些 values 渲染为显式 env，同名 `envFrom` Secret 值不会覆盖它们。
+Endpoint 为空时保持本地模式，Memory 写入本地投影，不生成远端版本引用，其余 Artifact 字段不参与校验。配置 Endpoint 后，启动时要求绝对 HTTP(S) URL、非空 StoreID/TenantID/BearerToken、1–60 秒超时及 1–262144 字节 payload 上限；OwnerPrivate 使用配置的 tenant 与 owner 固定存储归属。timeout 是客户端请求超时，Archive 的集合创建与发布另受 1 分钟总预算约束。已有绑定不会因配置变化自动迁移，本地条目也不会自动补归档。Helm 将这些非敏感 values 渲染为显式 env，同名 `envFrom` Secret 值不会覆盖它们；BearerToken 不写入 values，由 `existingSecret` 以 `ARTIFACT_BEARER_TOKEN` 注入。
 
-API 不维护静态 token、config owner 白名单、Tenant/Coding 业务客户端或对应连接配置。请求身份与鉴权后续通过 forge-tenant-api middleware 接入；当前尚未接入，业务路由没有身份校验。`auth.UserID(c)` 是现有身份读取点，持久化对象按 owner 隔离。
+BearerToken 与存储作用域授权是两层检查。token 用于证明调用 artifact 服务的部署身份；tenant、project 和 resource-user 仍来自已校验的业务身份及持久化绑定，不能由 token 替代或放宽。token 不写入配置仓库、日志或 values。
+
+API 不维护用于入站业务请求鉴权的静态 token 清单、config owner 白名单、Tenant/Coding 业务客户端或对应连接配置。请求身份与鉴权后续通过 forge-tenant-api middleware 接入；当前尚未接入，业务路由没有身份校验。`auth.UserID(c)` 是现有身份读取点，持久化对象按 owner 隔离。
 
 `service.Build` 在接收请求前调用 `durable.Store.InitSchema`，在空库或空 schema 上初始化目标表结构；该初始化可重复执行，只建表与约束，不做历史迁移或数据回填。组合部署直接调用 `service.New` 时由调用方负责初始化。本仓库不提供 `eval`、`migrate` 命令或 Helm 迁移任务。
 
@@ -108,11 +111,14 @@ Go SDK 导入 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`，提�
 ```bash
 export TEST_DATABASE_URL='postgres://agentic:agentic_local@127.0.0.1:55432/agentic?sslmode=disable'
 export TEST_REDIS_URL='redis://127.0.0.1:56379/0'
+export ARTIFACT_TEST_PG_DSN="$TEST_DATABASE_URL"
 GOWORK=off make integration
 GOWORK=off CGO_ENABLED=0 make build
 ```
 
 数据库测试创建随机 schema 并清理，账户需有建 schema 权限；Redis 测试使用独立 run key。未配置外部依赖导致用例跳过，不代表集成验证通过。共享执行契约变化仍须联合验证 worker；涉及接管时保留真实跨进程恢复测试。
+
+`ARTIFACT_TEST_PG_DSN` 启用 `TestArtifactIntegration*`：测试启动所依赖版本的真实 artifact HTTP 服务，使用独立 PostgreSQL schema 和测试身份解析器，验证 Bearer 认证、固定版本、幂等与跨作用域隔离，并通过本地代理注入发布响应丢失和暂时离线。该变量未设置时这些用例会跳过；`make integration` 只强制检查前两个变量。单独复验可运行 `GOWORK=off go test -v -count=1 -run '^TestArtifactIntegration' ./internal/app/memory`，Pending 恢复用例同时需要 `TEST_DATABASE_URL`。
 
 Dockerfile 只构建并打包 server 和默认配置，依赖下载使用 BuildKit secret `github_netrc`。Helm 部署 API、PostgreSQL 和 Redis，通过 `existingSecret` / `database.existingSecret` 引用配置，不再运行迁移 initContainer。部署方负责数据库准备，生产不使用示例连接。
 

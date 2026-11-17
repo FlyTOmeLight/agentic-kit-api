@@ -303,6 +303,7 @@ func assertArtifactReadIdentity(t *testing.T, request *http.Request, ref memory.
 		t.Errorf("method = %s, want GET", request.Method)
 	}
 	for header, want := range map[string]string{
+		"Authorization":      "Bearer test-service-token",
 		"x-forge-tenant-id":  ref.TenantID,
 		"x-forge-project-id": ref.ProjectID,
 		"X-Resource-User-ID": ref.UserID,

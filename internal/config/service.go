@@ -29,6 +29,7 @@ type Artifact struct {
 	Endpoint        string
 	StoreID         string
 	TenantID        string
+	BearerToken     string
 	TimeoutSeconds  int
 	MaxPayloadBytes int64
 }
@@ -100,6 +101,9 @@ func (cfg Service) ValidateAPI() error {
 	}
 	if strings.TrimSpace(cfg.Artifact.TenantID) == "" {
 		return errors.New("Artifact.TenantID is required")
+	}
+	if strings.TrimSpace(cfg.Artifact.BearerToken) == "" {
+		return errors.New("Artifact.BearerToken is required when Endpoint is set")
 	}
 	if cfg.Artifact.TimeoutSeconds <= 0 || cfg.Artifact.TimeoutSeconds > 60 {
 		return errors.New("Artifact.TimeoutSeconds must be between 1 and 60")
