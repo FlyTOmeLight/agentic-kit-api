@@ -359,6 +359,7 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 		Updates(map[string]any{
 			"archive_claim": claim,
 			"archive_until": gorm.Expr("clock_timestamp() + interval '2 minutes'"),
+			"updated_at":    gorm.Expr("clock_timestamp()"),
 		})
 	if err := requireUpdated(result); err != nil {
 		return false, err
@@ -369,7 +370,11 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 		defer cancel()
 		release := s.db.WithContext(releaseCtx).Model(&table.MemoryOperation{}).
 			Where("id = ? AND archive_claim = ?", op.ID, claim).
-			Updates(map[string]any{"archive_claim": "", "archive_until": nil})
+			Updates(map[string]any{
+				"archive_claim": "",
+				"archive_until": nil,
+				"updated_at":    gorm.Expr("clock_timestamp()"),
+			})
 		err = errors.Join(err, release.Error)
 	}()
 	archiveCtx, cancel := context.WithTimeout(ctx, time.Minute)

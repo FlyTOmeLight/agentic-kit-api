@@ -228,4 +228,21 @@ worker 在隔离工作树通过本地 replace 指向 API 改动，`GOWORK=off ma
 - `CGO_ENABLED=0 go build ./...`、`git diff --check` 通过；`helm lint charts/agentic-kit-api` 1 chart、0 failed；`make doc` 重新生成 OpenAPI，三个写接口含 503 响应。首次推送被 gorgeous 格式检查阻止，已应用格式修复。
 - 经验补充：[数据库租约时钟](lessons/database-lease-clock.md)：租约测试改用 `clock_timestamp()` 表达式后 `TestArchiveClaimExpiresAndCanResume` 通过。
 
-未验证与未实现：真实 artifact-go 部署未联调（仅 fake archiver 与 httptest adapter）；后台 Pending 恢复、版本历史 API、自动提炼、语义检索未实现；对外仅 OwnerPrivate，完整认证 middleware 与多主体共享授权未接入；本地模式（未配置 Artifact Endpoint）下无远端版本引用。
+未验证与未实现：真实 artifact-go 部署未联调（仅 fake archiver 与 httptest adapter）；版本历史 API、自动提炼、语义检索未实现；对外仅 OwnerPrivate，完整认证 middleware 与多主体共享授权未接入；本地模式（未配置 Artifact Endpoint）下无远端版本引用。
+
+## Memory 阶段五：后台 Pending 恢复
+
+2026-11-17：在 `feat/memory-artifact-publish` 隔离工作树完成，未改动根工作树；本阶段未修改 worker。API 在配置 archive 时启动后台恢复，复用持久操作回执、archive claim 和本地 CAS 激活，继续未完成的 Create/Update/Restore。
+
+- 恢复范围：仅 Create/Update/Restore；Retire 是本地短事务，没有远端 Pending。后台不自动重试 Rejected，远端不可用或结果不明时保持 Pending。
+- 调度与并发：启动后立即执行一轮，之后每 30 秒一轮；单轮最多 20 条、预算 2 分钟，单条操作 90 秒。未过期 claim 跳过，多实例依靠 claim 与本地 CAS 去重；停机时未完成项保持 Pending，由下次启动或其他实例继续。
+- 队列推进：Archive 领取和释放 claim 都会刷新 `updated_at`；失败项移到队尾。损坏回执和无 archive binding 的 Pending 回执也会刷新 `updated_at`，避免长期占住批次头部。单项失败聚合返回，不中断整批。
+- 生命周期：恢复循环与 Outbox 共用 `WaitGroup`，`Stop` 取消后等待两者退出；当前不提供常驻运维 Pending 列表接口。
+
+验证（全部 `GOWORK=off`）：`gofmt`、`git diff --check` 通过；`go test ./internal/app/memory ./service -run '^$' -count=1` 完成编译检查；`go test ./service -run '^TestResumePendingMemory' -count=1` 通过 3 个用例，覆盖首轮立即执行、周期执行、期限与取消退出。
+
+2026-11-17 数据库环境复验：接入本地 PostgreSQL 与 Redis 后，`go test ./internal/app/memory -run '^TestResumePending' -count=1` 通过 11 个用例，覆盖 Create/Update/Restore 恢复、集合创建失败恢复、未过期 claim 跳过、损坏回执与无 binding 回执推进，以及无 archive 和 `limit=0` 边界。全仓 `GOWORK=off make integration`（`go test -race` 与 `go vet`）通过，共 456 个用例。
+
+同轮修复：全仓测试暴露生命周期用例在没有 archive 时仍启动恢复循环，typed nil 接口绕过 `resumer == nil` 检查并在 `ResumePending` 解引用 panic。`routes.memoryRecovery` 改为 `pendingResumer` 接口类型后，nil 判断恢复生效；`TestAPIFrameworkLifecycle` 覆盖该路径。
+
+未完成验证：真实 artifact 部署与跨服务故障联调仍未执行，`Artifact` 不可用时的真实超时与恢复节奏只有单元/集成测试证据。

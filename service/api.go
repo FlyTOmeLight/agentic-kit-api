@@ -66,14 +66,26 @@ func (a *API) Start(ctx context.Context) error {
 	}
 	ctx, a.cancel = context.WithCancel(ctx)
 	a.done = make(chan struct{})
+	var tasks sync.WaitGroup
+	tasks.Add(2)
 	go func() {
-		defer close(a.done)
+		defer tasks.Done()
 		relayOutbox(
 			ctx,
 			a.store,
 			a.redis,
 			func(err error) { a.log.Errorf(ctx, "outbox publish failed: %v", err) },
 		)
+	}()
+	go func() {
+		defer tasks.Done()
+		resumePendingMemory(ctx, a.routes.memoryRecovery, func(err error) {
+			a.log.Errorf(ctx, "memory pending recovery failed: %v", err)
+		})
+	}()
+	go func() {
+		tasks.Wait()
+		close(a.done)
 	}()
 	return nil
 }

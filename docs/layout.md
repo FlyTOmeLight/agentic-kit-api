@@ -7,7 +7,7 @@
 依赖方向为 `cmd/server → app.Run → service.Build → internal/app`。入口负责信号和退出码；Build 初始化数据库与通知缓存并交给 Runtime。组合应用通过 `service.New` 注入 Store、Redis、logger 和可空的 archive，不调用 Build 重复建立连接。
 
 - 构造时创建 Controller，RegisterRoutes 只安装已有 handler；配置更新不创建资源或后台任务。
-- Start 使用运行 context，只启动通用 Outbox Relay。Stop 取消并等待任务退出，调用方在停止成功后关闭借用资源。
+- Start 使用运行 context 启动通用 Outbox Relay；配置 archive 时同时启动 Memory Pending 恢复。Stop 取消并等待这些任务退出，调用方在停止成功后关闭借用资源。
 - HTTP 先排空，再停止任务，最后关闭资源。任务停止超时时，在其真正退出前保留依赖。
 - db.Module 拥有独立应用的数据库连接。durable.New 借用数据库句柄，Store.Close 不关闭借用池；durable.Open 为独立 worker 创建并拥有连接。
 - 通知缓存使用 server-go `redis.Config`、`redis.NewRedis` 和 UniversalClient，生命周期由 Runtime 管理。Ping 失败保留客户端重连，允许 Redis 离线启动和数据库事件回放；初始化 context 取消时返回错误。
@@ -33,7 +33,7 @@ Agent、Session、Run 通过消费方接口调用共享事务。Memory 的人工
 
 Memory 的主题部分唯一索引为 `memory_entry_subject_identity`，约束完整 scope、agent、kind 和非空 subjectKey；空主题不参与唯一性检查。`memory_operation_owner_request` 对 `(owner_id, request_key)` 建复合唯一约束。初始化不负责删除旧索引、转换旧回执或回填 archive claim，不能作为已有数据库的升级方案。
 
-表模型可以复用公开领域类型，不依赖 durable 或 HTTP。执行查询和事务位于 `pkg/durable`，Memory 查询和事务位于 `internal/app/memory`，均使用 table 模型并显式转换公开对象；不对外暴露私有表类型或保留旧模型副本。MemoryOperation 保存 2 分钟 archive claim；事务外远端调用总预算为 1 分钟，绑定和版本写回要求 claim token 仍有效，完成或出错时释放，崩溃后由原请求键在 claim 过期后继续。当前没有后台 Pending 恢复任务。
+表模型可以复用公开领域类型，不依赖 durable 或 HTTP。执行查询和事务位于 `pkg/durable`，Memory 查询和事务位于 `internal/app/memory`，均使用 table 模型并显式转换公开对象；不对外暴露私有表类型或保留旧模型副本。MemoryOperation 保存 2 分钟 archive claim；事务外远端调用总预算为 1 分钟，绑定和版本写回要求 claim token 仍有效，完成或出错时释放。配置归档时，API 启动后立即恢复一轮 Pending，之后每 30 秒一轮，单轮最多 20 条、预算 2 分钟；仅继续 Create/Update/Restore，不自动重试 Rejected，停机时未完成项保持 Pending。当前不提供常驻运维 Pending 列表。
 
 `pkg/durable` 的任务、租约、步骤、事件、执行快照与 Store 供 API 和 worker 共用，不依赖 Gin 或 HTTP 模块。执行状态写入按职责拆分在 `lease.go`、`boundary.go`、`step.go`、`interaction.go`、`cancellation.go`、`retry.go`；等待交互由 Run 的 `waiting_step`/`waiting_kind` 列显式保存。公开契约或持久化格式变化时核对 worker 的真实调用与恢复行为。执行权、epoch 和一致提交见 [恢复设计](design.md)。
 
