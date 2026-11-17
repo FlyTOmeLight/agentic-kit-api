@@ -10,6 +10,38 @@ import (
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
+func TestMemoryVersionRequests(t *testing.T) {
+	client := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Errorf("authorization header missing")
+		}
+		switch r.URL.Path {
+		case "/api/v1/memories/memory-1/versions":
+			if r.URL.Query().Get("afterRevision") != "5" || r.URL.Query().Get("limit") != "2" {
+				t.Errorf("query=%v", r.URL.Query())
+			}
+			io.WriteString(w, `{"items":[{"appliedRevision":4}],"nextAfterRevision":4}`)
+		case "/api/v1/memories/memory-1/versions/version-1":
+			io.WriteString(w, `{"appliedRevision":4,"document":{"summary":"saved"}}`)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	page, err := client.Memories.ListVersions(
+		t.Context(),
+		"memory-1",
+		&sdk.ListMemoryVersionsOptions{AfterRevision: 5, Limit: 2},
+	)
+	if err != nil || len(page.Items) != 1 || page.NextAfterRevision != 4 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	version, err := client.Memories.GetVersion(t.Context(), "memory-1", "version-1")
+	if err != nil || version.Document.Summary != "saved" {
+		t.Fatalf("version=%+v err=%v", version, err)
+	}
+}
+
 func TestMemoryUpdateRestoreEncoding(t *testing.T) {
 	for _, restore := range []bool{false, true} {
 		name := "update"

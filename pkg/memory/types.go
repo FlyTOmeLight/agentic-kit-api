@@ -108,6 +108,31 @@ type ArtifactBinding struct {
 	ArtifactID string `json:"artifactID"`
 }
 
+// VersionSummary identifies an archived version adopted by a memory entry.
+type VersionSummary struct {
+	VersionRef      VersionRef `json:"versionRef"`
+	AppliedRevision int64      `json:"appliedRevision"`
+	Actor           string     `json:"actor"`
+	AppliedAt       int64      `json:"appliedAt"`
+	Active          bool       `json:"active"`
+}
+
+// VersionPage contains adopted versions and the entry's current state.
+type VersionPage struct {
+	Items             []VersionSummary `json:"items"`
+	NextAfterRevision int64            `json:"nextAfterRevision,omitempty"`
+	ActiveVersionRef  *VersionRef      `json:"activeVersionRef,omitempty"`
+	RetiredAt         *int64           `json:"retiredAt,omitempty"`
+}
+
+// Version contains an adopted version and its archived document.
+type Version struct {
+	VersionSummary
+	Document         Document    `json:"document"`
+	ActiveVersionRef *VersionRef `json:"activeVersionRef,omitempty"`
+	RetiredAt        *int64      `json:"retiredAt,omitempty"`
+}
+
 // Entry is the local projection of the currently active memory content.
 type Entry struct {
 	ID               string           `json:"id"`

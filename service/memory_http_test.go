@@ -8,6 +8,47 @@ import (
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
+func TestMemoryVersionHistoryHTTP(t *testing.T) {
+	store := integrationStore(t)
+	router := NewRouter(t, store, nil, map[string]string{testToken: "owner", "other-token": "other"})
+	entry := memoryHTTPCall(
+		t,
+		router,
+		http.MethodPost,
+		"/v1/memories",
+		memoryHTTPCreateBody("v1", "tabs"),
+		"history-create",
+	)
+	path := "/v1/memories/" + entry.ID + "/versions"
+	response := request(router, http.MethodGet, path, "", testToken, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", response.Code, response.Body.String())
+	}
+	var page sdk.MemoryVersionPage
+	if err := json.Unmarshal(
+		response.Body.Bytes(),
+		&page,
+	); err != nil || page.Items == nil ||
+		len(page.Items) != 0 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	for _, query := range []string{"?limit=0", "?limit=101", "?afterRevision=-1", "?afterRevision=invalid"} {
+		assertError(
+			t,
+			request(router, http.MethodGet, path+query, "", testToken, ""),
+			http.StatusBadRequest,
+			"InvalidParameter",
+		)
+	}
+	assertError(t, request(router, http.MethodGet, path, "", "other-token", ""), http.StatusNotFound, "NotFound")
+	assertError(
+		t,
+		request(router, http.MethodGet, path+"/unadopted", "", testToken, ""),
+		http.StatusNotFound,
+		"NotFound",
+	)
+}
+
 func TestMemoryUpdateAndRestoreHTTP(t *testing.T) {
 	store := integrationStore(t)
 	router := NewRouter(t, store, nil, map[string]string{testToken: "owner"})

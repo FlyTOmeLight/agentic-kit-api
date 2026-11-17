@@ -557,6 +557,33 @@ definitions:
           type: string
         type: array
     type: object
+  memory.Document:
+    properties:
+      agentID:
+        type: string
+      body:
+        type: object
+      conditions:
+        $ref: '#/definitions/memory.Conditions'
+      entryID:
+        type: string
+      kind:
+        type: string
+      outputVisibility:
+        type: string
+      schemaVersion:
+        type: integer
+      scope:
+        $ref: '#/definitions/memory.Scope'
+      source:
+        $ref: '#/definitions/memory.Source'
+      subjectKey:
+        type: string
+      summary:
+        type: string
+      validUntil:
+        type: integer
+    type: object
   memory.Scope:
     properties:
       actor:
@@ -594,6 +621,38 @@ definitions:
       summary:
         type: string
     type: object
+  memory.Version:
+    properties:
+      active:
+        type: boolean
+      activeVersionRef:
+        $ref: '#/definitions/memory.VersionRef'
+      actor:
+        type: string
+      appliedAt:
+        type: integer
+      appliedRevision:
+        type: integer
+      document:
+        $ref: '#/definitions/memory.Document'
+      retiredAt:
+        type: integer
+      versionRef:
+        $ref: '#/definitions/memory.VersionRef'
+    type: object
+  memory.VersionPage:
+    properties:
+      activeVersionRef:
+        $ref: '#/definitions/memory.VersionRef'
+      items:
+        items:
+          $ref: '#/definitions/memory.VersionSummary'
+        type: array
+      nextAfterRevision:
+        type: integer
+      retiredAt:
+        type: integer
+    type: object
   memory.VersionRef:
     properties:
       artifactID:
@@ -612,6 +671,19 @@ definitions:
         type: string
       versionURI:
         type: string
+    type: object
+  memory.VersionSummary:
+    properties:
+      active:
+        type: boolean
+      actor:
+        type: string
+      appliedAt:
+        type: integer
+      appliedRevision:
+        type: integer
+      versionRef:
+        $ref: '#/definitions/memory.VersionRef'
     type: object
   workspace.Scope:
     properties:
@@ -1248,6 +1320,76 @@ paths:
       security:
       - BearerAuth: []
       summary: 停用记忆
+      tags:
+      - Memory
+  /v1/memories/{id}/versions:
+    get:
+      parameters:
+      - description: 记忆 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 上一页游标
+        in: query
+        name: afterRevision
+        type: integer
+      - default: 50
+        description: 数量，1 到 100
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/memory.VersionPage'
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 列出记忆版本
+      tags:
+      - Memory
+  /v1/memories/{id}/versions/{versionID}:
+    get:
+      parameters:
+      - description: 记忆 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 版本 ID
+        in: path
+        name: versionID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/memory.Version'
+        "404":
+          description: 资源不存在或版本未生效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "503":
+          description: 归档版本或依赖不可用
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 查询记忆版本
       tags:
       - Memory
   /v1/runs/{id}:

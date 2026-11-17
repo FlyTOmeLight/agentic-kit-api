@@ -39,7 +39,7 @@ Memory 的主题部分唯一索引为 `memory_entry_subject_identity`，约束�
 
 ## SDK 与跨仓库依赖
 
-公开路径为 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`。SDK 提供通用 Agent、Session、Run、Execution、Memory 人工维护与执行时显式召回选项，不包含 ProjectClient、workspace、dataset、评测及 Coding 专用发布类型，也不导入 internal、durable、Gin 或 GORM。Memory 版本历史 API 尚未提供。
+公开路径为 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`。SDK 提供通用 Agent、Session、Run、Execution、Memory 人工维护、版本历史与执行时显式召回选项，不包含 ProjectClient、workspace、dataset、评测及 Coding 专用发布类型，也不导入 internal、durable、Gin 或 GORM。
 
 普通操作接收标准 context 和请求指针；路径、Query、Header、JSON 分别编码。客户端所有者负责 Close，流所有者关闭响应体。业务应用通过公开 API/SDK 组合通用能力；本项目不反向依赖 forge-tenant-api 或 forge-coding-api 的业务客户端。
 

@@ -246,3 +246,9 @@ worker 在隔离工作树通过本地 replace 指向 API 改动，`GOWORK=off ma
 同轮修复：全仓测试暴露生命周期用例在没有 archive 时仍启动恢复循环，typed nil 接口绕过 `resumer == nil` 检查并在 `ResumePending` 解引用 panic。`routes.memoryRecovery` 改为 `pendingResumer` 接口类型后，nil 判断恢复生效；`TestAPIFrameworkLifecycle` 覆盖该路径。
 
 未完成验证：真实 artifact 部署与跨服务故障联调仍未执行，`Artifact` 不可用时的真实超时与恢复节奏只有单元/集成测试证据。
+
+## Memory 生效版本历史
+
+2026-11-17：新增 OwnerPrivate 版本列表与详情，列表基于本地已生效内容操作回执，详情先检查条目归属和生效回执，再读取固定归档版本。纯本地模式的历史列表为空；Retire 不产生历史版本，停用时不标记活跃项。
+
+验证：设置本地 PostgreSQL 和 Redis、使用 `GOWORK=off make integration`，全仓 race 测试和 `go vet` 通过；`make doc` 生成 OpenAPI。新增测试覆盖分页、跨 owner 拒绝、未采用版本、Pending/Rejected 过滤、停用和恢复、正文缺失、本地模式、归档服务模拟与 SDK 请求。归档适配使用 HTTP fake，尚未与真实 artifact 服务联合验证。
