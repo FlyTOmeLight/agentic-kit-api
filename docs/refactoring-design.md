@@ -1,8 +1,8 @@
 # Agentic Kit API 通用 Agent 框架重构设计
 
-状态：部分实施，2026-11-16 按当前工作树更新。本地人工 Memory、召回冻结和上下文构建已有实现，本次新增可选 artifact 归档；完整访问模型、目录重组及下文其余目标尚未全部落地。范围和决策见第14节，第10节仍为目标文件地图；当前行为以代码、[HTTP契约](api.md)、[恢复设计](design.md)和[布局约束](layout.md)为准。
+状态：部分实施，2026-11-17 按当前工作树更新。本地人工 Memory、召回冻结和上下文构建已有实现，本次新增可选 artifact 归档与后台 Pending 恢复；完整访问模型、目录重组及下文其余目标尚未全部落地。范围和决策见第14节，第10节仍为目标文件地图；当前行为以代码、[HTTP契约](api.md)、[恢复设计](design.md)和[布局约束](layout.md)为准。
 
-当前进度：`pkg/contextbuilder` 已实现完整消息组、预算预检、工具结果预览、历史裁剪和 `context-v3` 当前轮工具结果投影；模型窗口与输出预留随 Run 冻结，配套 worker 每轮调用模型前执行 `Build`。本地 OwnerPrivate 人工创建、读取、纠正、停用、显式 Restore 和 `RecallTx` 已有，显式 Recall 在接受事务内冻结完整材料。本次 artifact 归档使用 artifact-go `v0.5.0`、server-go `v0.13.0`，通过持久回执连接远端发布与本地 CAS 生效。版本历史 API、自动提炼及后台 Pending 恢复未实现，真实 artifact 部署尚未联合验证，详见 [Memory设计](memory-design.md)。
+当前进度：`pkg/contextbuilder` 已实现完整消息组、预算预检、工具结果预览、历史裁剪和 `context-v3` 当前轮工具结果投影；模型窗口与输出预留随 Run 冻结，配套 worker 每轮调用模型前执行 `Build`。本地 OwnerPrivate 人工创建、读取、纠正、停用、显式 Restore 和 `RecallTx` 已有，显式 Recall 在接受事务内冻结完整材料。本次 artifact 归档使用 artifact-go `v0.5.0`、server-go `v0.13.0`，通过持久回执连接远端发布与本地 CAS 生效；配置归档时 API 后台会继续未完成的 Create/Update/Restore。版本历史 API 与自动提炼未实现，真实 artifact 部署尚未联合验证，详见 [Memory设计](memory-design.md)。
 
 原始设计基线：2026-10-14 的工作树，Go 1.27.1、server-go v0.9.0。下文保留当时的目标结构与问题分析；当前依赖及实现状态以上述进度和代码为准，不把本地框架 main 的接口当作发布版能力。
 
@@ -279,7 +279,7 @@ OutputAudience表示本次结果预期可见的人群/范围，由入口授权�
 
 本地人工Memory已有OwnerPrivate维护、操作回执、生效投影和召回。本次新增可选artifact归档：未配置Endpoint时保持本地模式，不生成远端版本引用；配置后先持久化操作意图，在事务外发布受保护的JSON版本，再以本地revision检查原子更新生效引用、投影和回执。未生效的存档版本不进入召回，`RecallTx`不在接受Run事务中调用artifact。停用阻止后续召回，不删除远端版本或旧Run快照；显式Restore恢复原条目，配置归档时发布新版本。主题部分唯一索引为`memory_entry_subject_identity`，操作回执以`memory_operation_owner_request`约束`(owner_id, request_key)`唯一。schema仅供空库初始化，无历史迁移或回填。
 
-Archive以数据库时钟领取2分钟持久claim，事务外集合创建与发布共用1分钟HTTP总预算，claim token保护绑定与版本写回；完成或出错时释放claim，崩溃后由原请求键在claim过期后重试，远端稳定键维持幂等。当前没有后台Pending恢复循环；`service.Build`拥有创建的archive，`service.New`借用调用方资源，关闭规则见[布局约束](layout.md)。真实artifact部署尚未联合验证。
+Archive以数据库时钟领取2分钟持久claim，事务外集合创建与发布共用1分钟HTTP总预算，claim token保护绑定与版本写回；完成或出错时释放claim，崩溃后由原请求键在claim过期后重试，远端稳定键维持幂等。配置归档时，API启动后立即执行一轮后台Pending恢复，之后每30秒一轮，单轮最多20条、预算2分钟，单条90秒；恢复复用claim、Archive和activate，只处理Create/Update/Restore，不对Rejected自动重试，停机时未完成项保持Pending。当前不提供常驻运维Pending列表；`service.Build`拥有创建的archive，`service.New`借用调用方资源，关闭规则见[布局约束](layout.md)。真实artifact部署尚未联合验证。
 
 版本历史API仍为后续目标：以Applied内容操作为索引，仅展示生效过的版本。当前召回按范围、有效性、输出可见性过滤后，进行受限词项/标签匹配与稳定排序，不宣称语义检索。人工HTTP维护仅开放OwnerPrivate；actor/project多主体共享授权仍按[Memory设计](memory-design.md)作为后续契约。模型没有自动写入、扩域或生效权限。
 
@@ -659,7 +659,7 @@ Memory维护先按[设计验收矩阵](memory-design.md#10-实施顺序与验收
 
 本轮grill-with-docs评审已确认框架范围、资产隔离、场景独立、Memory使用/冻结及上下文裁剪语义，第14节记录决策。实施前核对空库部署条件、框架调用方、worker正式依赖版本与新版checkpoint格式，并验证目标模型的窗口来源、输出预留及实际消息/工具计数能力；缺少计数支持时明确记录能力缺口，不用未经验证的字节换算代替。
 
-Memory适配已使用artifact-go `v0.5.0`、server-go `v0.13.0`及固定存储绑定；本地人工维护、召回冻结和本次新增归档的实现边界见§6.6。真实artifact部署的三元隔离、集合幂等及跨服务故障恢复仍须联合验收；版本历史API、自动提炼和后台Pending恢复尚未实现。本文不将目标结构或未执行的验收标为完成。
+Memory适配已使用artifact-go `v0.5.0`、server-go `v0.13.0`及固定存储绑定；本地人工维护、召回冻结、本次新增归档和后台Pending恢复的实现边界见§6.6。真实artifact部署的三元隔离、集合幂等及跨服务故障恢复仍须联合验收；版本历史API和自动提炼尚未实现。本文不将目标结构或未执行的验收标为完成。
 
 ## 14. 设计评审决策
 

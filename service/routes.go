@@ -13,10 +13,11 @@ import (
 )
 
 type routes struct {
-	agent   *agent.Controller
-	session *session.Controller
-	run     *run.Controller
-	memory  *appmemory.Controller
+	agent          *agent.Controller
+	session        *session.Controller
+	run            *run.Controller
+	memory         *appmemory.Controller
+	memoryRecovery pendingResumer
 }
 
 func newRoutes(
@@ -30,6 +31,16 @@ func newRoutes(
 		memorySvc := appmemory.NewService(store.DB(), archive)
 		memoryCtrl = appmemory.NewController(memorySvc)
 		exec = exec.WithMemoryRecaller(memorySvc)
+		routes := &routes{
+			agent:   agent.NewController(store),
+			session: session.NewController(session.NewService(store, exec)),
+			run:     run.NewController(store, exec, cache),
+			memory:  memoryCtrl,
+		}
+		if archive != nil {
+			routes.memoryRecovery = memorySvc
+		}
+		return routes
 	}
 	return &routes{
 		agent:   agent.NewController(store),

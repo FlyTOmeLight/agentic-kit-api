@@ -1,6 +1,6 @@
 # Agentic Kit 通用 Agent Memory 技术设计
 
-状态：部分实施，2026-11-16 按当前工作树更新。本地 OwnerPrivate 人工 CRUD（删除语义为 Retire）、显式 Restore、生效投影和操作回执已有实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。本次新增可选 artifact 归档与固定绑定，依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。版本历史 API、自动提炼、后台 Pending 恢复、语义检索及版本删除/回收未实现，真实 artifact 部署尚未联合验证。
+状态：部分实施，2026-11-17 按当前工作树更新。本地 OwnerPrivate 人工 CRUD（删除语义为 Retire）、显式 Restore、生效投影和操作回执已有实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。本次新增可选 artifact 归档与固定绑定，依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。配置归档时，API 后台已能继续未完成的 Create/Update/Restore。版本历史 API、自动提炼、语义检索及版本删除/回收未实现，真实 artifact 部署尚未联合验证。
 
 本文同时保留目标契约：多主体共享授权、版本历史查询及故障验收要求不因领域类型或适配接口已存在而视为完成。当前 HTTP 人工维护只开放 OwnerPrivate，身份读取沿用现有入口，完整认证 middleware 尚未接入。本文替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 的范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
 
@@ -24,7 +24,7 @@ flowchart LR
 
 该分工复用版本编号、不可变内容、发布幂等和保护能力，保留 Memory 的领域规则。在线召回不增加远端逐条取版本的调用，也不把网络请求放进接受 Run 的数据库事务。
 
-当前提供人工创建、纠正、停用及恢复、显式召回和冻结；Fact、Preference、Procedure 通过人工维护入口写入。生效版本历史查看仍待实现。自动提炼、模型写记忆、候选晋升、技能按需加载和摘要式上下文压缩属于后续设计。未配置 Artifact Endpoint 时使用本地模式，维护和召回可用，但没有远端版本引用，也不会自动补归档。
+当前提供人工创建、纠正、停用及恢复、显式召回和冻结，以及配置归档时的后台 Pending 恢复；Fact、Preference、Procedure 通过人工维护入口写入。生效版本历史查看仍待实现。自动提炼、模型写记忆、候选晋升、技能按需加载和摘要式上下文压缩属于后续设计。未配置 Artifact Endpoint 时使用本地模式，维护和召回可用，但没有远端版本引用，也不会自动补归档。
 
 ## 2. 已核对的基础与接入前提
 
@@ -180,13 +180,15 @@ MemoryOperation 既是跨服务恢复记录，也是幂等成功回执和生效�
 3. **在事务外发布版本。** 使用稳定 operationID 作为不超过 64 字符的 requestKey；固定ArtifactBinding中的user_id、tenant/project、规范 payload、`protected=true`、空 files/aliases/annotations。重试原参数，不能使用新键掩盖超时。artifact 返回 ready 的固定身份与 payload 后，核对集合、Entry、scope、schema 和摘要，并将结果交给生效事务。
 4. **生效短事务。** 重新核验写权限，锁操作回执和 Entry，先检查回执终态并重放既有结果；仍为Pending时检查原expectedRevision、范围，以及Update必须启用、Restore必须停用的状态条件。第一次创建在这里插入 Entry 并受主题唯一约束保护；纠正则原子切换 activeVersionRef、完整投影和索引、递增 revision；Restore同时清空retiredAt。操作设为Applied并保存原appliedRevision、appliedAt、操作者及固定版本引用。只有这一步完成才对调用方报告记忆已生效。
 
-不跨 HTTP 保持数据库锁，也不尝试跨库事务。当前 Archive 先以数据库时钟领取 2 分钟持久 claim，再执行事务外 HTTP；集合创建与发布共用 1 分钟总预算。已返回的集合身份、版本引用或墓碑各用独立的 5 秒预算写回，脱离请求取消和远端截止时间；后续远端调用与本地生效仍遵守请求取消。绑定与版本引用写回必须匹配 claim token、Pending 状态且 claim 未过期，旧执行者不能覆盖新的领取者。Archive 完成或出错均按 token 释放 claim；进程崩溃时由过期机制释放执行权，调用方随后用原请求键继续。集合创建键由 entryID 稳定派生，版本发布键由原操作 ID 派生；同一Entry的重试与不同actor操作因此固定同一集合和调用身份，远端重复调用仍保持幂等。固定绑定的 StoreID 与当前适配器不匹配时返回 503 MemoryUnavailable，恢复原存储映射后以原请求键重试。本地生效另由短事务和 revision 条件保证只应用一次。后台 Pending 恢复循环和运维 Pending 列表接口尚未实现。
+不跨 HTTP 保持数据库锁，也不尝试跨库事务。当前 Archive 先以数据库时钟领取 2 分钟持久 claim，再执行事务外 HTTP；集合创建与发布共用 1 分钟总预算。已返回的集合身份、版本引用或墓碑各用独立的 5 秒预算写回，脱离请求取消和远端截止时间；后续远端调用与本地生效仍遵守请求取消。绑定与版本引用写回必须匹配 claim token、Pending 状态且 claim 未过期，旧执行者不能覆盖新的领取者。Archive 完成或出错均按 token 释放 claim；进程崩溃时由过期机制释放执行权，调用方随后用原请求键继续。集合创建键由 entryID 稳定派生，版本发布键由原操作 ID 派生；同一Entry的重试与不同actor操作因此固定同一集合和调用身份，远端重复调用仍保持幂等。固定绑定的 StoreID 与当前适配器不匹配时返回 503 MemoryUnavailable，恢复原存储映射后以原请求键重试。本地生效另由短事务和 revision 条件保证只应用一次。
+
+配置归档时，API 启动后立即执行一轮后台 Pending 恢复，之后每 30 秒执行一轮；单轮最多处理 20 条，单轮预算 2 分钟，单条操作 90 秒。恢复复用原 claim、Archive 与本地 activate，只继续 Create/Update/Restore；Retire 是本地短事务，没有远端 Pending。失败项按 claim 与 CAS 语义留在 Pending 或转 Rejected，后台不对 Rejected 自动重试；远端不可用时保持 Pending，损坏回执和无绑定回执会刷新排队时间，避免长期占住批次头部。多实例依靠同样的 claim 与本地 CAS 去重；当前不提供运维 Pending 列表接口。停机时未完成项保持 Pending，由下次启动或其他实例继续。
 
 ### 6.2 并发与不确定结果
 
 两个基于 revision=4 的纠正可能都在 artifact 存档，但只有一个能把 Memory 更新到 revision=5。另一操作终结为 Rejected/RevisionConflict，其存档版本保持未采用，不能成为Memory生效版本或被下一次召回选中；artifact latest仍可能指向它，Memory不据此选用。新建主题冲突采用相同规则。实现必须持久保存Rejected与已存档版本引用；可用条件插入（ON CONFLICT DO NOTHING）或条件更新检查影响行数，在同一可提交事务内记录拒绝，不能依赖触发唯一异常后已被中止的事务继续写回执。自动删除这类受保护版本不属于首版。
 
-artifact 已发布而本地提交前进程退出时，原键重试在持久 claim 过期后继续；已保存版本引用时复用该引用，否则以原远端键确认同一版本，再尝试原 CAS。条目修订变化或状态不再满足本次Update/Restore意图则记录冲突。发布超时/结果不明时保留 Pending，不能当成确定失败或创建新版本。完整权限撤销检查仍依赖后续访问模型接入。
+artifact 已发布而本地提交前进程退出时，后台恢复或原键重试在持久 claim 过期后继续；已保存版本引用时复用该引用，否则以原远端键确认同一版本，再尝试原 CAS。条目修订变化或状态不再满足本次Update/Restore意图则记录冲突。发布超时/结果不明时保留 Pending，不能当成确定失败或创建新版本。完整权限撤销检查仍依赖后续访问模型接入。
 
 本地生效提交结果不明时，按原键读取主库回执；仍不能确定则返回 503 `MemoryOperationOutcomeUnknown`，下次继续原键。同键 Applied 回放不回拨生效指针，不覆盖后来纠正，也不重新访问 artifact；返回原 appliedRevision/版本引用，当前 Entry 如另行返回必须明确标为当前状态。每次回放仍核验当前访问权限。
 
@@ -309,7 +311,7 @@ Memory.Service 在消费处定义只含实际 artifact 行为的小接口，由 
 | 预算与材料选择 | 中文/代码标签固定用例、稳定顺序、完整工具链、动态工具输出超限及明确失败 |
 | 历史归属与保留 | 仅Applied的Create/Update/Restore进入列表，Retire/Pending/Rejected排除；猜测未采用versionID返回404；远端离线仍可分页；源正文缺失保留元数据并报不可用 |
 
-部署验收仍需用隔离数据库和真实 artifact 服务覆盖跨服务故障；API/worker 按变更范围执行 integration、race、vet、build、Swagger 与跨进程接管验证。正式依赖验证使用 GOWORK=off、无本地 replace。真实 artifact 部署、共享范围授权和版本历史验收尚未完成；自动提炼、后台 Pending 恢复与版本回收仍未实现。
+部署验收仍需用隔离数据库和真实 artifact 服务覆盖跨服务故障；API/worker 按变更范围执行 integration、race、vet、build、Swagger 与跨进程接管验证。正式依赖验证使用 GOWORK=off、无本地 replace。真实 artifact 部署、共享范围授权和版本历史验收尚未完成；自动提炼与版本回收仍未实现。后台 Pending 恢复已实现并通过编译与恢复循环单元测试；数据库恢复用例和真实 artifact 故障联调仍待完成。
 
 ## 11. 后续演进边界
 
