@@ -973,6 +973,116 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "/v1/memories/{id}/versions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "列出记忆版本",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "记忆 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "上一页游标",
+                        "name": "afterRevision",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "数量，1 到 100",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/memory.VersionPage"
+                        }
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/memories/{id}/versions/{versionID}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "查询记忆版本",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "记忆 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "版本 ID",
+                        "name": "versionID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/memory.Version"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在或版本未生效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "503": {
+                        "description": "归档版本或依赖不可用",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/runs/{id}": {
             "get": {
                 "security": [
@@ -2656,6 +2766,47 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "memory.Document": {
+            "type": "object",
+            "properties": {
+                "agentID": {
+                    "type": "string"
+                },
+                "body": {
+                    "type": "object"
+                },
+                "conditions": {
+                    "$ref": "#/definitions/memory.Conditions"
+                },
+                "entryID": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "outputVisibility": {
+                    "type": "string"
+                },
+                "schemaVersion": {
+                    "type": "integer"
+                },
+                "scope": {
+                    "$ref": "#/definitions/memory.Scope"
+                },
+                "source": {
+                    "$ref": "#/definitions/memory.Source"
+                },
+                "subjectKey": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "validUntil": {
+                    "type": "integer"
+                }
+            }
+        },
         "memory.Scope": {
             "type": "object",
             "properties": {
@@ -2713,6 +2864,55 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "memory.Version": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "activeVersionRef": {
+                    "$ref": "#/definitions/memory.VersionRef"
+                },
+                "actor": {
+                    "type": "string"
+                },
+                "appliedAt": {
+                    "type": "integer"
+                },
+                "appliedRevision": {
+                    "type": "integer"
+                },
+                "document": {
+                    "$ref": "#/definitions/memory.Document"
+                },
+                "retiredAt": {
+                    "type": "integer"
+                },
+                "versionRef": {
+                    "$ref": "#/definitions/memory.VersionRef"
+                }
+            }
+        },
+        "memory.VersionPage": {
+            "type": "object",
+            "properties": {
+                "activeVersionRef": {
+                    "$ref": "#/definitions/memory.VersionRef"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/memory.VersionSummary"
+                    }
+                },
+                "nextAfterRevision": {
+                    "type": "integer"
+                },
+                "retiredAt": {
+                    "type": "integer"
+                }
+            }
+        },
         "memory.VersionRef": {
             "type": "object",
             "properties": {
@@ -2739,6 +2939,26 @@ const docTemplateAgentic = `{
                 },
                 "versionURI": {
                     "type": "string"
+                }
+            }
+        },
+        "memory.VersionSummary": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "actor": {
+                    "type": "string"
+                },
+                "appliedAt": {
+                    "type": "integer"
+                },
+                "appliedRevision": {
+                    "type": "integer"
+                },
+                "versionRef": {
+                    "$ref": "#/definitions/memory.VersionRef"
                 }
             }
         },

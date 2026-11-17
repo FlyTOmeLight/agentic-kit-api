@@ -6,7 +6,7 @@
 
 当前执行链路支持 worker 重启后接管已提交任务。上下文构建已实现预算预检、工具结果有界预览、历史两级裁剪和当前轮工具链折叠：Run 接受时冻结完整材料、策略与预算，配套 worker 每次模型调用前重新构建输入。新 Run 使用 `context-v3`，超限先移除低优先级 Memory，再从旧到新折叠历史工具过程、保留问答，仍超限才删除整轮；历史耗尽后仍超限时，把当前轮较旧的工具结果替换为投影标记，只保留最近 3 条完整结果。旧 `context-v1`、`context-v2` 快照保持各自原有裁剪规则。原始消息、工具结果和快照继续完整保存。
 
-Memory 已提供 OwnerPrivate 人工创建、读取、纠正、停用和显式 Restore；聊天与应用执行默认 Off，显式 Recall 时通过 `RecallTx` 在接受事务内读取本地生效投影，并将完整材料冻结进 Run。可选 artifact 适配使用 artifact-go `v0.5.0`、server-go `v0.13.0`，以持久操作回执连接远端存档与本地 CAS 生效；配置归档时，API 后台会继续未完成的 Create/Update/Restore。版本历史 API、自动提炼、语义检索和版本删除/回收尚未实现，真实 artifact 部署尚未联合验证。范围和后续设计见 [Memory 设计](docs/memory-design.md)；[通用框架重构设计](docs/refactoring-design.md)的完整访问模型和目录重组仍未全部落地。
+Memory 已提供 OwnerPrivate 人工创建、读取、纠正、停用、显式 Restore 和已生效版本历史查询；聊天与应用执行默认 Off，显式 Recall 时通过 `RecallTx` 在接受事务内读取本地生效投影，并将完整材料冻结进 Run。可选 artifact 适配使用 artifact-go `v0.5.0`、server-go `v0.13.0`，以持久操作回执连接远端存档与本地 CAS 生效；配置归档时，API 后台会继续未完成的 Create/Update/Restore。自动提炼、语义检索和版本删除/回收尚未实现，真实 artifact 部署尚未联合验证。范围和后续设计见 [Memory 设计](docs/memory-design.md)；[通用框架重构设计](docs/refactoring-design.md)的完整访问模型和目录重组仍未全部落地。
 
 Agent 的 `model.contextWindow` 可配置模型窗口；设置后必须同时设置正数 `model.maxTokens`，且小于窗口。输入预算取两者之差，使用版本化 UTF-8 字节估算与 256 token 协议预留；这是偏保守的估算，不是模型 tokenizer 的精确计数。不配置窗口时使用 128 KiB 输入字节上限。单条工具结果默认最多向模型展示 16 KiB，配置窗口时再限制为输入预算的四分之一（最低 128 字节）。提交期对已知材料预检，超限返回 HTTP 400 `ContextBudgetExceeded`；worker 按实际工具 schema 和当前工具链复检，必需内容仍超限则结束为 Failed。
 

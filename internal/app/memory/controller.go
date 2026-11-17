@@ -10,6 +10,7 @@ import (
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -34,8 +35,69 @@ func (h *Controller) RegisterRoutes(v1 *core.RouterGroup) {
 	g.POST("", h.create)
 	g.GET("", h.list)
 	g.GET("/:id", h.get)
+	g.GET("/:id/versions", h.listVersions)
+	g.GET("/:id/versions/:versionID", h.getVersion)
 	g.PUT("/:id", h.update)
 	g.POST("/:id/retire", h.retire)
+}
+
+// listMemoryVersions lists adopted archived versions.
+// @Summary 列出记忆版本
+// @Tags Memory
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "记忆 ID"
+// @Param afterRevision query int false "上一页游标"
+// @Param limit query int false "数量，1 到 100" default(50)
+// @Success 200 {object} memory.VersionPage
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Router /v1/memories/{id}/versions [get]
+func (h *Controller) listVersions(c *core.Context) {
+	var after int64
+	limit := 50
+	if value := c.Query("afterRevision"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed <= 0 {
+			apperror.Respond(c, memory.ErrInvalid)
+			return
+		}
+		after = parsed
+	}
+	if value := c.Query("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			apperror.Respond(c, memory.ErrInvalid)
+			return
+		}
+		limit = parsed
+	}
+	page, err := h.service.ListVersions(c.Request.Context(), auth.UserID(c), c.Param("id"), after, limit)
+	if err != nil {
+		apperror.Respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, page)
+}
+
+// getMemoryVersion reads one adopted archived version.
+// @Summary 查询记忆版本
+// @Tags Memory
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "记忆 ID"
+// @Param versionID path string true "版本 ID"
+// @Success 200 {object} memory.Version
+// @Failure 404 {object} serrors.Error "资源不存在或版本未生效"
+// @Failure 503 {object} serrors.Error "归档版本或依赖不可用"
+// @Router /v1/memories/{id}/versions/{versionID} [get]
+func (h *Controller) getVersion(c *core.Context) {
+	version, err := h.service.GetVersion(c.Request.Context(), auth.UserID(c), c.Param("id"), c.Param("versionID"))
+	if err != nil {
+		apperror.Respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, version)
 }
 
 // createMemory 创建记忆条目。

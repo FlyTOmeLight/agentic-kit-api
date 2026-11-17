@@ -26,6 +26,8 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | POST /v1/memories | 创建 OwnerPrivate 记忆，返回 201 | document；Idempotency-Key header 必填 |
 | GET /v1/memories | 列出 OwnerPrivate 记忆 | after、limit |
 | GET /v1/memories/{id} | 读取当前生效投影 | 无 |
+| GET /v1/memories/{id}/versions | 分页列出已生效归档版本 | afterRevision、limit |
+| GET /v1/memories/{id}/versions/{versionID} | 读取已生效版本正文 | 无 |
 | PUT /v1/memories/{id} | 更新活跃记忆或恢复停用记忆 | expectedRevision、可选 restore、document；Idempotency-Key header 必填 |
 | POST /v1/memories/{id}/retire | 停用记忆 | expectedRevision；Idempotency-Key header 必填 |
 
@@ -55,7 +57,7 @@ SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payloa
 
 ## Memory
 
-当前 HTTP 维护入口只开放 OwnerPrivate 范围，owner 取自已接入的身份 middleware；完整的多主体授权尚未实现。Create 返回 201，其余成功操作返回 200。Entry 的 `revision` 表示当前投影修订；启用归档时还返回固定的 `activeVersionRef`，内容操作以该引用为准。当前只读取本地生效投影，版本历史查询尚未开放。
+当前 HTTP 维护入口只开放 OwnerPrivate 范围，owner 取自已接入的身份 middleware；完整的多主体授权尚未实现。Create 返回 201，其余成功操作返回 200。Entry 的 `revision` 表示当前投影修订；启用归档时还返回固定的 `activeVersionRef`，内容操作以该引用为准。
 
 `POST /v1/memories` 的 body 必须包含完整 `document`。`PUT /v1/memories/{id}` 的 body 必须包含 `expectedRevision` 和完整 `document`；`restore` 为 `false` 或省略时执行 Update，只允许修改活跃条目；`restore` 为 `true` 时执行 Restore，只允许恢复已停用条目。两种操作都要求 `expectedRevision` 等于操作开始时的当前 revision，成功后 revision 递增。Scope、agentID、kind、subjectKey 等身份字段不能通过更新改变。对活跃条目请求 Restore、对已停用条目执行普通 Update、revision 不匹配或同键不同参数均返回 409。`POST /v1/memories/{id}/retire` 只接受 `expectedRevision`。
 
@@ -63,7 +65,7 @@ SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payloa
 
 Memory 写操作除通用的 400、401、403、404、409 外，还会返回以下稳定 503 错误码。`MemoryOperationPending` 表示操作已受理但远端归档或本地生效尚未完成，使用原键重试；`MemoryUnavailable` 表示归档或其他依赖暂不可用，修复依赖后继续原键；`MemoryOperationOutcomeUnknown` 表示本地生效提交结果不明，必须保留原幂等键、原 collection 和原版本身份，用原键继续处理，不能换键或重建集合，也不能当成确定的失败结果；`MemoryVersionUnavailable` 表示此前发布已发生但对应 artifact 版本正文不可用，可能来自源版本 410。遇到 `MemoryVersionUnavailable` 必须保留原幂等键、原 collection 和原版本身份，不能换键或重建集合并自动生效，应保留引用并交由受控修复。
 
-当前不提供版本历史 API：`GET /v1/memories/{id}/versions` 和 `GET /v1/memories/{id}/versions/{versionID}` 仍是待实现契约。客户端目前只能读取 Entry 的 `revision` 和 `activeVersionRef`，不能把 artifact 的任意版本 URI 当作已授权历史入口。
+版本历史列表按 `appliedRevision` 降序返回 `items`，每项包含 `versionRef`、`appliedRevision`、`actor`、`appliedAt` 和 `active`。`limit` 默认 50，范围 1–100；使用上一页的 `nextAfterRevision` 请求下一页，字段缺省表示没有下一页。列表另返回当前 `activeVersionRef` 和可选 `retiredAt`；停用后所有历史项的 `active` 为 false。列表只查本地已生效的 Create、Update、Restore 回执，不依赖 artifact；纯本地模式没有归档引用，列表为空。详情先验证条目归属和成功生效回执，再按固定引用读取 `document`；未采用的版本返回 404，正文缺失返回 503 `MemoryVersionUnavailable`，依赖故障返回 503 `MemoryUnavailable`。
 
 ## 进程探针
 

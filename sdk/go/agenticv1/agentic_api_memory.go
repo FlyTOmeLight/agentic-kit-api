@@ -6,6 +6,15 @@ type MemoryEntry = memory.Entry
 
 type MemoryDocument = memory.Document
 
+type MemoryVersion = memory.Version
+
+type MemoryVersionPage = memory.VersionPage
+
+type ListMemoryVersionsOptions struct {
+	AfterRevision int64
+	Limit         int
+}
+
 type CreateMemoryRequest struct {
 	IdempotencyKey string         `json:"-" header:"Idempotency-Key" binding:"required,max=128"`
 	Document       MemoryDocument `json:"document" binding:"required"`
