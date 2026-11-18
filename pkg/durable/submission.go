@@ -154,11 +154,14 @@ func (tx *Tx) Submit(
 			return recordError(err)
 		}
 		if cmd.GoalID != "" {
-			if err = table.TenantQuery(ctx, tx.db).Model(&table.Goal{}).
+			tag := table.TenantQuery(ctx, tx.db).Model(&table.Goal{}).
 				Where("owner_id = ? AND id = ? AND status = ?", cmd.Owner, cmd.GoalID, GoalActive).
-				Update("active_run_id", id).
-				Error; err != nil {
-				return err
+				Update("active_run_id", id)
+			if tag.Error != nil {
+				return tag.Error
+			}
+			if tag.RowsAffected != 1 {
+				return ErrConflict
 			}
 		}
 		run, err = readRun(tx.db.Where("id = ?", id))
