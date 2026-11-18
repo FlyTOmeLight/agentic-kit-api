@@ -30,11 +30,43 @@ Worker 对 `ResponseMeta`/`Usage` 缺失返回 `ErrModelUsageUnavailable`，停�
 
 成功响应暂存为 `PendingModel`，与 Turn、usage 和 Run state 同事务提交；接管直接应用该响应，不再请求模型。记账失败恢复 Turn 和 PendingModel 并传播错误，响应已经返回也不继续工具。流式响应完整缓冲、合并为单条消息后统一校验和记账，最后只返回合并后的消息流，合并元数据也随该消息保留。
 
-API `RecordUsageWithCost` 先读取 Run 的 owner/goal 绑定，锁 Goal，再锁 Run。重复 `(run_id, turn, call)` 不重复计费；新用量与 Run/Goal 汇总、state 和 `UsageRecorded` 事件同事务提交。`Usage.CostUSD` 和 `RecordUsageWithCost` 已存在，但 Worker 没有供应方价格，当前走 `RecordUsage`，实际 cost 为 0。
+API `RecordUsageWithCost` 先读取 Run 的 owner/goal 绑定，锁 Goal，再锁 Run。重复 `(run_id, turn, call)` 不重复计费；新用量与 Run/Goal 汇总、state 和 `UsageRecorded` 事件同事务提交。Worker 根据 Run 冻结的模型价格提交费用；提交时空价格表冻结为仅 token 计量、费用为 0；此时若 Goal 的 `MaxCostUSD > 0`，主模型和摘要调用前都会失败。
+
+非空价格表缺模型在 API 提交时拒绝。有价格快照但 usage 只有正数总 token 而无法拆分计价时，主模型与摘要都将已知 token、零费用和带 `PricingFailure` 的 state 同事务提交，再返回确定性计价错误。这里的零费用表示未完成计价；计价失败与预算耗尽分别处理，摘要不能将计价失败当作普通压缩失败后继续主模型。接管会先检查持久化的 `PricingFailure`，在应用 PendingModel、继续摘要或请求模型前继续阻断；同一 usage 编号的重放会去重，不能补价。
 
 预算只在调用前检查、响应后记账，没有预占或在途额度。并发调用和单次超预算响应可以超过上限；响应已产生、记账事务尚未提交时进程退出，费用事实未知，重试可能再次产生费用。当前保证已提交用量的幂等恢复，不承诺严格硬上限。
 
-证据：API `pkg/durable/usage_test.go` 覆盖预算阈值、已知 0、幂等重放、旧租约、非 Active Goal 汇总、费用字段、Goal→Run 锁序与父子 Run 并发记账。Worker `internal/engine/usage_test.go` 覆盖缺失/已知 usage、记账前工具阻断和 PendingModel 接管，`internal/engine/compaction_test.go` 覆盖摘要预算、未知 usage 与记录失败，`internal/adapters/summarizer_test.go` 覆盖真实 HTTP usage 与“内容失败但 usage 已知仍记账”。本轮测试结果由主代理最终核实；Goal→Run 锁序的真库复现也待主代理确认。
+证据：API `pkg/durable/usage_test.go` 覆盖预算阈值、已知 0、幂等重放、旧租约、非 Active Goal 汇总、费用字段、Goal→Run 锁序与父子 Run 并发记账。真实 PostgreSQL 屏障测试曾复现反向锁序的 `SQLSTATE 40P01`，统一 Goal→Run 锁序后同场景通过。Worker `internal/engine/usage_test.go` 覆盖缺失/已知 usage、记账前工具阻断和 PendingModel 接管，`internal/engine/compaction_test.go` 覆盖摘要预算、未知 usage、计价失败与记录失败，`internal/adapters/summarizer_test.go` 覆盖受控 HTTP 响应的 usage 解析与“内容失败但 usage 已知仍记账”。`internal/engine/pricing_test.go`、`pricing_recovery_test.go` 覆盖缓存价继承与显式零及计价失败后的接管阻断。两仓全量集成的验证范围见 `docs/verification.md`；真实供应方账单与严格硬预算不在这些测试的保证范围。
+
+## 派发中崩溃必须 fail-closed
+
+模型或摘要请求已派发、usage 尚未持久化时 Worker 崩溃，消费事实未知。自动重放会重复产生费用并可能重复执行工具；把未知消费记为 0 会绕过预算。两者都不能接受。
+
+Worker 在派发前用 `Store.SaveState` 把 `State.InflightModel{Kind, Sequence}` 持久化，usage 与清除 marker 同事务提交。接班人发现 marker 即提交 `BoundaryBlock`：Run 置 `Blocked`（非终态）、Goal 置 `GoalBlocked`、发出 `RunBlocked`，不 Build、不调用模型、不执行工具、不记 0。同进程内调用错误或摘要成功但 usage 未提交也保留 marker 并阻断；返回错误不证明请求未发送。usage 已提交但摘要调用失败时，marker 已被记账事务清除，Run 记录 CompactionFailure 后继续，不能重新标记、不能重复记账。
+
+`SaveState` 走租户作用域，只认 lease 三元组且要求 Running；Blocked、过期、错 worker、错租户统一返回 `ErrLeaseLost`。SSE 在 Terminal 或 Blocked 后关闭流，保证调用方收到 `RunBlocked`。
+
+证据：Worker `TestInflightModelBlocksReplacement`、`TestInflightSummaryBlocksReplacement`、`TestCompactionRecordedUsageSurvivesSummaryError`、`TestProcessKillResumesWithoutRepeatingTool`（真实进程 kill 后 Blocked、工具不重复、SSE 含 `RunBlocked`）；API `TestSaveState`、`TestSaveStateTenantIsolation`。Blocked 只接受下节的人工恢复，不自动解除。
+
+## 人工恢复必须说明接受了什么
+
+`unblock(epoch, reason)` 表示人工接受未知消费并授权重新派发，不能表述为“原请求未发送”或“补记零费用”。恢复只清除派发标记，不增加 usage，不改变 checkpoint 或已完成步骤。旧 epoch、到期、忙会话、预算耗尽、Stall 达阈值均拒绝；改变状态、递增 epoch 和 `RunUnblocked` 审计必须同事务，事件写入失败则回滚。Goal→Run 的锁顺序与记账保持一致，会话锁不可得立即冲突，避免反向等待。
+
+API 解析的 `version/inflightModel/pricingFailure/pendingModel` 成为共享 execution 控制头，checkpoint 仍由 Worker 拥有。用 `map[string]json.RawMessage` 定点删除 marker，避免反序列化为 `map[string]any` 损失大整数精度。仅支持 version 3；损坏标记、计价失败或已有 PendingModel 都不猜测修复。恢复 child 不直接恢复 Goal；根 Run 仍为 ActiveRunID 且无其他 Blocked Run 时才恢复 Goal。
+
+摘要“成功但未回报 usage”和“普通错误未回报 usage”也属于未知消费，不能降级成 CompactionFailure 后继续主模型。恢复测试须既检查模型重新派发，又检查此前完成的工具没有重复调用。已知 usage 的调用错误仍按记账后重试处理；测试 Stream 替身须实际产出响应及 usage，不能用 nil 回调产生的 panic 代替 provider 错误。
+
+模型装饰器还须保留底层 callbacks 能力。Eino ADK 对未管理 callbacks 的模型自动套包装器，Generate 遇到错误会丢弃同时返回的 message；边界因而拿不到其中的 usage，只能按未知消费阻断。Worker 的 usageModel 通过 `components.IsCallbacksEnabled` 转发底层能力，WithTools 后重新检查绑定后的模型，不能无条件返回 true。已知 usage 错误的回归应模拟真实 callbacks 契约，断言记账后 Queued；未启用 callbacks、边界未取得响应的场景则仍应 Blocked，不能用后者替代前者验收。
+
+证据：API `TestReleaseInflightModel`、`TestUnblockResumesAndAudits`、`TestUnblockRejectsWithoutMutation`、`TestUnblockBusySessionAndRollback`、`TestUnblockConcurrentSingleWinner`、`TestUnblockChildRequiresGoalResume`、`TestSDKUnblockRun`；Worker `TestUnblockResumesWithoutRepeatingCompletedTools`、`TestCompactionUsageGovernance`、`TestModelUsageStopsToolsAndRetriesKnownFailure`、`TestUsageModelForwardsCallbacks`、`TestBuildModelPreservesCallbacks`。这些检查使用本机 PostgreSQL 与受控模型，不验证真实供应方账单或人工界面。
+
+## 价格必须随 Run 冻结
+
+Worker 每次执行时读取部署价格，会让同一 Run 的接管、Goal 后续轮次或 Child Run 因部署改价而改变费用依据。API 在接受 Chat/Application 前冻结版本、模型、BaseURL 与单价，幂等 replay 先返回已接受的 Run；Goal/Child 复制持久化 Spec，不再次查询价格表。
+
+`PricingFrozen=true`、`PricingSnapshot=nil` 明确表示提交时选择仅 token 计量。`PricingFrozen=false` 表示旧 Run 没有冻结事实，Worker 必须在模型调用前拒绝，不能回退当前价格；应经 API 重新提交。主模型和摘要共用同一模型及快照。空表、零价与计价失败是三个不同事实，不得都解释为供应方免费。
+
+证据：API `pkg/execution/pricing_test.go` 检查稳定价格版本及空表/缺模型，`internal/app/execution/pricing_test.go` 覆盖提交、改价后 replay，`pkg/durable/pricing_inheritance_test.go` 覆盖 Goal/Child 继承及持久化往返；Worker `internal/engine/pricing_snapshot_test.go` 覆盖冻结标记、快照身份、非法价格及费用预算。Worker config 测试还覆盖拒绝遗留 `[Pricing]` 参数，防止运营误以为 Worker 配置仍能改价。
 
 ## Steering 消费必须保存可恢复状态
 
@@ -133,3 +165,15 @@ go test -race -count=1 -v -timeout 10m \
 ```
 
 镜像与检查点目录沿用夹具配置，可通过 `SANDBOX_E2E_GUARD_IMAGE`、`SANDBOX_E2E_SAVER_IMAGE`、`SANDBOX_E2E_CHECKPOINT_HOST_PATH` 指定。缺少数据库或集群环境变量会跳过测试，必须看到该用例 PASS，不能只看命令退出码。
+
+## 真实租户中间件下测试夹具必须同步契约
+
+API 控制面启用 `internal/client/tenant.go` 的真实租户中间件后，Worker 测试夹具不能只改数据库或只补配置。2026-11-17 的 Worker 全量集成失败来自三处契约漂移：
+
+- 直接 `INSERT INTO agent` 的测试夹具未提供 `tenant_id`，而表结构已要求非空。
+- 进程级测试缺少 `[Tenant].Endpoint` 与 `ServiceAPIKey`，`service.Build` 的 `ValidateAPI` 直接拒绝。
+- 跨进程请求未携带 `Authorization` 与 `x-forge-tenant-id`，中间件返回 `SCOPE_REQUIRED`。
+
+修复方式是让测试替身同时满足三层契约：数据库夹具写入非空 `tenant_id`；进程配置指向 `newFakeTenantServer`；所有 API 请求携带 Bearer 凭证与租户选择头。fake 服务只需覆盖 `/internal/v1/scope/resolve` 与 `/internal/v1/service/self`，但 scope 响应必须让 `principal.id == user_id`，并按请求回显 `tenant_id` / `project_id`。
+
+证据：修复后 `TestProcessKillResumesWithoutRepeatingTool`、`TestProcessShutdownCancelsInFlightHTTPTool` 及 Worker 全量 `make integration` 通过。该结论只证明测试夹具与当前中间件契约兼容，不证明 Forge 生产配置已验收。

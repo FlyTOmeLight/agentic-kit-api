@@ -91,6 +91,7 @@ const (
 	BoundaryAwaitClarification = execution.BoundaryAwaitClarification
 	BoundaryAwaitReview        = execution.BoundaryAwaitReview
 	BoundaryAwaitExternal      = execution.BoundaryAwaitExternal
+	BoundaryBlock              = execution.BoundaryBlock
 	InteractionClarification   = execution.InteractionClarification
 	InteractionReview          = execution.InteractionReview
 	StepExecute                = execution.StepExecute

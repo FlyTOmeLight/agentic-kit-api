@@ -12,6 +12,7 @@ import (
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/sandboxcenter"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 func TestRouteAuthenticationBoundaries(t *testing.T) {
@@ -58,7 +59,7 @@ func TestRouteAuthenticationBoundaries(t *testing.T) {
 				&durable.Store{}, nil, newArtifactClient(t, artifactServer),
 				nil,
 				sandboxcenter.NewStore(nil), nil,
-				config.CallbackConfig{Enabled: test.callbackEnabled}, test.authentication,
+				config.CallbackConfig{Enabled: test.callbackEnabled}, test.authentication, execution.PricingCatalog{},
 			)
 			router := gin.New()
 			routes.register(router.Group(""))
@@ -113,6 +114,7 @@ func TestHTTPRoutesRequireTenantScope(t *testing.T) {
 			routes := newRoutes(
 				&durable.Store{}, nil, newArtifactClient(t, artifactServer),
 				nil, nil, nil, config.CallbackConfig{}, authentication,
+				execution.PricingCatalog{},
 			)
 			router := gin.New()
 			routes.register(router.Group(""))

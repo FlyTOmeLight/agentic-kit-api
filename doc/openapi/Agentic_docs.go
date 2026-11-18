@@ -2096,6 +2096,84 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "/v1/runs/{id}/unblock": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "人工恢复阻断的任务",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "epoch 与人工处理说明",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/agenticv1.UnblockRunRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "成功，无响应体"
+                    },
+                    "400": {
+                        "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "状态、epoch 或恢复条件冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "413": {
+                        "description": "请求体超过限制",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/sandboxes": {
             "post": {
                 "description": "按 (ownerId, requestKey) 幂等；首次申请会调度 Pod 并激活租约。",
@@ -3400,6 +3478,23 @@ const docTemplateAgentic = `{
                 "stepID": {
                     "type": "string",
                     "maxLength": 128
+                }
+            }
+        },
+        "agenticv1.UnblockRunRequest": {
+            "type": "object",
+            "required": [
+                "epoch",
+                "reason"
+            ],
+            "properties": {
+                "epoch": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "reason": {
+                    "type": "string",
+                    "maxLength": 4096
                 }
             }
         },

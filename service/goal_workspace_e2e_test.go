@@ -222,6 +222,9 @@ func TestGoalWorkspaceWorkerKubernetesE2E(t *testing.T) {
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"id": "workspace-completion", "object": "chat.completion", "model": "workspace-test",
 			"choices": []any{map[string]any{"index": 0, "message": message, "finish_reason": finish}},
+			"usage": map[string]any{
+				"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
+			},
 		})
 	}))
 	t.Cleanup(model.Close)
@@ -251,7 +254,7 @@ func TestGoalWorkspaceWorkerKubernetesE2E(t *testing.T) {
 			AgentVersion: version.Number,
 			Query:        "update the workspace",
 			Scope: &sdk.Scope{
-				TenantID: "workspace-e2e",
+				TenantID: "tenant",
 				ActorID:  "owner",
 				TaskID:   "repair",
 				RoundID:  "first",

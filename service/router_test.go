@@ -28,6 +28,7 @@ import (
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 type testRoutes struct{ register func(*gin.RouterGroup) }
@@ -101,7 +102,10 @@ func newRouterWithCallback(
 		User: []gin.HandlerFunc{identity}, Propagation: []gin.HandlerFunc{identity},
 		Callback: []gin.HandlerFunc{identity},
 	}
-	routes := newRoutes(store, redisClient, newArtifactClient(t, artifactServer), nil, nil, nil, callbackCfg, authentication)
+	routes := newRoutes(
+		store, redisClient, newArtifactClient(t, artifactServer),
+		nil, nil, nil, callbackCfg, authentication, execution.PricingCatalog{},
+	)
 	h, err := host.NewHTTPHost(manager, log, nil, testRoutes{register: func(g *gin.RouterGroup) {
 		routes.register(g)
 		if extra != nil {
@@ -657,6 +661,56 @@ func TestGinRunLifecycleAndSSE(t *testing.T) {
 	canceled, err := store.Get(ctx, "owner", run.ID)
 	if err != nil || canceled.Status != durable.Canceled {
 		t.Fatalf("%+v %v", canceled, err)
+	}
+}
+
+func TestGinBlockedRunClosesSSE(t *testing.T) {
+	store := integrationStore(t)
+	router := NewRouter(
+		t,
+		store,
+		nil,
+		map[string]string{testToken: "owner"},
+	)
+	session := createHTTPConversation(t, router)
+	w := request(
+		router,
+		"POST",
+		"/v1/sessions/"+session.ID+"/messages",
+		`{"query":"question"}`,
+		testToken,
+		"key",
+	)
+	if w.Code != 202 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var run durable.Run
+	if err := json.Unmarshal(w.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	active, err := store.Claim(ctx, "test-worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.CommitBoundary(ctx, active.Lease(), durable.Boundary{
+		Kind:   durable.BoundaryBlock,
+		State:  json.RawMessage(`{}`),
+		Detail: "model usage unavailable",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := store.Get(ctx, "owner", run.ID)
+	if err != nil || blocked.Status != durable.Blocked {
+		t.Fatalf("%+v %v", blocked, err)
+	}
+	eventRequest := httptest.NewRequest("GET", "/v1/runs/"+run.ID+"/events", nil)
+	eventRequest.Header.Set("Authorization", "Bearer "+testToken)
+	w = requestHTTP(t, router, eventRequest)
+	if w.Code != 200 ||
+		!strings.Contains(w.Body.String(), "event:RunBlocked\n") ||
+		!strings.Contains(w.Body.String(), "model usage unavailable") {
+		t.Fatalf("SSE %d %s", w.Code, w.Body.String())
 	}
 }
 

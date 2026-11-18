@@ -48,6 +48,9 @@ type ToolCall struct {
 
 // Spec is an immutable snapshot. Credentials are environment references, never secret values.
 type Spec struct {
+	PricingFrozen   bool             `json:"pricingFrozen,omitempty"`
+	PricingSnapshot *PricingSnapshot `json:"pricingSnapshot,omitempty"`
+
 	Toolsets   []string           `json:"toolsets,omitempty"`
 	Filesystem *FilesystemBinding `json:"filesystem,omitempty"`
 	Scope      *workspace.Scope   `json:"scope,omitempty"`

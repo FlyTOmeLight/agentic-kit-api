@@ -56,6 +56,7 @@ func PrepareChatSubmission(
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
 		spec := execution.CompileRunSpec(config, agentID, version, facts.Query, nil, nil)
+		spec.PricingSnapshot = facts.PricingSnapshot
 		history, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
 		if err != nil {
 			return execution.PreparedSubmission{}, err
@@ -90,6 +91,7 @@ func PrepareApplicationSubmission(
 	) (execution.PreparedSubmission, error) {
 		input := facts.ExecutionSpec
 		spec := execution.CompileRunSpec(config, agentID, version, input.Query, input.Scope, input.Filesystem)
+		spec.PricingSnapshot = facts.PricingSnapshot
 		if len(spec.Toolsets) > 0 {
 			if spec.Filesystem == nil ||
 				(spec.Filesystem.Provider != "AIO" && spec.Filesystem.Provider != "Sandbox") ||

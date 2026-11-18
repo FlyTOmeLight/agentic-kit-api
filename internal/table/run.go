@@ -14,6 +14,9 @@ import (
 
 // ExecutionSnapshot stores the immutable configuration accepted for a run.
 type ExecutionSnapshot struct {
+	PricingFrozen   bool                       `json:"pricingFrozen,omitempty"`
+	PricingSnapshot *execution.PricingSnapshot `json:"pricingSnapshot,omitempty"`
+
 	Toolsets   []string                     `json:"toolsets,omitempty"`
 	Filesystem *execution.FilesystemBinding `json:"filesystem,omitempty"`
 	Scope      *workspace.Scope             `json:"scope,omitempty"`

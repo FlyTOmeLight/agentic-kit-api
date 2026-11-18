@@ -330,6 +330,7 @@ func TestJSONRoundTripAndRepeatedSchemaInit(t *testing.T) {
 	ctx := context.Background()
 	temperature := float32(0.3)
 	spec := Spec{
+		PricingFrozen: true,
 		AgentID:       "agent",
 		ConfigVersion: "1",
 		Query:         "中文问题",

@@ -29,6 +29,19 @@ BearerToken = "${env:ARTIFACT_BEARER_TOKEN:}"
 TimeoutSeconds = "${env:ARTIFACT_TIMEOUT_SECONDS:30}"
 MaxPayloadBytes = "${env:ARTIFACT_MAX_PAYLOAD_BYTES:262144}"
 
+[Pricing]
+Version = "${env:PRICING_VERSION:}"
+Models = []
+
+# To enable cost accounting, replace Models = [] with model entries:
+# [[Pricing.Models]]
+# Name = "your-model"
+# InputPerMillion = 1.0
+# CachedInputPerMillion = 0.0
+# OutputPerMillion = 2.0
+# Prices are USD per million tokens. Omit cached price to use input price.
+# Empty Version derives a stable catalog digest; each Run freezes its price.
+
 # Sandbox routes require an allowed Forge service. With an allowlist,
 # empty K8sContext serves metadata routes without provisioning pods.
 [Sandbox]

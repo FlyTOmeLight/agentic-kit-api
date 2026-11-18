@@ -53,6 +53,19 @@ func (c *runClient) Cancel(ctx context.Context, req *CancelRunRequest) error {
 	return err
 }
 
+func (c *runClient) Unblock(ctx context.Context, req *UnblockRunRequest) error {
+	_, err := jsonResult[struct{}](
+		ctx,
+		c.transport,
+		http.MethodPost,
+		"/v1/runs/"+url.PathEscape(req.ID)+"/unblock",
+		req,
+		nil,
+		http.StatusNoContent,
+	)
+	return err
+}
+
 func (c *runClient) Answer(ctx context.Context, req *AnswerRunRequest) error {
 	_, err := jsonResult[struct{}](
 		ctx,

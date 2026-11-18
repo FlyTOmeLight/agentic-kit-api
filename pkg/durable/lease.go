@@ -106,6 +106,27 @@ func (s *Store) Renew(ctx context.Context, l Lease, d time.Duration) error {
 	return nil
 }
 
+// SaveState persists the executor's opaque state envelope under the caller's
+// lease without emitting a boundary event. Workers use it to durably mark an
+// in-flight model or summary dispatch before the provider call, so a crashed
+// worker can be distinguished from one that simply has not reported usage yet.
+func (s *Store) SaveState(ctx context.Context, l Lease, state json.RawMessage) error {
+	if !json.Valid(state) {
+		return ErrInvalid
+	}
+	tag := table.TenantQuery(ctx, s.db).
+		Model(&table.Run{}).
+		Where("id = ? AND worker_id = ? AND epoch = ? AND status = ? AND lease_until > clock_timestamp() AND deadline > clock_timestamp()", l.RunID, l.WorkerID, l.Epoch, Running).
+		Updates(map[string]any{"state": string(state), "updated_at": gorm.Expr("clock_timestamp()")})
+	if tag.Error != nil {
+		return tag.Error
+	}
+	if tag.RowsAffected != 1 {
+		return ErrLeaseLost
+	}
+	return nil
+}
+
 func lockLease(ctx context.Context, tx *gorm.DB, l Lease) (*Run, error) {
 	r, err := readRun(
 		tx.Model(&table.Run{}).

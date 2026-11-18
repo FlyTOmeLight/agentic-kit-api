@@ -3,8 +3,10 @@ package durable
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
@@ -15,6 +17,9 @@ import (
 func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 	if err := b.Validate(); err != nil {
 		return err
+	}
+	if b.Kind == BoundaryBlock {
+		return s.commitBlockBoundary(ctx, l, b)
 	}
 	tx := s.db.WithContext(ctx).Begin()
 	if err := tx.Error; err != nil {
@@ -112,6 +117,83 @@ func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 		if err = cascadeCancelChildren(ctx, tx, l.RunID); err != nil {
 			return err
 		}
+	}
+	return tx.Commit().Error
+}
+
+// commitBlockBoundary parks a run the worker cannot continue and releases its
+// lease in one transaction with the goal state. A blocked run is not
+// terminal: no child wake-up or cancel cascade runs, and a blocked goal waits
+// for a new iteration instead of converging. The goal lock is taken before
+// the run lock, matching RecordUsageWithCost, so concurrent usage accounting
+// and blocking cannot deadlock.
+func (s *Store) commitBlockBoundary(ctx context.Context, l Lease, b Boundary) error {
+	tx := s.db.WithContext(ctx).Begin()
+	if err := tx.Error; err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var binding table.Run
+	if err := table.TenantQuery(ctx, tx.Model(&table.Run{})).
+		Select("owner_id", "goal_id").
+		Where("id = ? AND worker_id = ? AND epoch = ?", l.RunID, l.WorkerID, l.Epoch).
+		Take(&binding).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrLeaseLost
+		}
+		return err
+	}
+	if binding.GoalID != "" {
+		var goal table.Goal
+		if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).
+			Where("owner_id = ? AND id = ?", binding.OwnerID, binding.GoalID).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Take(&goal).Error; err != nil {
+			return recordError(err)
+		}
+	}
+	if _, err := lockLease(ctx, table.TenantQuery(ctx, tx), l); err != nil {
+		return err
+	}
+	result := table.TenantQuery(ctx, tx.Model(&table.Run{})).Where("id = ?", l.RunID).Updates(map[string]any{
+		"state":                string(b.State),
+		"status":               Blocked,
+		"error":                b.Detail,
+		"output":               "",
+		"waiting_step":         "",
+		"waiting_kind":         "",
+		"waiting_external_ref": "",
+		"lease_until":          nil,
+		"worker_id":            "",
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrLeaseLost
+	}
+	if binding.GoalID != "" {
+		if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).
+			Where("owner_id = ? AND id = ? AND status = ?", binding.OwnerID, binding.GoalID, GoalActive).
+			Updates(map[string]any{
+				"status":     GoalBlocked,
+				"updated_at": gorm.Expr("clock_timestamp()"),
+			}).Error; err != nil {
+			return err
+		}
+	}
+	payload := map[string]any{
+		"status":      Blocked,
+		"output":      "",
+		"detail":      b.Detail,
+		"waitingStep": "",
+		"waitingKind": "",
+	}
+	if b.Context != nil {
+		payload["context"] = b.Context
+	}
+	if err := emit(ctx, tx, l.RunID, "RunBlocked", payload); err != nil {
+		return err
 	}
 	return tx.Commit().Error
 }

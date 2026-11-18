@@ -22,6 +22,7 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | POST /v1/runs/{id}/cancel | 取消 | 无 |
 | POST /v1/runs/{id}/answer | 回答澄清 | stepID、result |
 | POST /v1/runs/{id}/resolve | 提交人工确认的工具结果 | stepID、result |
+| POST /v1/runs/{id}/unblock | 接受未知消费并授权重新派发，返回 204 | epoch、reason |
 | GET /v1/runs/{id}/events | SSE 回放及订阅 | Last-Event-ID header 或 after query，格式 runID:seq |
 | POST /v1/memories | 创建 OwnerPrivate 记忆，返回 201 | document；Idempotency-Key header 必填 |
 | GET /v1/memories | 列出 OwnerPrivate 记忆 | after、limit |
@@ -51,17 +52,25 @@ artifact 出站请求统一使用 API 自身的 `Tenant.ServiceAPIKey` 作为 Be
 
 消息与对应任务状态在同一事务提交。客户端可以用会话消息列表展示历史，用 Run SSE 展示当前任务进度；Event 不作为聊天记录。当前模型上下文取最近 20 个已完成 Run 的 User/Final 消息，工具历史保存在消息表供查询，尚未实现跨轮工具历史与上下文压缩。
 
-任务状态为 Queued、Running、WaitingClarification、NeedsReview、Completed、Failed、Canceled。等待状态时，GET /v1/runs/{id} 与 Run 列表项从 `durable_run` 显式列返回 `waitingStep` 与 `waitingKind`（`Clarification` 或 `Review`），不再从 worker 私有 checkpoint JSON 解析。`POST /v1/runs/{id}/answer` 在 `WaitingClarification` 且 `waitingKind=Clarification` 时提交澄清；`POST /v1/runs/{id}/resolve` 在 `NeedsReview` 且 `waitingKind=Review` 时提交人工确认的工具结果。两处请求体仍为 `stepID` 与 `result`，`stepID` 必须等于当前 `waitingStep`；`result` 是提供给模型的用户回答或已确认工具结果。相关 SSE 事件 payload 在保留 `waitingStep` 的同时新增 `waitingKind`。
+任务状态为 Queued、Running、WaitingClarification、NeedsReview、WaitingExternal、Blocked、Completed、Failed、Canceled。等待状态时，GET /v1/runs/{id} 与 Run 列表项从 `durable_run` 显式列返回 `waitingStep` 与 `waitingKind`（`Clarification` 或 `Review`），不再从 worker 私有 checkpoint JSON 解析。`POST /v1/runs/{id}/answer` 在 `WaitingClarification` 且 `waitingKind=Clarification` 时提交澄清；`POST /v1/runs/{id}/resolve` 在 `NeedsReview` 且 `waitingKind=Review` 时提交人工确认的工具结果。两处请求体仍为 `stepID` 与 `result`，`stepID` 必须等于当前 `waitingStep`；`result` 是提供给模型的用户回答或已确认工具结果。相关 SSE 事件 payload 在保留 `waitingStep` 的同时新增 `waitingKind`。
 
-SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payload。客户端按该 id 去重。只在终态且已发送全部提交事件后关闭连接；WaitingClarification 和 NeedsReview 不是终态。重新连接不会启动新的任务。
+`POST /v1/runs/{id}/unblock` 只处理带有合法模型或摘要派发标记的 Blocked Run。请求示例为 `{"epoch":1,"reason":"已核查未知消费，接受重复计费风险并授权重新派发"}`。epoch 必须等于查询到的阻断版本，reason 去除首尾空白后非空且不超过 4096 字节。成功时清除派发标记、epoch 加一并重新排队；保留 checkpoint、已完成步骤、已记录 token 和费用，不补写未知 usage。此操作表示人工接受未知消费并授权新请求，不能证明旧请求未发送，可能重复计费。原调用账单核对和补账需另行处理。
 
-重要事件包括 RunQueued、RunStarted、ModelCompleted、ToolStarted、ToolCompleted、ClarificationRequested、RunNeedsReview、RunResumed、RunRetry、RunCompleted、RunFailed、RunCanceled。RunRetry 的 payload.status 可能为 Failed，客户端以状态字段为准，不仅凭事件名称判断。
+恢复仍要求 Run 未过期、会话无活动 Run 且可取得会话锁；有关联 Goal 时还要求 Goal 为 Active 或 Blocked、预算未耗尽、总期限未过且 StallCount 小于 3。根 Run 须仍为 Goal.ActiveRunID。只有恢复当前根 Run 且同 Goal 无其他 Blocked Run 时，Blocked Goal 才恢复 Active；恢复 child 不会直接恢复 Goal。非法状态或旧 epoch、旧状态格式、损坏标记、PricingFailure 或已有 PendingModel 均返回 409。重复提交返回 409；响应丢失时先查询 Run 及事件，不自动更换 epoch 重试。鉴权沿用 tenant 与 owner 隔离，其他 owner 或 tenant 返回 404。
+
+`RunUnblocked` 与重新排队同事务提交，记录 actorID、reason、blockedEpoch、新 epoch、原 inflightModel、previousError、goalID 和 goalResumed；审计失败时恢复全部回滚。
+
+如果只恢复 child，父 Run 在 WaitingExternal 等待，child 完成后会按原子任务链路唤醒父 Run，但 Goal 仍保持 Blocked。完成相关人工核查后，还需调用 `POST /internal/v1/goals/{id}/resume`，才能继续 Goal 验收、收敛或自动续轮。父子均 Blocked 时，先恢复 child、再恢复当前根 Run，可由根 Run 的 unblock 自动恢复 Goal；顺序相反时仍需显式 ResumeGoal。调用方应查询 Goal 或审计事件的 goalResumed 确认结果。
+
+SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payload。客户端按该 id 去重。在终态或 Blocked 且已发送全部提交事件后关闭连接；Blocked 保持非终态，恢复后可用原游标重新订阅。WaitingClarification 和 NeedsReview 不是终态。重新连接不会启动新的任务。
+
+重要事件包括 RunQueued、RunStarted、ModelCompleted、ToolStarted、ToolCompleted、ClarificationRequested、RunNeedsReview、RunResumed、RunRetry、RunBlocked、RunUnblocked、RunCompleted、RunFailed、RunCanceled。RunRetry 的 payload.status 可能为 Failed，客户端以状态字段为准，不仅凭事件名称判断。
 
 模型尚在生成时不会发逐 token delta；ModelCompleted 表示完整模型决策已经保存，RunCompleted 表示最终答案和完成事件已经同事务提交。
 
 ## Memory
 
-当前 HTTP 维护入口只开放 OwnerPrivate 范围，owner 取自已接入的身份 middleware；完整的多主体授权尚未实现。Create 返回 201，其余成功操作返回 200。Entry 的 `revision` 表示当前投影修订；启用归档时还返回固定的 `activeVersionRef`，内容操作以该引用为准。
+当前 HTTP 维护入口开放 OwnerPrivate 范围。服务从 Forge 验证结果确定租户、项目和 owner，写入文档的 `scope.tenant`、`scope.project` 必须与验证结果一致。Create 返回 201，其余成功操作返回 200。Entry 的 `revision` 表示当前投影修订，启用归档时还返回固定的 `activeVersionRef`。
 
 `POST /v1/memories` 的 body 必须包含完整 `document`。`PUT /v1/memories/{id}` 的 body 必须包含 `expectedRevision` 和完整 `document`；`restore` 为 `false` 或省略时执行 Update，只允许修改活跃条目；`restore` 为 `true` 时执行 Restore，只允许恢复已停用条目。两种操作都要求 `expectedRevision` 等于操作开始时的当前 revision，成功后 revision 递增。Scope、agentID、kind、subjectKey 等身份字段不能通过更新改变。对活跃条目请求 Restore、对已停用条目执行普通 Update、revision 不匹配或同键不同参数均返回 409。`POST /v1/memories/{id}/retire` 只接受 `expectedRevision`。
 

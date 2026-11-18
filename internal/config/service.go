@@ -12,6 +12,8 @@ import (
 	"github.com/FlyTOmeLight/server-go/db"
 	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 type Service struct {
@@ -26,6 +28,7 @@ type Service struct {
 	Artifact      Artifact
 	AgentArtifact ArtifactConfig
 	Tenant        TenantConfig
+	Pricing       execution.PricingCatalog
 }
 
 // Artifact configures the Memory archive adapter. An empty Endpoint disables
@@ -121,6 +124,9 @@ func validateAgentArtifact(cfg ArtifactConfig) error {
 
 // ValidateAPI checks the standalone HTTP and notification settings.
 func (cfg Service) ValidateAPI() error {
+	if err := cfg.Pricing.Validate(); err != nil {
+		return err
+	}
 	if err := cfg.ValidateDatabase(); err != nil {
 		return err
 	}

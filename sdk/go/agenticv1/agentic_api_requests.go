@@ -46,6 +46,12 @@ type CancelRunRequest struct {
 	ID string `json:"-" uri:"id" binding:"required,max=128"`
 }
 
+type UnblockRunRequest struct {
+	ID     string `json:"-" uri:"id" binding:"required,max=128"`
+	Epoch  int64  `json:"epoch" binding:"required,min=1"`
+	Reason string `json:"reason" binding:"required,max=4096"`
+}
+
 type AnswerRunRequest struct {
 	ID string `json:"-" uri:"id" binding:"required,max=128"`
 	SupplyResultRequest

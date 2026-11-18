@@ -18,6 +18,7 @@ import (
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/sandboxcenter"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 type routes struct {
@@ -41,8 +42,9 @@ func newRoutes(
 	sandboxProvider *sandboxcenter.Provider,
 	callbackCfg config.CallbackConfig,
 	authentication Authentication,
+	pricing execution.PricingCatalog,
 ) *routes {
-	exec := appexec.NewService(store, artifact)
+	exec := appexec.NewService(store, artifact).WithPricing(pricing)
 	memorySvc := appmemory.NewService(store.DB(), archive)
 	exec = exec.WithMemoryRecaller(memorySvc)
 	r := &routes{

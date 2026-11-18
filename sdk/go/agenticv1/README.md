@@ -4,7 +4,7 @@
 
 身份校验已接入 Forge middleware。用户业务请求必须携带 `x-forge-tenant-id`，可选 `x-forge-project-id`；服务端将验证后的 tenant/project 写入 `access.Scope`，路由末端拒绝空租户。
 
-`NewClient(baseURL, token, httpClient)` 当前要求非空 Bearer token，用户调用应传入 Forge 可验证的用户 API key，并在 HTTP 传输层补齐 `x-forge-tenant-id` 与可选 `x-forge-project-id`。发布、读取版本正文和新任务提交会访问 artifact；API 使用自身配置的 `Tenant.ServiceAPIKey`，传播已核验 user/tenant/project，并将个人资源归属固定为该用户。入站用户 Bearer、Cookie、CSRF 和 Origin 均不转发；浏览器不得持有服务凭据。缺 tenant 或 actor 时服务端拒绝远端调用，不回退到共享范围。入站会话请求见[根 README](../../../README.md#调用接口)。新出站契约先通过本地 SDK 联调，仍待包含 `PropagatedUserID` 的 artifact-go SDK 发版和真实 Forge/artifact 联调。
+`NewClient(baseURL, token, httpClient)` 当前要求非空 Bearer token。用户调用应传入 Forge 可验证的用户 API key，并在 HTTP 传输层补齐 `x-forge-tenant-id` 与可选 `x-forge-project-id`。发布、读取版本正文和新任务提交会访问 artifact。API 使用自身配置的 `Tenant.ServiceAPIKey` 传播已核验的 user/tenant/project，并将个人资源归属固定为该用户。入站用户 Bearer、Cookie、CSRF 和 Origin 均不转发。缺 tenant 或 actor 时服务端拒绝远端调用。会话认证示例见 [根 README](../../../README.md#调用接口)。
 
 下面的函数读取草稿，接收调用方已完成身份和租户 Header 装配的客户端；客户端的创建和关闭由调用方负责。
 
@@ -29,6 +29,8 @@ func ReadAgent(ctx context.Context, client *sdk.Client, agentID string) (*sdk.Ag
 
 `Sessions.SendMessage` 的响应 `Created` 表示是否创建新任务：202 为 true，200 幂等回放为 false。提交成功只代表服务接受任务；通过 `Runs.Get`、`Sessions.ListMessages` 或事件流获取执行结果。
 
+Run 因模型或摘要消费未知进入 Blocked 后，人工可调用 `client.Runs.Unblock(ctx, &sdk.UnblockRunRequest{ID: runID, Epoch: blockedRun.Epoch, Reason: "已核查并接受未知消费，授权重新派发"})`。成功返回 nil，服务端递增 epoch 并重新排队，保留 checkpoint 和已记录用量。该动作可能重复计费，不补写未知 usage。状态、epoch、期限、会话或预算不允许恢复时返回 409；计价失败也不能用此入口解除。重复请求返回 409，响应丢失时先查 Run 与事件，不自动读取新 epoch 后再次批准。恢复 child 不直接恢复 Goal；完成相关核查后还需调用 `POST /internal/v1/goals/{id}/resume` 显式恢复 Goal，完整准入与审计字段见 HTTP 契约。
+
 ## Memory
 
 `Client.Memories` 提供 Memory 的 Create、Get、List、Update、Retire、ListVersions 和 GetVersion。当前只支持 OwnerPrivate 人工维护。更新和恢复共用一个方法：`UpdateMemoryRequest.Restore=false` 或省略字段时更新活跃条目，`Restore=true` 时显式恢复停用条目；两者都必须提供当前 `ExpectedRevision` 和完整 `Document`。
@@ -47,7 +49,7 @@ if err != nil {
 }
 ```
 
-`IdempotencyKey` 由 SDK 写入 `Idempotency-Key` Header，不会进入 JSON body；该 Header 三个写接口都必填，body 中出现 `idempotencyKey` 会被拒绝。同一 owner 下同键同参重试返回首次生效结果，不重复发布或覆盖后来变更；同键不同参或 actor 返回 409。网络超时或 503 后应复用原键，不要生成新键。
+`IdempotencyKey` 由 SDK 写入必填的 `Idempotency-Key` Header。同一租户和 owner 下，同键同参重试返回首次生效结果，同键不同参或 actor 返回 409。网络超时或 503 后复用原键。
 
 Update 和 Restore 的 revision 不匹配、恢复活跃条目、更新停用条目或改变身份字段都会返回 409。Memory 写操作的 503 状态包括：`MemoryOperationPending`（操作已受理但尚未完成，使用原键重试）、`MemoryUnavailable`（依赖暂不可用，修复后继续原键）、`MemoryOperationOutcomeUnknown`（本地生效提交结果不明，保留原键、原 collection 和原版本身份继续原键处理，不能换键或重建集合）和 `MemoryVersionUnavailable`（归档版本正文不可用，可能来自源版本 410；同样保留原版本身份并交由受控修复）。
 

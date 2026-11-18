@@ -23,12 +23,18 @@ type Service struct {
 	store    *durable.Store
 	artifact client.ArtifactStore
 	recaller durable.MemoryRecaller
+	pricing  execpkg.PricingCatalog
 
 	collections sync.Map // agentID → artifact collection ID
 }
 
 func NewService(store *durable.Store, artifact client.ArtifactStore) *Service {
 	return &Service{store: store, artifact: artifact}
+}
+
+func (s *Service) WithPricing(catalog execpkg.PricingCatalog) *Service {
+	s.pricing = catalog
+	return s
 }
 
 // WithMemoryRecaller wires recall memory into the accept transaction when a
@@ -97,6 +103,10 @@ func (s *Service) prepareChat(
 		Memory:       normalizeMemorySelection(memorySelection),
 		MemoryFilter: filter,
 	}
+	cmd.PricingSnapshot, err = s.pricing.Freeze(config.Model)
+	if err != nil {
+		return execpkg.SubmitCommand{}, nil, nil, err
+	}
 	return cmd, durable.PrepareChatSubmission(config, agentRow.ID, agentRow.PublishedVersion, s.recaller), nil, nil
 }
 
@@ -140,6 +150,10 @@ func (s *Service) SubmitApplication(
 		Query:         spec.Query,
 		Memory:        normalizeMemorySelection(memorySelection),
 		MemoryFilter:  filter,
+	}
+	cmd.PricingSnapshot, err = s.pricing.Freeze(config.Model)
+	if err != nil {
+		return nil, false, err
 	}
 	return s.store.Accept(
 		ctx,

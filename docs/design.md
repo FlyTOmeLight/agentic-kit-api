@@ -55,7 +55,8 @@ Run 锁保护执行步骤，Session 锁保护消息编号。提交持有 Session
 | 中断位置 | 接管行为 |
 | --- | --- |
 | 任务已保存，尚未领取 | 新 worker 领取 |
-| 模型调用中途 | 重新执行这次模型调用，可能再次产生模型费用 |
+| 模型/摘要派发已标记，usage 未持久化 | fail-closed：Run 置 Blocked，不重放、不记 0；人工通过 unblock 接受未知消费后恢复 |
+| 派发前 Worker 丢失（无 inflight marker） | 新 worker 正常恢复执行 |
 | 模型决策已保存，工具尚未开始 | 使用保存的工具名称、参数和调用编号 |
 | 工具意图保存，结果尚未保存 | ReadOnly 重试；Idempotent 使用同一编号重试；Unsafe 待确认 |
 | 工具结果与上下文已提交 | 跳过工具，继续下一步 |
@@ -70,13 +71,37 @@ NeedsReview 接口要求用户提供已经确认的外部结果；它不是“�
 
 模型响应必须带 provider 报告的 usage。Worker 在 `ResponseMeta` 或 `Usage` 缺失时返回 `ErrModelUsageUnavailable`，不把未知用量当成 0，也不继续执行工具或摘要。provider 明确返回的 0 是已知用量，按 0 记账，不能与缺失混为一谈。OpenAI 适配层保留原始响应的 usage 字段，防止 SDK 在字段缺失时合成零值。
 
-每次调用按 `(run_id, turn, call)` 幂等记账。`call="model"` 使用模型轮次，`call="summary"` 使用 `State.SummaryCalls`。摘要计数递增后随 usage 和 state 同事务持久化，写入失败还原计数并传播错误。Token 总量优先取 `TotalTokens`，其为 0 时取 `PromptTokens + CompletionTokens`。重复提交同一编号不重复计费；Run 的 tokens/cost、Goal 的汇总用量、Run state 和 `UsageRecorded` 事件在同一事务提交。`RecordUsageWithCost` 和 `Usage.CostUSD` 已支持费用字段；Worker 当前没有供应方定价，走 `RecordUsage`，cost 记为 0。
+每次调用按 `(run_id, turn, call)` 幂等记账。`call="model"` 使用模型轮次，`call="summary"` 使用 `State.SummaryCalls`。摘要计数递增后随 usage 和 state 同事务持久化，写入失败还原计数并传播错误。Token 总量优先取 `TotalTokens`，其为 0 时取 `PromptTokens + CompletionTokens`。重复提交同一编号不重复计费；Run 的 tokens/cost、Goal 的汇总用量、Run state 和 `UsageRecorded` 事件在同一事务提交。Worker 根据 Run 的冻结价格计算美元费用并通过 `RecordUsageWithCost` 提交。
+
+API 在 Chat/Application 接受前从 `[Pricing]` 冻结 `PricingSnapshot`，包括版本、模型、BaseURL 与输入/缓存输入/输出单价。版本留空时对排序后的价格表生成稳定摘要。非空表缺模型拒绝提交；空表写入 `PricingFrozen=true`、`PricingSnapshot=nil`，表示仅 token 计量、费用为 0，不能解读为供应方免费；此时若 Goal 的 `MaxCostUSD > 0`，主模型和摘要调用前都会失败。幂等 replay 返回原 Run；Goal 续跑和 Child Run 继承持久化快照，部署改价不改变这些任务的价格依据。
+
+Worker 不读取部署价格表。`PricingFrozen=false` 的旧 Run 在适配器构建前失败，需经 API 重新提交；快照版本必须非空且不含换行、模型与 BaseURL 必须匹配 Run、单价必须有限且非负。主模型和摘要共用同一模型及计价快照，没有独立摘要模型配置入口。缓存输入价格省略时使用普通输入价，显式 0 表示零价；价格单位为 USD / 1M tokens。
+
+有价格快照但 usage 只有正数总量而缺少输入输出拆分时，已知 token、零费用和带 `PricingFailure` 的 state 同事务提交，再返回确定性计价错误。这里的零费用表示未完成计价；计价失败与预算耗尽分别处理。接管会先检查持久化的 `PricingFailure`，在应用 PendingModel、继续摘要或请求模型前继续阻断；相同 usage 编号的重放会去重，不能补价。主模型和摘要均遵守此规则。
 
 Worker 在模型调用前和上下文构建后各检查一次 Goal 预算。响应 usage 提交后、执行工具前再检查一次；预算错误确定性地终止本轮，不把新模型或工具工作派发出去。摘要调用在发起前检查预算，usage 记账失败、usage 未知或预算错误直接传播，不降级为普通压缩失败继续主模型。
 
 成功模型响应先写入 `State.PendingModel`，与递增后的 Turn、usage 和 Run state 同事务保存。接管时发现 PendingModel 就直接应用已保存响应，不再请求模型，避免同一响应重复产生费用。模型返回错误但同时带有响应和已知 usage 时，先记账再传播调用错误；未知 usage 无法记账时拒绝继续。流式响应全量读取并合并成一条消息后才校验 usage、记账并返回单条消息流，工具不会在用量确认前执行。
 
 预算没有预占。检查与记账之间存在在途窗口，并发调用或单次超预算响应可以越过上限；响应已产生但记账事务尚未提交时进程退出，费用事实未知，重试可能再次产生费用。当前设计保证已提交用量可恢复且不重复，不承诺严格硬上限。`RecordUsageWithCost` 先读取 Run 的 owner/goal 绑定，再锁 Goal，最后锁 Run；调用方应保持该 Goal→Run 锁序。
+
+## 派发中崩溃 fail-closed
+
+模型或摘要请求已派发、usage 尚未持久化时 Worker 崩溃，消费事实未知；自动重放会重复产生费用并可能重复执行工具，把未知消费记为 0 会绕过预算。Worker 在派发前通过 `Store.SaveState` 把 `State.InflightModel{Kind, Sequence}` 持久化，usage 与清除 marker 由 `RecordUsageWithCost` 在同一事务完成。接班人发现 marker 即提交 `BoundaryBlock`：Run 置 `Blocked`（非终态）、释放租约、关联 Active Goal 置 `GoalBlocked`、发出 `RunBlocked`；不 Build、不调用模型、不执行工具、不记 0。
+
+同进程内调用失败或摘要成功但 usage 未提交时，也保留 marker 并阻断；网络错误不能证明请求未发送。已知 usage 的主模型错误先记账再按原重试策略处理。摘要调用返回错误但 usage 已提交时，marker 已随记账事务清除，Run 记录 CompactionFailure 后正常继续，不会被误判为未知消费，也不重复记账。`SaveState` 走租户作用域，只认 lease 三元组且要求 Running；Blocked、过期、错 worker、错租户统一返回 `ErrLeaseLost`。SSE 在 Terminal 或 Blocked 且已追平事件序列后关闭流，调用方能确定收到 `RunBlocked`。
+
+## 人工恢复未知消费
+
+用户调用 `POST /v1/runs/{id}/unblock`，携带阻断时 epoch 与 reason，表示接受未知消费及重新派发可能重复计费的风险。共享事务 `Store.Unblock` 先锁 Goal、再锁 Run，复查绑定与版本后用 `SKIP LOCKED` 取得 Session 锁；会话繁忙、期限已过、预算耗尽或 Stall 达到阈值时拒绝。目标根 Run 必须仍是 Goal.ActiveRunID，Goal 允许 Active 或 Blocked。
+
+恢复只定点删除 `inflightModel`，不改变 checkpoint、调用计数、已完成工具或已记录 usage。Run epoch 加一、清除旧执行权、重置 attempt 并重新排队，与 `RunUnblocked` 审计同事务提交。审计保存 actor、reason、原阻断版本、原 marker 和错误；失败全部回滚。旧 Worker 无法用旧 epoch 写回；重复批准返回 409。恢复 child 不直接恢复 Goal，只有恢复当前根 Run 且无其他 Blocked Run 时才将 GoalBlocked 改为 Active。
+
+该入口将 state 中 `version`、`inflightModel`、`pricingFailure` 与 `pendingModel` 的准入含义纳入共享 execution 控制头；Eino checkpoint 与其他执行字段仍由 Worker 管理。API 通过 `json.RawMessage` 保留未知字段值和大整数精度，不保证整段 JSON 的字节布局不变。仅接受 version 3、合法 kind/sequence、空 PricingFailure 且无 PendingModel 的状态；损坏或未知格式不猜测恢复。
+
+child 恢复完成后可以唤醒 WaitingExternal 的父 Run，Goal 仍停在 Blocked，需人工核查后显式 ResumeGoal。父子均 Blocked 时，先 child 后根 Run 的顺序允许根 Run 自动恢复 Goal；先根 Run 后 child 则仍需显式 ResumeGoal。恢复响应成功只表示目标 Run 重新排队，Goal 是否恢复以当前状态或 RunUnblocked.goalResumed 为准。
+
+人工恢复不会回填未知费用，也不会清除已知计价失败。预算检查只覆盖已记录用量；本轮提供 HTTP 与 SDK 入口，人工操作界面、供应方账单核对及补账仍需另外实现。
 
 ## 事件一致性
 
@@ -100,6 +125,8 @@ Redis Stream 使用事件 seq 作为显式 ID。Lua 在插入前查询该 ID，�
 - 会话上下文目前只带最近 20 个已完成轮次的用户输入和最终答案，没有迁移原四层压缩与工具历史检索。
 - 没有承诺外部工具 exactly once，也没有实现跨服务补偿事务。
 - PostgreSQL 本身仍需按部署要求配置持久化、高可用和备份；进程重启测试不等于数据库灾备验证。
+- 跨 Run 工作区检查点当前使用单节点 `hostPath`，未接入共享对象存储；多节点恢复与生产容量未验证。
+- 当前双仓通过本地 `go.work` / `replace` 联合构建；移除本地替换后的独立发布构建与依赖解析未验证。
 
 ## 应用与 Agent 定义
 

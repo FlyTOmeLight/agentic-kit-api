@@ -21,7 +21,12 @@
 | 保存屏障期间 Worker 退出，下一轮无人推进 | [保存与迭代不依赖原 Worker 进程](long-task-boundaries.md#goal-跨-run-恢复要验证真实文件与自动状态推进) |
 | 真实命令成功但验收回执未提交时 Worker 退出 | [真实沙箱验收接管](long-task-boundaries.md#真实沙箱验收接管要区分操作完成与回执提交) |
 | 压缩丢历史、工具签名或恢复事实，或会话消息读取被分页截断 | [压缩投影边界](long-task-boundaries.md#压缩只能改变模型投影) |
-| 缺失 usage 被当作 0、摘要绕过预算，或模型响应恢复后重复计费 | [模型用量与恢复](long-task-boundaries.md#模型用量必须可恢复且未知不等于零) |
+| 缺失 usage 被当作 0、摘要绕过预算、缺价后接管继续执行，或空价格表被误判 | [模型用量、计价与恢复](long-task-boundaries.md#模型用量必须可恢复且未知不等于零) |
+| 派发后崩溃被自动重放、未知消费记为 0，或已知消费被误置 Blocked | [派发中崩溃 fail-closed](long-task-boundaries.md#派发中崩溃必须-fail-closed) |
+| 人工恢复绕过预算、覆盖 checkpoint、丢审计，或摘要未记账仍继续 | [人工恢复契约](long-task-boundaries.md#人工恢复必须说明接受了什么) |
+| 模型装饰器丢失 callbacks 能力，已知 usage 错误被误判为未知消费 | [模型 callbacks 与恢复](long-task-boundaries.md#人工恢复必须说明接受了什么) |
+| 部署改价影响旧 Run、replay 重新计价，或 Goal/Child 丢失冻结价格版本 | [价格必须随 Run 冻结](long-task-boundaries.md#价格必须随-run-冻结) |
+| 真实租户中间件启用后测试夹具缺 tenant_id、配置或请求头 | [真实租户中间件下测试夹具必须同步契约](long-task-boundaries.md#真实租户中间件下测试夹具必须同步契约) |
 | 沙箱缺失退出码被当成成功，或验收释放顺序正确但期限与恢复仍缺失 | [验收边界](long-task-boundaries.md#沙箱命令必须有确定退出码) |
 | 沙箱命令终态仍写入、Pod 截止不能续长，或配置开启但隔离能力不可用 | [沙箱 Runtime 故障探针](sandbox-runtime-probes.md) |
 | 上游 Run 缩短沙箱实际租约，固定续租间隔导致任务中断 | [沙箱续租期限](sandbox-runtime-probes.md#沙箱续租需要使用中心确认的到期时间) |

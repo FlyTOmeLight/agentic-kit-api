@@ -417,6 +417,18 @@ definitions:
     - result
     - stepID
     type: object
+  agenticv1.UnblockRunRequest:
+    properties:
+      epoch:
+        minimum: 1
+        type: integer
+      reason:
+        maxLength: 4096
+        type: string
+    required:
+    - epoch
+    - reason
+    type: object
   agenticv1.UpdateAgentRequest:
     properties:
       config:
@@ -2382,6 +2394,56 @@ paths:
       security:
       - BearerAuth: []
       summary: 查询任务执行轨迹
+      tags:
+      - Run
+  /v1/runs/{id}/unblock:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: epoch 与人工处理说明
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/agenticv1.UnblockRunRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: 成功，无响应体
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 状态、epoch 或恢复条件冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "413":
+          description: 请求体超过限制
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 人工恢复阻断的任务
       tags:
       - Run
   /v1/sandboxes:

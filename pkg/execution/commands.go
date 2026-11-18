@@ -18,12 +18,13 @@ const (
 
 // SubmitCommand is the durable accept input for chat and application entrypoints.
 type SubmitCommand struct {
-	Owner       string
-	RequestKey  string
-	RequestHash string
-	TTL         time.Duration
-	MaxAttempts int
-	Kind        SubmitKind
+	PricingSnapshot *PricingSnapshot
+	Owner           string
+	RequestKey      string
+	RequestHash     string
+	TTL             time.Duration
+	MaxAttempts     int
+	Kind            SubmitKind
 
 	// Chat: explicit session and user query.
 	SessionID string
@@ -43,14 +44,15 @@ type SubmitCommand struct {
 
 // SubmissionFacts are passed to prepare after session locks succeed.
 type SubmissionFacts struct {
-	Owner          string
-	SessionID      string
-	SessionAgentID string
-	Kind           SubmitKind
-	Query          string
-	ExecutionSpec  ExecutionSpec
-	Memory         memory.Selection
-	MemoryFilter   memory.RecallFilter
+	PricingSnapshot *PricingSnapshot
+	Owner           string
+	SessionID       string
+	SessionAgentID  string
+	Kind            SubmitKind
+	Query           string
+	ExecutionSpec   ExecutionSpec
+	Memory          memory.Selection
+	MemoryFilter    memory.RecallFilter
 }
 
 // PreparedSubmission is the compiled snapshot ready to persist.
@@ -77,6 +79,7 @@ const (
 	BoundaryAwaitClarification BoundaryKind = "AwaitClarification"
 	BoundaryAwaitReview        BoundaryKind = "AwaitReview"
 	BoundaryAwaitExternal      BoundaryKind = "AwaitExternal"
+	BoundaryBlock              BoundaryKind = "Block"
 )
 
 // InteractionKind distinguishes a clarification pause from a human review pause.

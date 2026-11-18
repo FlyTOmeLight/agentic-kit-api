@@ -79,7 +79,7 @@ func New(
 		authentication.Service = nil
 	}
 	a := &API{log: log, store: store, redis: cache}
-	a.routes = newRoutes(store, cache, artifact, archive, nil, nil, cfg.Callback, authentication)
+	a.routes = newRoutes(store, cache, artifact, archive, nil, nil, cfg.Callback, authentication, cfg.Pricing)
 	return a, nil
 }
 
@@ -119,7 +119,7 @@ func NewWithSandbox(
 			log,
 		)
 	}
-	a.routes = newRoutes(store, cache, artifact, archive, sandboxStore, provider, cfg.Callback, a.routes.authentication)
+	a.routes = newRoutes(store, cache, artifact, archive, sandboxStore, provider, cfg.Callback, a.routes.authentication, cfg.Pricing)
 	if provider != nil && cfg.Sandbox.CheckpointImage != "" {
 		checkpoints := sandboxcenter.NewService(sandboxStore, provider).
 			WithCheckpoints(sandboxcenter.CheckpointConfig{

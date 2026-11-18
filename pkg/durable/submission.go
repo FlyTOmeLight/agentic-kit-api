@@ -93,14 +93,15 @@ func (tx *Tx) Submit(
 			return err
 		}
 		prepared, err := prepare(ctx, tx.db, execution.SubmissionFacts{
-			Owner:          cmd.Owner,
-			SessionID:      sessionID,
-			SessionAgentID: sessionAgentID,
-			Kind:           cmd.Kind,
-			Query:          cmd.Query,
-			ExecutionSpec:  cmd.ExecutionSpec,
-			Memory:         cmd.Memory,
-			MemoryFilter:   cmd.MemoryFilter,
+			PricingSnapshot: cmd.PricingSnapshot,
+			Owner:           cmd.Owner,
+			SessionID:       sessionID,
+			SessionAgentID:  sessionAgentID,
+			Kind:            cmd.Kind,
+			Query:           cmd.Query,
+			ExecutionSpec:   cmd.ExecutionSpec,
+			Memory:          cmd.Memory,
+			MemoryFilter:    cmd.MemoryFilter,
 		})
 		if err != nil {
 			return err

@@ -38,6 +38,10 @@ func (b Boundary) Validate() error {
 		if b.Output != "" || b.Detail == "" || b.WaitingStep != "" {
 			return ErrInvalid
 		}
+	case BoundaryBlock:
+		if b.Output != "" || b.Detail == "" || b.WaitingStep != "" {
+			return ErrInvalid
+		}
 	case BoundaryAwaitClarification, BoundaryAwaitReview:
 		if b.Output != "" || b.Detail == "" || b.WaitingStep == "" {
 			return ErrInvalid

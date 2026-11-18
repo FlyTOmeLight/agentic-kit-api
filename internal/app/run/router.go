@@ -29,6 +29,7 @@ func (h *Controller) RegisterRoutes(v1 *core.RouterGroup) {
 	runs.GET("/:id", h.get)
 	runs.GET("/:id/trace", h.trace)
 	runs.POST("/:id/cancel", h.cancel)
+	runs.POST("/:id/unblock", h.unblock)
 	runs.POST("/:id/answer", h.answer)
 	runs.POST("/:id/resolve", h.resolve)
 	runs.GET("/:id/events", h.events)

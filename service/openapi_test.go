@@ -17,6 +17,7 @@ import (
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/sandboxcenter"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 type openAPIParameter struct {
@@ -74,6 +75,7 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 			Propagation: []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
 			Callback:    []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
 		},
+		execution.PricingCatalog{},
 	).register(router.Group(""))
 	colon := regexp.MustCompile(`:([A-Za-z0-9_]+)`)
 	documented := map[string]bool{}

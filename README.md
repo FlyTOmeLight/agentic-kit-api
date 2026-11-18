@@ -81,11 +81,15 @@ BearerToken 与存储作用域授权是两层检查。token 用于证明调用 a
 
 本地沙箱运行时通过 `[Sandbox]` 启用。自动保存与检查点恢复需设置 `SANDBOX_K8S_CONTEXT`、`SANDBOX_GUARD_IMAGE`、`SANDBOX_CHECKPOINT_IMAGE` 和绝对路径 `SANDBOX_CHECKPOINT_STORE_HOST_PATH`；后两项必须同时配置。当前存储适用于单节点 hostPath，申请恢复还须匹配 Run 冻结的文件系统绑定，详见[保存与恢复验证](docs/sandbox-center/layerfs-save-verification.md)。
 
+模型价格配置在 API 的 `[Pricing]`，示例见 `conf/server/config.toml`。`Models` 按模型名精确匹配，单价单位为 USD / 1M tokens；缓存输入价省略时继承普通输入价，显式 0 表示零价。`Version` 留空时按排序后的价格表生成稳定摘要。API 在接受 Chat/Application Run 时冻结版本、模型、BaseURL 与单价；非空表缺模型拒绝提交。空表冻结为仅 token 计量，费用记录为 0，不表示供应方免费；此时带 `MaxCostUSD > 0` 的 Goal 会在模型或摘要调用前失败。
+
+Worker 只读冻结快照，主模型和摘要共用同一模型及价格。幂等 replay 返回原 Run，Goal 续跑和 Child Run 继承原快照；API 改价只影响新提交。Worker 中含参数的 `[Pricing]` 配置须迁到 API，否则启动失败；无冻结标记的旧 Run 拒绝执行，须经 API 重新提交。费用预算没有额度预占，不保证严格硬上限，详见[模型用量与恢复](docs/design.md#模型用量与恢复)。
+
 用户业务路由使用 Forge SDK 的 `MiddlewareAuthorization` 校验身份与所选租户，要求 `x-forge-tenant-id`，可选 `x-forge-project-id`。URL 不提供鉴权 scope，Action 为空；本层不定义项目业务权限政策。middleware 将已验证的 tenant/project 写入请求的 `access.Scope`，路由末端再次校验租户非空；组合应用通过 `service.New` 显式注入 `Authentication`，缺 User 鉴权拒绝构造，注入的 middleware 未写入租户 scope 时请求仍被拒绝。Build 创建的 Forge 客户端由 Runtime 关闭。
 
 内部 execution、goal、lease 路由仅在 `Tenant.AllowedPropagationServices` 非空时注册，使用 `MiddlewareInternalPropagation` 验证调用服务及白名单，并接收 `x-impersonate-target-tenant-id`、`x-impersonate-target-user-id` 和可选 `x-impersonate-target-project-id`；末端同样要求租户 scope。`Sandbox.AllowedServices` 为空时不注册沙箱路由；启用后使用独立的服务认证与白名单，申请的 `tenantId`/`ownerId` 仍来自可信调用方请求体，不从 Forge 用户 scope 推导。callback 默认不注册，仅在 `Callback.Enabled=true` 且已装配 callback 服务认证时注册；启动必须配置 `SigningSecret`、`AllowedSources`、`AllowedServices`，请求同时通过服务认证、来源白名单和 HMAC 校验。这些 HTTP 门槛不改变可信 worker 直接调用 Store 时无 HTTP scope 的内部契约。
 
-artifact 出站使用 API 自身配置的 `Tenant.ServiceAPIKey`，只传播 middleware 已核验的 user/tenant/可选 project；`X-Resource-User-ID` 固定为同一用户，保留个人归属。入站 Authorization、Cookie、CSRF、Origin 均不转发；缺 tenant 或 actor 时适配器返回依赖不可用错误，不退化为共享范围。artifact 部署必须将该 key 对应的 API 服务名列入传播白名单，浏览器不得持有服务凭据。正式依赖仍为 artifact-go v0.5.0，尚缺 `PropagatedUserID`；本轮使用临时 `go.work` 联调本地 SDK，待 SDK 发版后须升级依赖并完成 `GOWORK=off` 验证，不加本地 replace。真实 Forge/artifact 联调尚未完成，假服务测试不代表发布路径已通过上线验收。
+artifact 出站使用 API 自身的 `Tenant.ServiceAPIKey`，只传播 middleware 已核验的 user/tenant/可选 project。`X-Resource-User-ID` 固定为同一用户，保留个人归属。入站 Authorization、Cookie、CSRF、Origin 均不转发。缺 tenant 或 actor 时拒绝远端调用。artifact 部署须将该 key 对应的服务名加入自己的传播白名单。当前使用 artifact-go `v0.5.1`，用户 API key 调用的联调范围见 [验证记录](docs/verification.md#2026-11-17-agent-版本发布与-run-快照)。
 
 `service.Build` 在接收请求前调用 `durable.Store.InitSchema`，初始化只面向空库或空 schema，可在目标结构上重复执行。它不迁移旧的无 tenant 数据、不做数据回填，也不删除已有旧索引（如历史 `memory_operation_owner_key`）；旧库升级由部署方另行处理。组合部署直接调用 `service.New` 时由调用方负责初始化。本仓库不提供 `eval`、`migrate` 命令或 Helm 迁移任务。
 
@@ -93,7 +97,7 @@ server-go HTTPHost 提供 `/ping`、`/healthz`、`/version` 探针；开启 `HTT
 
 ## 调用接口
 
-下面的请求创建并发布 Agent，再创建会话和发送消息。运行前设置有效 Forge 会话的 `FORGE_SESSION`、与该会话匹配的 `FORGE_CSRF_TOKEN`、部署允许的 `FORGE_ORIGIN` 和已授权的 `FORGE_TENANT_ID`；项目范围另加 `x-forge-project-id`。这些字段只供 API 入站鉴权，与服务启动使用的 `TENANT_SERVICE_API_KEY` 分开配置。也可使用有效用户 API key 通过 API 入站鉴权；artifact 出站始终使用 API 自身的服务凭据与已核验目标身份，不转发入站会话或用户 Bearer。此示例尚未经真实 Forge/artifact 联调。
+下面的请求用 Forge 会话创建并发布 Agent，再创建会话和发送消息。运行前设置有效 Forge 会话的 `FORGE_SESSION`、与该会话匹配的 `FORGE_CSRF_TOKEN`、部署允许的 `FORGE_ORIGIN` 和已授权的 `FORGE_TENANT_ID`。项目范围另加 `x-forge-project-id`。也可使用有效用户 API key 进行入站鉴权。artifact 出站始终使用 API 自身的服务凭据与已核验目标身份。
 
 ```bash
 export API_URL='http://127.0.0.1:8080'
