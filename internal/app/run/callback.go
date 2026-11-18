@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/FlyTOmeLight/server-go/auth"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
@@ -23,6 +22,10 @@ type executionCallbackRequest struct {
 	StepID      string `json:"stepID" binding:"required,max=128"`
 	ExternalRef string `json:"externalRef" binding:"required,max=128"`
 	Result      string `json:"result" binding:"required"`
+}
+
+func (h *Controller) RegisterCallbackRoutes(router core.Router) {
+	router.Group("/internal/v1").POST("/executions/:id/callback", h.executionCallback)
 }
 
 // executionCallback receives a result from an external system (CI, approval
@@ -102,9 +105,8 @@ func (h *Controller) executionCallback(c *core.Context) {
 	if !binder.BindJSON(c, &req) {
 		return
 	}
-	if err := h.service.SupplyExternalResult(
+	if err := h.service.SupplyExternalResultByRunID(
 		c.Request.Context(),
-		auth.UserID(c),
 		uri.ID,
 		req.StepID,
 		req.ExternalRef,

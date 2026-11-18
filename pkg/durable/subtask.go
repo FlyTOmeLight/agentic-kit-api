@@ -26,9 +26,13 @@ func (s *Store) SpawnChildRun(ctx context.Context, l Lease, stepID, query string
 		return nil, err
 	}
 	defer tx.Rollback()
-	parent, err := lockLease(ctx, tx, l)
+	parent, err := lockLease(ctx, table.TenantQuery(ctx, tx), l)
 	if err != nil {
 		return nil, err
+	}
+	var parentRow table.Run
+	if err = table.TenantQuery(ctx, tx).Where("id = ?", parent.ID).Take(&parentRow).Error; err != nil {
+		return nil, recordError(err)
 	}
 	var step table.Step
 	err = tx.Model(&table.Step{}).
@@ -40,10 +44,12 @@ func (s *Store) SpawnChildRun(ctx context.Context, l Lease, stepID, query string
 	}
 	parentSnapshot := parent.Spec
 	childSession := table.Session{
-		ID:      NewID(),
-		OwnerID: parent.OwnerID,
-		AgentID: parentSnapshot.AgentID,
-		Title:   "child of " + parent.ID,
+		ID:        NewID(),
+		TenantID:  parentRow.TenantID,
+		ProjectID: parentRow.ProjectID,
+		OwnerID:   parent.OwnerID,
+		AgentID:   parentSnapshot.AgentID,
+		Title:     "child of " + parent.ID,
 	}
 	if err = tx.Create(&childSession).Error; err != nil {
 		return nil, err
@@ -58,6 +64,8 @@ func (s *Store) SpawnChildRun(ctx context.Context, l Lease, stepID, query string
 	childID := NewID()
 	if err = tx.Model(&table.Run{}).Create(map[string]any{
 		"id":             childID,
+		"tenant_id":      parentRow.TenantID,
+		"project_id":     parentRow.ProjectID,
 		"owner_id":       parent.OwnerID,
 		"session_id":     childSession.ID,
 		"request_key":    l.RunID + ":" + stepID,
@@ -87,7 +95,7 @@ func (s *Store) SpawnChildRun(ctx context.Context, l Lease, stepID, query string
 	if err = emit(ctx, tx, childID, "RunQueued", map[string]any{"status": Queued}); err != nil {
 		return nil, err
 	}
-	child, err := readRun(tx.Model(&table.Run{}).Where("id = ?", childID))
+	child, err := readRun(table.TenantQuery(ctx, tx.Model(&table.Run{})).Where("id = ?", childID))
 	if err != nil {
 		return nil, err
 	}
@@ -128,8 +136,8 @@ func handleChildTerminal(ctx context.Context, tx *gorm.DB, child *table.Run) err
 		})
 	}
 	parent, err := readRun(
-		tx.Model(&table.Run{}).
-			Where("id = ?", child.ParentRunID).
+		table.TenantQuery(ctx, tx.Model(&table.Run{})).
+			Where("tenant_id = ? AND id = ?", child.TenantID, child.ParentRunID).
 			Clauses(clause.Locking{Strength: "UPDATE"}),
 	)
 	if err != nil {
@@ -145,7 +153,7 @@ func handleChildTerminal(ctx context.Context, tx *gorm.DB, child *table.Run) err
 		})
 	}
 	var expired bool
-	if err = tx.Model(&table.Run{}).
+	if err = table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Select("deadline <= clock_timestamp()").
 		Where("id = ?", parent.ID).
 		Scan(&expired).
@@ -165,7 +173,7 @@ func handleChildTerminal(ctx context.Context, tx *gorm.DB, child *table.Run) err
 		Error; err != nil {
 		return err
 	}
-	if err = tx.Model(&table.Run{}).
+	if err = table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Where("id = ?", parent.ID).
 		Updates(map[string]any{
 			"status":               Queued,
@@ -202,7 +210,7 @@ func handleChildTerminal(ctx context.Context, tx *gorm.DB, child *table.Run) err
 // handleChildTerminal so bookkeeping (budget, events) stays in one place.
 func cascadeCancelChildren(ctx context.Context, tx *gorm.DB, parentID string) error {
 	var children []table.Run
-	if err := tx.Model(&table.Run{}).
+	if err := table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Where("parent_run_id = ? AND status IN ?", parentID, []Status{
 			Queued, Running, WaitingClarification, NeedsReview, WaitingExternal, Blocked,
 		}).
@@ -210,7 +218,7 @@ func cascadeCancelChildren(ctx context.Context, tx *gorm.DB, parentID string) er
 		return err
 	}
 	for _, child := range children {
-		if err := tx.Model(&table.Run{}).
+		if err := table.TenantQuery(ctx, tx.Model(&table.Run{})).
 			Where("id = ?", child.ID).
 			Updates(map[string]any{
 				"status":               Canceled,

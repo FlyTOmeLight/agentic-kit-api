@@ -46,8 +46,9 @@ WHERE subject_key != '' AND retired_at IS NULL;
 // It enables idempotent replay and cross-service recovery.
 type MemoryOperation struct {
 	ID               string          `gorm:"type:text;primaryKey;not null"`
-	OwnerID          string          `gorm:"type:text;not null;index:memory_operation_owner,priority:1"`
-	RequestKey       string          `gorm:"type:text;not null;uniqueIndex:memory_operation_owner_key,priority:2"`
+	TenantID         string          `gorm:"type:text;not null;default:'';uniqueIndex:memory_operation_tenant_owner_key,priority:1"`
+	OwnerID          string          `gorm:"type:text;not null;index:memory_operation_owner,priority:1;uniqueIndex:memory_operation_tenant_owner_key,priority:2"`
+	RequestKey       string          `gorm:"type:text;not null;uniqueIndex:memory_operation_tenant_owner_key,priority:3"`
 	IntentDigest     string          `gorm:"type:text;not null"`
 	OpType           string          `gorm:"type:text;not null;check:memory_operation_op_type,op_type IN ('Create','Update','Restore','Retire')"`
 	EntryID          string          `gorm:"type:text;not null"`
@@ -134,6 +135,7 @@ func mustMarshal(v any) json.RawMessage {
 func MemoryOperationFromDomain(op *memory.Operation) *MemoryOperation {
 	return &MemoryOperation{
 		ID:               op.ID,
+		TenantID:         op.TenantID,
 		OwnerID:          op.OwnerID,
 		RequestKey:       op.RequestKey,
 		IntentDigest:     op.IntentDigest,
@@ -153,6 +155,7 @@ func MemoryOperationFromDomain(op *memory.Operation) *MemoryOperation {
 func (r *MemoryOperation) ToDomain() *memory.Operation {
 	return &memory.Operation{
 		ID:               r.ID,
+		TenantID:         r.TenantID,
 		OwnerID:          r.OwnerID,
 		RequestKey:       r.RequestKey,
 		IntentDigest:     r.IntentDigest,

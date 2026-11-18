@@ -24,6 +24,14 @@ type Service struct {
 	Sandbox    SandboxConfig
 	Callback   CallbackConfig
 	Artifact   ArtifactConfig
+	Tenant     TenantConfig
+}
+
+type TenantConfig struct {
+	Endpoint                   string
+	ServiceAPIKey              string
+	Timeout                    int
+	AllowedPropagationServices []string
 }
 
 // ArtifactConfig locates the artifact-go service that stores published Agent
@@ -33,17 +41,19 @@ type ArtifactConfig struct {
 	Timeout  int
 }
 
-// CallbackConfig wires the external-callback HMAC gate. An empty SigningSecret
-// disables signature verification (local development only).
+// CallbackConfig wires service authentication and the external-callback HMAC gate.
 type CallbackConfig struct {
-	SigningSecret  string
-	AllowedSources []string
+	Enabled         bool
+	SigningSecret   string
+	AllowedSources  []string
+	AllowedServices []string
 }
 
 // SandboxConfig wires the phase-2 sandbox control plane. An empty
 // K8sContext disables the runtime provider: metadata routes stay available
 // and provisioning reports NotReady.
 type SandboxConfig struct {
+	AllowedServices         []string
 	K8sContext              string
 	K8sNamespace            string
 	GuardImage              string
@@ -123,7 +133,14 @@ func (cfg Service) ValidateAPI() error {
 			return errors.New("Redis.Addrs must not contain empty addresses")
 		}
 	}
-	if len(cfg.Callback.AllowedSources) > 0 && cfg.Callback.SigningSecret == "" {
+	if err := cfg.ValidateTenant(); err != nil {
+		return err
+	}
+	if cfg.Callback.Enabled && (strings.TrimSpace(cfg.Callback.SigningSecret) == "" ||
+		len(cfg.Callback.AllowedSources) == 0 || len(cfg.Callback.AllowedServices) == 0) {
+		return errors.New("enabled Callback requires SigningSecret, AllowedSources and AllowedServices")
+	}
+	if len(cfg.Callback.AllowedSources) > 0 && strings.TrimSpace(cfg.Callback.SigningSecret) == "" {
 		return errors.New("Callback.SigningSecret is required with AllowedSources")
 	}
 	if cfg.Sandbox.CheckpointImage != "" || cfg.Sandbox.CheckpointStoreHostPath != "" {
@@ -134,10 +151,37 @@ func (cfg Service) ValidateAPI() error {
 			)
 		}
 	}
-	for _, source := range cfg.Callback.AllowedSources {
-		if source == "" || strings.TrimSpace(source) != source {
-			return errors.New("Callback.AllowedSources must contain nonempty trimmed names")
+	for _, list := range []struct {
+		name   string
+		values []string
+	}{
+		{"Callback.AllowedSources", cfg.Callback.AllowedSources},
+		{"Callback.AllowedServices", cfg.Callback.AllowedServices},
+		{"Sandbox.AllowedServices", cfg.Sandbox.AllowedServices},
+		{"Tenant.AllowedPropagationServices", cfg.Tenant.AllowedPropagationServices},
+	} {
+		for _, value := range list.values {
+			if value == "" || strings.TrimSpace(value) != value {
+				return errors.New(list.name + " must contain nonempty trimmed names")
+			}
 		}
+	}
+	return nil
+}
+
+func (cfg Service) ValidateTenant() error {
+	uri, err := url.Parse(cfg.Tenant.Endpoint)
+	if err != nil || uri.Host == "" || uri.User != nil || uri.RawQuery != "" ||
+		uri.ForceQuery || uri.Fragment != "" ||
+		(uri.Scheme != "https" && (uri.Scheme != "http" ||
+			(uri.Hostname() != "localhost" && !net.ParseIP(uri.Hostname()).IsLoopback()))) {
+		return errors.New("Tenant.Endpoint must be HTTPS, or HTTP on loopback, without userinfo, query or fragment")
+	}
+	if len(cfg.Tenant.ServiceAPIKey) < 32 || strings.ContainsAny(cfg.Tenant.ServiceAPIKey, "\r\n") {
+		return errors.New("Tenant.ServiceAPIKey must contain at least 32 characters and no line breaks")
+	}
+	if cfg.Tenant.Timeout < 0 {
+		return errors.New("Tenant.Timeout must not be negative")
 	}
 	return nil
 }

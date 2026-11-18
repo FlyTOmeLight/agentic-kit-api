@@ -51,7 +51,13 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 		newArtifactClient(t, artifactServer),
 		sandboxcenter.NewStore(nil),
 		provider,
-		config.CallbackConfig{},
+		config.CallbackConfig{Enabled: true},
+		Authentication{
+			User:        []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
+			Service:     []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
+			Propagation: []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
+			Callback:    []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
+		},
 	).register(router.Group(""))
 	colon := regexp.MustCompile(`:([A-Za-z0-9_]+)`)
 	documented := map[string]bool{}

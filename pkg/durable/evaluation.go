@@ -62,14 +62,14 @@ func (s *Store) recordEvaluation(
 	}
 	defer tx.Rollback()
 	var goal table.Goal
-	if err := tx.Where("owner_id = ? AND id = ?", owner, goalID).Take(&goal).Error; err != nil {
+	if err := table.TenantQuery(ctx, tx).Where("owner_id = ? AND id = ?", owner, goalID).Take(&goal).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	var run table.Run
-	if err := tx.Where("owner_id = ? AND id = ?", owner, runID).
+	if err := table.TenantQuery(ctx, tx).Where("owner_id = ? AND id = ?", owner, runID).
 		Clauses(clause.Locking{Strength: "UPDATE"}).Take(&run).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
@@ -121,6 +121,17 @@ func (s *Store) recordEvaluation(
 
 // GetEvaluation returns the receipt for one run, if the worker has recorded it.
 func (s *Store) GetEvaluation(ctx context.Context, owner, goalID, runID string) (*Evaluation, error) {
+	var goal table.Goal
+	if err := table.TenantQuery(ctx, s.db).
+		Where("owner_id = ? AND id = ?", owner, goalID).Take(&goal).Error; err != nil {
+		return nil, recordError(err)
+	}
+	var run table.Run
+	if err := table.TenantQuery(ctx, s.db).
+		Where("owner_id = ? AND id = ? AND goal_id = ?", owner, runID, goalID).
+		Take(&run).Error; err != nil {
+		return nil, recordError(err)
+	}
 	var row table.Evaluation
 	err := s.db.WithContext(ctx).
 		Where("owner_id = ? AND goal_id = ? AND run_id = ?", owner, goalID, runID).

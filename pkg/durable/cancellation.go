@@ -16,7 +16,7 @@ func (s *Store) Cancel(ctx context.Context, owner, id string) error {
 
 func cancelRun(ctx context.Context, tx *gorm.DB, owner, id string) (bool, error) {
 	r, err := readRun(
-		tx.Model(&table.Run{}).
+		table.TenantQuery(ctx, tx.Model(&table.Run{})).
 			Where("id = ? AND owner_id = ?", id, owner).
 			Clauses(clause.Locking{Strength: "UPDATE"}),
 	)
@@ -26,7 +26,7 @@ func cancelRun(ctx context.Context, tx *gorm.DB, owner, id string) (bool, error)
 	if r.Status.Terminal() {
 		return false, nil
 	}
-	if err = tx.Model(&table.Run{}).
+	if err = table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Where("id = ?", id).
 		Updates(map[string]any{
 			"status":       Canceled,
@@ -44,7 +44,7 @@ func cancelRun(ctx context.Context, tx *gorm.DB, owner, id string) (bool, error)
 		return false, err
 	}
 	var stored table.Run
-	if err = tx.Model(&table.Run{}).Where("id = ?", id).Take(&stored).Error; err != nil {
+	if err = table.TenantQuery(ctx, tx.Model(&table.Run{})).Where("id = ?", id).Take(&stored).Error; err != nil {
 		return false, err
 	}
 	if err = handleChildTerminal(ctx, tx, &stored); err != nil {

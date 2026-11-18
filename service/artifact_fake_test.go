@@ -139,7 +139,7 @@ func writeFakeJSON(w http.ResponseWriter, status int, body any) {
 // newArtifactClient builds the adapter against the fake service.
 func newArtifactClient(t *testing.T, server *httptest.Server) client.ArtifactStore {
 	t.Helper()
-	store, err := client.NewArtifact(server.URL, 0)
+	store, err := client.NewArtifact(server.URL, strings.Repeat("service-key-", 3), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

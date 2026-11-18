@@ -11,6 +11,7 @@ import (
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	execpkg "github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
@@ -108,6 +109,12 @@ func (s *Service) SubmitApplication(
 	memorySelection memory.Selection,
 	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
+	if scope, ok := access.FromContext(ctx); ok {
+		if scope.TenantID == "" || spec.Scope == nil ||
+			spec.Scope.TenantID != scope.TenantID || spec.Scope.ProjectID != scope.ProjectID {
+			return nil, false, agent.ErrInvalid
+		}
+	}
 	hash := applicationRequestHash(spec, ttl, memorySelection, filter)
 	if run, err := s.replay(ctx, owner, key, hash); err != nil || run != nil {
 		return run, false, err
@@ -190,7 +197,7 @@ func applicationRequestHash(spec execpkg.ExecutionSpec, ttl time.Duration, selec
 // the artifact store; the authoritative in-transaction recheck still runs.
 func (s *Service) replay(ctx context.Context, owner, key, hash string) (*execpkg.Run, error) {
 	var row table.Run
-	err := s.store.DB().WithContext(ctx).
+	err := table.TenantQuery(ctx, s.store.DB()).
 		Where("owner_id = ? AND request_key = ?", owner, key).
 		Take(&row).
 		Error

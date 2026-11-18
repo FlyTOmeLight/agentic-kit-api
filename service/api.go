@@ -18,6 +18,13 @@ import (
 
 var _ host.Service = (*API)(nil)
 
+type Authentication struct {
+	User        []core.HandlerFunc
+	Service     []core.HandlerFunc
+	Propagation []core.HandlerFunc
+	Callback    []core.HandlerFunc
+}
+
 type API struct {
 	routes     *routes
 	log        *logger.Logger
@@ -37,6 +44,7 @@ func New(
 	store *durable.Store,
 	cache frameworkredis.Redis,
 	artifact client.ArtifactStore,
+	authentication Authentication,
 ) (*API, error) {
 	if err := cfg.ValidateAPI(); err != nil {
 		return nil, err
@@ -44,8 +52,26 @@ func New(
 	if log == nil || store == nil || cache == nil || artifact == nil {
 		return nil, errors.New("API requires logger, store, Redis and artifact client")
 	}
+	if len(authentication.User) == 0 {
+		return nil, errors.New("API requires user authentication")
+	}
+	if len(cfg.Tenant.AllowedPropagationServices) > 0 && len(authentication.Propagation) == 0 {
+		return nil, errors.New("API requires configured propagation authentication")
+	}
+	if len(cfg.Sandbox.AllowedServices) > 0 && len(authentication.Service) == 0 {
+		return nil, errors.New("API requires configured sandbox service authentication")
+	}
+	if cfg.Callback.Enabled && len(authentication.Callback) == 0 {
+		return nil, errors.New("API requires callback service authentication")
+	}
+	if len(cfg.Tenant.AllowedPropagationServices) == 0 {
+		authentication.Propagation = nil
+	}
+	if len(cfg.Sandbox.AllowedServices) == 0 {
+		authentication.Service = nil
+	}
 	a := &API{log: log, store: store, redis: cache}
-	a.routes = newRoutes(store, cache, artifact, nil, nil, cfg.Callback)
+	a.routes = newRoutes(store, cache, artifact, nil, nil, cfg.Callback, authentication)
 	return a, nil
 }
 
@@ -59,8 +85,9 @@ func NewWithSandbox(
 	cache frameworkredis.Redis,
 	artifact client.ArtifactStore,
 	db *gorm.DB,
+	authentication Authentication,
 ) (*API, error) {
-	a, err := New(cfg, log, store, cache, artifact)
+	a, err := New(cfg, log, store, cache, artifact, authentication)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +110,7 @@ func NewWithSandbox(
 			log,
 		)
 	}
-	a.routes = newRoutes(store, cache, artifact, sandboxStore, provider, cfg.Callback)
+	a.routes = newRoutes(store, cache, artifact, sandboxStore, provider, cfg.Callback, a.routes.authentication)
 	if provider != nil && cfg.Sandbox.CheckpointImage != "" {
 		checkpoints := sandboxcenter.NewService(sandboxStore, provider).
 			WithCheckpoints(sandboxcenter.CheckpointConfig{

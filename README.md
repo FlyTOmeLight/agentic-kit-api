@@ -31,7 +31,7 @@ agentic-kit-api/
 │   │   ├── session/          # 会话、消息与提交接口
 │   │   ├── run/              # 执行、租约、取消、人工恢复、trace 与 SSE
 │   │   └── apperror/         # 领域错误到 HTTP 错误的映射
-│   ├── client/               # artifact SDK 适配与错误转换
+│   ├── client/               # artifact 与 Forge 鉴权 SDK 适配、错误转换
 │   ├── config/               # 类型化配置与启动校验
 │   ├── schema/               # 空库目标表结构初始化
 │   └── table/                # Agent、Session、Run、Step、Event、Message 表模型
@@ -55,36 +55,48 @@ GOWORK=off go run ./cmd/server -config conf/server/config.toml
 
 通过 `-config`、`CONFIG_FILE`、`SERVER_CONFIG_PATH` 依次选择配置路径，未指定时读取 `conf/server/config.toml`。环境变量通过 TOML 中的 `${env:NAME:default}` 占位符映射，普通常量不被同名环境变量覆盖。
 
-启动需要 HTTP、数据库、Redis 和 `[Artifact]` 配置。常用环境变量为 `DATABASE_URL`、`REDIS_ADDR`、`LISTEN_ADDR`、`ARTIFACT_ENDPOINT`；`Artifact.Timeout` 的单位为毫秒。发布 Agent、读取版本正文和接受新任务依赖 artifact 服务，已接受任务的执行与恢复不依赖它。`[Redis]` 使用 server-go `redis.Config`，以 `Addrs` 和 `DB` 配置连接；Redis 离线不阻止启动，事件仍从数据库回放。模型与工具凭据由 worker 环境提供，快照仅保存环境变量引用。
+启动需要 HTTP、数据库、Redis、`[Artifact]` 和 `[Tenant]` 配置。常用环境变量为 `DATABASE_URL`、`REDIS_ADDR`、`LISTEN_ADDR`、`ARTIFACT_ENDPOINT`、`TENANT_ENDPOINT`、`TENANT_SERVICE_API_KEY`；`Artifact.Timeout` 和 `Tenant.Timeout` 的单位为毫秒。Tenant endpoint 使用 HTTPS，本机回环地址允许 HTTP；service API key 是本 API 调用 Forge 的凭据，至少 32 个字符。发布 Agent、读取版本正文和接受新任务依赖 artifact 服务，已接受任务的执行与恢复不依赖它。`[Redis]` 使用 server-go `redis.Config`，以 `Addrs` 和 `DB` 配置连接；Redis 离线不阻止启动，事件仍从数据库回放。模型与工具凭据由 worker 环境提供，快照仅保存环境变量引用。
 
 本地沙箱运行时通过 `[Sandbox]` 启用。自动保存与检查点恢复需设置 `SANDBOX_K8S_CONTEXT`、`SANDBOX_GUARD_IMAGE`、`SANDBOX_CHECKPOINT_IMAGE` 和绝对路径 `SANDBOX_CHECKPOINT_STORE_HOST_PATH`；后两项必须同时配置。当前存储适用于单节点 hostPath，申请恢复还须匹配 Run 冻结的文件系统绑定，详见[保存与恢复验证](docs/sandbox-center/layerfs-save-verification.md)。
 
-API 不维护静态 token、config owner 白名单、Tenant/Coding 业务客户端或对应连接配置。请求身份与鉴权后续通过 forge-tenant-api middleware 接入；当前尚未接入，业务路由没有身份校验。`auth.UserID(c)` 是现有身份读取点，持久化对象按 owner 隔离。
+用户业务路由使用 Forge SDK 的 `MiddlewareAuthorization` 校验身份与所选租户，要求 `x-forge-tenant-id`，可选 `x-forge-project-id`。URL 不提供鉴权 scope，Action 为空；本层不定义项目业务权限政策。middleware 将已验证的 tenant/project 写入请求的 `access.Scope`，路由末端再次校验租户非空；组合应用通过 `service.New` 显式注入 `Authentication`，缺 User 鉴权拒绝构造，注入的 middleware 未写入租户 scope 时请求仍被拒绝。Build 创建的 Forge 客户端由 Runtime 关闭。
 
-真实 artifact 联调尚未完成：缺少已核验租户时适配器返回 503；Controller 到 artifact 的 Forge 会话 Cookie、CSRF 与 Origin 透传也尚未接通。当前假服务测试通过不能作为发布路径可上线的证据。
+内部 execution、goal、lease 路由仅在 `Tenant.AllowedPropagationServices` 非空时注册，使用 `MiddlewareInternalPropagation` 验证调用服务及白名单，并接收 `x-impersonate-target-tenant-id`、`x-impersonate-target-user-id` 和可选 `x-impersonate-target-project-id`；末端同样要求租户 scope。`Sandbox.AllowedServices` 为空时不注册沙箱路由；启用后使用独立的服务认证与白名单，申请的 `tenantId`/`ownerId` 仍来自可信调用方请求体，不从 Forge 用户 scope 推导。callback 默认不注册，仅在 `Callback.Enabled=true` 且已装配 callback 服务认证时注册；启动必须配置 `SigningSecret`、`AllowedSources`、`AllowedServices`，请求同时通过服务认证、来源白名单和 HMAC 校验。这些 HTTP 门槛不改变可信 worker 直接调用 Store 时无 HTTP scope 的内部契约。
 
-`service.Build` 在接收请求前调用 `durable.Store.InitSchema`，在空库或空 schema 上初始化目标表结构；该初始化可重复执行，只建表与约束，不做历史迁移或数据回填。组合部署直接调用 `service.New` 时由调用方负责初始化。本仓库不提供 `eval`、`migrate` 命令或 Helm 迁移任务。
+artifact 出站使用 API 自身配置的 `Tenant.ServiceAPIKey`，只传播 middleware 已核验的 user/tenant/可选 project；`X-Resource-User-ID` 固定为同一用户，保留个人归属。入站 Authorization、Cookie、CSRF、Origin 均不转发；缺 tenant 或 actor 时适配器返回依赖不可用错误，不退化为共享范围。artifact 部署必须将该 key 对应的 API 服务名列入传播白名单，浏览器不得持有服务凭据。正式依赖仍为 artifact-go v0.5.0，尚缺 `PropagatedUserID`；本轮使用临时 `go.work` 联调本地 SDK，待 SDK 发版后须升级依赖并完成 `GOWORK=off` 验证，不加本地 replace。真实 Forge/artifact 联调尚未完成，假服务测试不代表发布路径已通过上线验收。
+
+`service.Build` 在接收请求前调用 `durable.Store.InitSchema`，初始化只面向空库或空 schema，可在目标结构上重复执行。它不迁移旧的无 tenant 数据、不做数据回填，也不删除已有旧索引（如历史 `memory_operation_owner_key`）；旧库升级由部署方另行处理。组合部署直接调用 `service.New` 时由调用方负责初始化。本仓库不提供 `eval`、`migrate` 命令或 Helm 迁移任务。
 
 server-go HTTPHost 提供 `/ping`、`/healthz`、`/version` 探针；开启 `HTTPServer.SwaggerEnable` 可查看 `/swagger/`。SSE 要求 `HTTPServer.WriteTimeout` 为负数，`APIBasePath` 为空。
 
 ## 调用接口
 
-下面的请求创建并发布 Agent，再创建会话和发送消息。身份 middleware 接入后的凭据由接入方配置；本服务不解析示例之外的本地 token 清单。
+下面的请求创建并发布 Agent，再创建会话和发送消息。运行前设置有效 Forge 会话的 `FORGE_SESSION`、与该会话匹配的 `FORGE_CSRF_TOKEN`、部署允许的 `FORGE_ORIGIN` 和已授权的 `FORGE_TENANT_ID`；项目范围另加 `x-forge-project-id`。这些字段只供 API 入站鉴权，与服务启动使用的 `TENANT_SERVICE_API_KEY` 分开配置。也可使用有效用户 API key 通过 API 入站鉴权；artifact 出站始终使用 API 自身的服务凭据与已核验目标身份，不转发入站会话或用户 Bearer。此示例尚未经真实 Forge/artifact 联调。
 
 ```bash
 export API_URL='http://127.0.0.1:8080'
 agent_id=$(curl --fail-with-body -sS "$API_URL/v1/agents" \
+  -H "Cookie: forge_session=$FORGE_SESSION" -H "X-CSRF-Token: $FORGE_CSRF_TOKEN" \
+  -H "Origin: $FORGE_ORIGIN" -H "x-forge-tenant-id: $FORGE_TENANT_ID" \
   -H 'Content-Type: application/json' \
   --data-binary @examples/agents/agents.example.json | jq -r .id)
 curl --fail-with-body -sS "$API_URL/v1/agents/$agent_id/publish" \
+  -H "Cookie: forge_session=$FORGE_SESSION" -H "X-CSRF-Token: $FORGE_CSRF_TOKEN" \
+  -H "Origin: $FORGE_ORIGIN" -H "x-forge-tenant-id: $FORGE_TENANT_ID" \
   -H 'Content-Type: application/json' -d '{"revision":1}'
 session_id=$(curl --fail-with-body -sS "$API_URL/v1/sessions" \
+  -H "Cookie: forge_session=$FORGE_SESSION" -H "X-CSRF-Token: $FORGE_CSRF_TOKEN" \
+  -H "Origin: $FORGE_ORIGIN" -H "x-forge-tenant-id: $FORGE_TENANT_ID" \
   -H 'Content-Type: application/json' \
   -d "$(jq -n --arg agentID "$agent_id" '{agentID:$agentID,title:"第一次对话"}')" | jq -r .id)
 run_id=$(curl --fail-with-body -sS "$API_URL/v1/sessions/$session_id/messages" \
+  -H "Cookie: forge_session=$FORGE_SESSION" -H "X-CSRF-Token: $FORGE_CSRF_TOKEN" \
+  -H "Origin: $FORGE_ORIGIN" -H "x-forge-tenant-id: $FORGE_TENANT_ID" \
   -H 'Content-Type: application/json' -H 'Idempotency-Key: question-001' \
   -d '{"query":"请介绍一下你自己。"}' | jq -r .id)
-curl -N "$API_URL/v1/runs/$run_id/events"
+curl -N "$API_URL/v1/runs/$run_id/events" \
+  -H "Cookie: forge_session=$FORGE_SESSION" -H "X-CSRF-Token: $FORGE_CSRF_TOKEN" \
+  -H "Origin: $FORGE_ORIGIN" -H "x-forge-tenant-id: $FORGE_TENANT_ID"
 ```
 
 继续对话时使用相同 session_id、新的 Idempotency-Key 和 query。编辑 Agent 使用 `PUT /v1/agents/{id}`，传完整 name/config 和当前 revision；发布后新任务使用新版本，已有任务仍使用冻结的原版本。完整请求、幂等、执行上下文与人工恢复见 [HTTP 契约](docs/api.md)。

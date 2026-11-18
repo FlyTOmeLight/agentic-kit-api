@@ -25,7 +25,7 @@ func recordError(err error) error {
 }
 
 func (s *Store) Get(ctx context.Context, owner, id string) (*Run, error) {
-	return readRun(s.db.WithContext(ctx).Model(&table.Run{}).Where("id = ? AND owner_id = ?", id, owner))
+	return readRun(table.TenantQuery(ctx, s.db).Model(&table.Run{}).Where("id = ? AND owner_id = ?", id, owner))
 }
 
 // RunFromRow exposes the row mapping for replay prechecks in the execution

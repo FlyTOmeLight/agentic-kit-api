@@ -9,14 +9,16 @@ import (
 // Goal is the durable business objective that may span multiple runs.
 type Goal struct {
 	ID            string                  `gorm:"type:text;primaryKey;not null"`
-	OwnerID       string                  `gorm:"type:text;not null;index:durable_goal_owner_status,priority:1;uniqueIndex:durable_goal_owner_request_key_key,priority:1"`
+	TenantID      string                  `gorm:"type:text;not null;index:durable_goal_owner_status,priority:1;uniqueIndex:durable_goal_owner_request_key_key,priority:1"`
+	ProjectID     string                  `gorm:"type:text;not null"`
+	OwnerID       string                  `gorm:"type:text;not null;index:durable_goal_owner_status,priority:2;uniqueIndex:durable_goal_owner_request_key_key,priority:2"`
 	SessionID     string                  `gorm:"type:text;not null"`
-	RequestKey    string                  `gorm:"type:text;not null;uniqueIndex:durable_goal_owner_request_key_key,priority:2"`
+	RequestKey    string                  `gorm:"type:text;not null;uniqueIndex:durable_goal_owner_request_key_key,priority:3"`
 	RequestHash   string                  `gorm:"type:text;not null"`
 	Objective     string                  `gorm:"type:text;not null"`
 	Evaluator     execution.EvaluatorSpec `gorm:"serializer:json;type:jsonb;not null"`
 	Budget        execution.BudgetSpec    `gorm:"serializer:json;type:jsonb;not null"`
-	Status        execution.GoalStatus    `gorm:"type:text;not null;index:durable_goal_owner_status,priority:2;check:durable_goal_status_check,status IN ('Active','Paused','Blocked','Complete','Failed')"`
+	Status        execution.GoalStatus    `gorm:"type:text;not null;index:durable_goal_owner_status,priority:3;check:durable_goal_status_check,status IN ('Active','Paused','Blocked','Complete','Failed')"`
 	ActiveRunID   string                  `gorm:"type:text;not null;default:''"`
 	StallCount    int                     `gorm:"type:integer;not null;default:0"`
 	LastStallMark string                  `gorm:"type:text;not null;default:''"`

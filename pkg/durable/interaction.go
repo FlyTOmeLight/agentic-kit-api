@@ -29,7 +29,7 @@ func (s *Store) SupplyResult(ctx context.Context, owner, id, step, result string
 	}
 	defer tx.Rollback()
 	r, err := readRun(
-		tx.Model(&table.Run{}).
+		table.TenantQuery(ctx, tx.Model(&table.Run{})).
 			Where("id = ? AND owner_id = ?", id, owner).
 			Clauses(clause.Locking{Strength: "UPDATE"}),
 	)
@@ -58,7 +58,7 @@ func (s *Store) SupplyResult(ctx context.Context, owner, id, step, result string
 		return ErrConflict
 	}
 	var expired bool
-	if err = tx.Model(&table.Run{}).
+	if err = table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Select("deadline <= clock_timestamp()").
 		Where("id = ?", id).
 		Scan(&expired).
@@ -74,7 +74,7 @@ func (s *Store) SupplyResult(ctx context.Context, owner, id, step, result string
 		Error; err != nil {
 		return err
 	}
-	if err = tx.Model(&table.Run{}).
+	if err = table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Where("id = ?", id).
 		Updates(map[string]any{
 			"status":               Queued,
@@ -108,6 +108,22 @@ func (s *Store) SupplyResult(ctx context.Context, owner, id, step, result string
 // WaitingExternal with a matching external reference; otherwise the call is
 // rejected with ErrConflict.
 func (s *Store) SupplyExternalResult(ctx context.Context, owner, id, step, externalRef, result string) error {
+	return s.supplyExternalResult(ctx, &owner, id, step, externalRef, result)
+}
+
+// SupplyExternalResultByRunID delivers an authenticated external callback
+// result using the run's persisted owner. Callers must not derive the owner
+// from transport identity; the HTTP layer is responsible for authenticating
+// the internal service before reaching this method.
+func (s *Store) SupplyExternalResultByRunID(ctx context.Context, id, step, externalRef, result string) error {
+	return s.supplyExternalResult(ctx, nil, id, step, externalRef, result)
+}
+
+func (s *Store) supplyExternalResult(
+	ctx context.Context,
+	owner *string,
+	id, step, externalRef, result string,
+) error {
 	if externalRef == "" {
 		return ErrInvalid
 	}
@@ -116,17 +132,17 @@ func (s *Store) SupplyExternalResult(ctx context.Context, owner, id, step, exter
 		return err
 	}
 	defer tx.Rollback()
-	r, err := readRun(
-		tx.Model(&table.Run{}).
-			Where("id = ? AND owner_id = ?", id, owner).
-			Clauses(clause.Locking{Strength: "UPDATE"}),
-	)
+	query := table.TenantQuery(ctx, tx.Model(&table.Run{})).Where("id = ?", id)
+	if owner != nil {
+		query = query.Where("owner_id = ?", *owner)
+	}
+	r, err := readRun(query.Clauses(clause.Locking{Strength: "UPDATE"}))
 	if err != nil {
 		return err
 	}
-	var saved struct{ Result, Status string }
+	var saved struct{ Result, Status, ExternalRef string }
 	err = tx.Model(&table.Step{}).
-		Select("result", "status").
+		Select("result", "status", "external_ref").
 		Where("run_id = ? AND step_id = ?", id, step).
 		Take(&saved).
 		Error
@@ -137,7 +153,7 @@ func (s *Store) SupplyExternalResult(ctx context.Context, owner, id, step, exter
 		return err
 	}
 	if saved.Status == "Completed" {
-		if saved.Result == result {
+		if saved.ExternalRef == externalRef && saved.Result == result {
 			return nil
 		}
 		return ErrConflict
@@ -147,7 +163,7 @@ func (s *Store) SupplyExternalResult(ctx context.Context, owner, id, step, exter
 		return ErrConflict
 	}
 	var expired bool
-	if err = tx.Model(&table.Run{}).
+	if err = table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Select("deadline <= clock_timestamp()").
 		Where("id = ?", id).
 		Scan(&expired).
@@ -163,7 +179,7 @@ func (s *Store) SupplyExternalResult(ctx context.Context, owner, id, step, exter
 		Error; err != nil {
 		return err
 	}
-	if err = tx.Model(&table.Run{}).
+	if err = table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Where("id = ?", id).
 		Updates(map[string]any{
 			"status":               Queued,

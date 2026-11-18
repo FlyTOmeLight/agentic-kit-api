@@ -37,7 +37,7 @@ func chargeGoalUsage(ctx context.Context, tx *gorm.DB, run *Run, tokens int64, c
 		return false, nil
 	}
 	var goalRow table.Goal
-	if err := tx.Model(&table.Goal{}).
+	if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).
 		Where("owner_id = ? AND id = ?", run.OwnerID, run.GoalID).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Take(&goalRow).
@@ -55,7 +55,7 @@ func chargeGoalUsage(ctx context.Context, tx *gorm.DB, run *Run, tokens int64, c
 	if blocked {
 		updates["status"] = GoalBlocked
 	}
-	if err := tx.Model(&table.Goal{}).Where("id = ?", goalRow.ID).Updates(updates).Error; err != nil {
+	if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).Where("id = ?", goalRow.ID).Updates(updates).Error; err != nil {
 		return false, err
 	}
 	return blocked, nil
@@ -70,7 +70,7 @@ func (s *Store) CheckUsageBudget(ctx context.Context, l Lease) error {
 		return err
 	}
 	defer tx.Rollback()
-	run, err := lockLease(ctx, tx, l)
+	run, err := lockLease(ctx, table.TenantQuery(ctx, tx), l)
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func (s *Store) CheckUsageBudget(ctx context.Context, l Lease) error {
 		return tx.Commit().Error
 	}
 	var goalRow table.Goal
-	if err := tx.Where("owner_id = ? AND id = ?", run.OwnerID, run.GoalID).
+	if err := table.TenantQuery(ctx, tx).Where("owner_id = ? AND id = ?", run.OwnerID, run.GoalID).
 		Take(&goalRow).
 		Error; err != nil {
 		return recordError(err)
@@ -125,7 +125,7 @@ func (s *Store) RecordUsageWithCost(
 	}
 	defer tx.Rollback()
 	var binding table.Run
-	if err := tx.Model(&table.Run{}).
+	if err := table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Select("owner_id", "goal_id").
 		Where("id = ? AND worker_id = ? AND epoch = ?", l.RunID, l.WorkerID, l.Epoch).
 		Take(&binding).Error; err != nil {
@@ -136,14 +136,14 @@ func (s *Store) RecordUsageWithCost(
 	}
 	if binding.GoalID != "" {
 		var goal table.Goal
-		if err := tx.Model(&table.Goal{}).
+		if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).
 			Where("owner_id = ? AND id = ?", binding.OwnerID, binding.GoalID).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Take(&goal).Error; err != nil {
 			return recordError(err)
 		}
 	}
-	run, err := lockLease(ctx, tx, l)
+	run, err := lockLease(ctx, table.TenantQuery(ctx, tx), l)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func (s *Store) RecordUsageWithCost(
 		// Same turn and call already recorded: a checkpoint replay.
 		return tx.Commit().Error
 	}
-	row := tx.Model(&table.Run{}).Where("id = ?", l.RunID)
+	row := table.TenantQuery(ctx, tx.Model(&table.Run{})).Where("id = ?", l.RunID)
 	updates := map[string]any{
 		"state":      string(state),
 		"updated_at": gorm.Expr("clock_timestamp()"),

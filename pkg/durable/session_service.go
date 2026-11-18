@@ -30,7 +30,10 @@ func (s *Store) CreateSession(ctx context.Context, owner, agent, title string) (
 	if agentRow.PublishedVersion == 0 {
 		return nil, ErrConflict
 	}
-	r := table.Session{ID: NewID(), OwnerID: owner, AgentID: agent, Title: title}
+	r := table.Session{
+		ID: NewID(), OwnerID: owner, AgentID: agent, Title: title,
+		TenantID: agentRow.TenantID, ProjectID: agentRow.ProjectID,
+	}
 	if err = s.db.WithContext(ctx).Create(&r).Error; err != nil {
 		return nil, err
 	}
@@ -39,7 +42,7 @@ func (s *Store) CreateSession(ctx context.Context, owner, agent, title string) (
 
 func (s *Store) Session(ctx context.Context, owner, id string) (*Session, error) {
 	var r table.Session
-	if err := s.db.WithContext(ctx).Where("owner_id = ? AND id = ?", owner, id).Take(&r).Error; err != nil {
+	if err := table.TenantQuery(ctx, s.db).Where("owner_id = ? AND id = ?", owner, id).Take(&r).Error; err != nil {
 		return nil, recordError(err)
 	}
 	return sessionFromRow(r), nil
@@ -49,7 +52,7 @@ func (s *Store) Sessions(ctx context.Context, owner, agent, after string, limit 
 	if limit < 1 || limit > 100 {
 		return nil, ErrInvalid
 	}
-	q := s.db.WithContext(ctx).Where("owner_id = ? AND id > ?", owner, after)
+	q := table.TenantQuery(ctx, s.db).Where("owner_id = ? AND id > ?", owner, after)
 	if agent != "" {
 		q = q.Where("agent_id = ?", agent)
 	}
@@ -98,7 +101,7 @@ func (s *Store) SessionRuns(ctx context.Context, owner, session, after string, l
 		return nil, err
 	}
 	var records []table.Run
-	err := s.db.WithContext(ctx).
+	err := table.TenantQuery(ctx, s.db).
 		Where("owner_id = ? AND session_id = ? AND id > ?", owner, session, after).
 		Order("id").
 		Limit(limit).

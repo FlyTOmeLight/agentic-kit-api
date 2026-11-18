@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -65,6 +67,33 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 	artifactServer, _ := newFakeArtifact(t)
 	t.Setenv("ARTIFACT_ENDPOINT", artifactServer.URL)
 	token := "framework-lifecycle-test-token-32chars"
+	serviceKey := strings.Repeat("k", 32)
+	tenantServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/internal/v1/scope/resolve" ||
+			request.Header.Get("Authorization") != "Bearer "+serviceKey {
+			t.Error("unexpected Forge authentication request")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var proof struct {
+			APIKey   string `json:"api_key"`
+			TenantID string `json:"tenant_id"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&proof); err != nil ||
+			proof.APIKey != token || proof.TenantID != "tenant" {
+			t.Error("invalid Forge identity proof")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"principal": map[string]string{"id": "owner"},
+			"user_id":   "owner", "tenant_id": "tenant", "ownership_state": "active",
+			"project_id": nil,
+		})
+	}))
+	defer tenantServer.Close()
+	t.Setenv("TENANT_ENDPOINT", tenantServer.URL)
+	t.Setenv("TENANT_SERVICE_API_KEY", serviceKey)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +130,7 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 	}()
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Timeout: time.Second, Transport: transport}
+	client := &http.Client{Timeout: time.Second, Transport: scopeTransport{base: transport, tenant: "tenant"}}
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 ready:

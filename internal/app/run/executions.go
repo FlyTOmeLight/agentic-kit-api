@@ -20,7 +20,6 @@ func (h *Controller) RegisterExecutionRoutes(router core.Router) {
 	group.GET("/healthz", h.health)
 	group.POST("/executions", h.submitExecution)
 	group.GET("/executions/:id/lease", h.executionLease)
-	group.POST("/executions/:id/callback", h.executionCallback)
 	h.RegisterGoalRoutes(group)
 }
 

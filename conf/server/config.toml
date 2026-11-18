@@ -21,9 +21,11 @@ DSN = "${env:DATABASE_URL:postgres://agentic:agentic_local@127.0.0.1:55432/agent
 Addrs = ["${env:REDIS_ADDR:127.0.0.1:56379}"]
 DB = 0
 
-# Phase-2 sandbox control plane. Leave K8sContext empty to serve only the
-# durable metadata routes without provisioning pods.
+# Sandbox routes require an allowed Forge service. With an allowlist,
+# empty K8sContext serves metadata routes without provisioning pods.
 [Sandbox]
+# Empty disables sandbox HTTP routes.
+AllowedServices = []
 K8sContext = "${env:SANDBOX_K8S_CONTEXT:}"
 K8sNamespace = "${env:SANDBOX_K8S_NAMESPACE:sandbox-center}"
 GuardImage = "${env:SANDBOX_GUARD_IMAGE:}"
@@ -34,8 +36,21 @@ CheckpointImage = "${env:SANDBOX_CHECKPOINT_IMAGE:}"
 CheckpointStoreHostPath = "${env:SANDBOX_CHECKPOINT_STORE_HOST_PATH:}"
 
 [Callback]
+# Enabling requires SigningSecret and both nonempty allowlists.
+Enabled = false
 SigningSecret = "${env:CALLBACK_SIGNING_SECRET:}"
 AllowedSources = []
+AllowedServices = []
+
+[Tenant]
+# Required at startup. HTTPS only, except HTTP on loopback.
+Endpoint = "${env:TENANT_ENDPOINT:}"
+# This API's Forge service credential, not the caller's user credential.
+ServiceAPIKey = "${env:TENANT_SERVICE_API_KEY:}"
+# Milliseconds; zero uses the SDK default.
+Timeout = 5000
+# Empty disables internal execution, goal and lease HTTP routes.
+AllowedPropagationServices = []
 
 # Published Agent configuration is stored in artifact-go. Timeout is in
 # milliseconds; zero keeps the SDK default.

@@ -10,11 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
@@ -37,6 +39,9 @@ func (s *Service) Create(
 	owner, actor, requestKey string,
 	doc memory.Document,
 ) (*memory.Entry, error) {
+	if err := authorizeDocument(ctx, owner, &doc); err != nil {
+		return nil, err
+	}
 	if owner == "" || actor == "" || requestKey == "" {
 		return nil, memory.ErrInvalid
 	}
@@ -67,8 +72,11 @@ func (s *Service) Create(
 
 // Get returns one entry if the caller is authorized.
 func (s *Service) Get(ctx context.Context, owner, id string) (*memory.Entry, error) {
+	if _, err := requireScope(ctx); err != nil {
+		return nil, err
+	}
 	var row table.MemoryEntry
-	if err := s.db.WithContext(ctx).Where("owner_id = ? AND id = ?", owner, id).Take(&row).Error; err != nil {
+	if err := table.TenantQuery(ctx, s.db).Where("owner_id = ? AND id = ?", owner, id).Take(&row).Error; err != nil {
 		return nil, mapError(err)
 	}
 	return row.ToDomain(), nil
@@ -76,10 +84,13 @@ func (s *Service) Get(ctx context.Context, owner, id string) (*memory.Entry, err
 
 // List returns entries owned by the caller, newest first.
 func (s *Service) List(ctx context.Context, owner, after string, limit int) ([]memory.Entry, error) {
+	if _, err := requireScope(ctx); err != nil {
+		return nil, err
+	}
 	if limit < 1 || limit > 100 {
 		return nil, memory.ErrInvalid
 	}
-	q := s.db.WithContext(ctx).Where("owner_id = ? AND id > ?", owner, after)
+	q := table.TenantQuery(ctx, s.db).Where("owner_id = ? AND id > ?", owner, after)
 	var rows []table.MemoryEntry
 	if err := q.Order("id").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, mapError(err)
@@ -98,6 +109,9 @@ func (s *Service) Update(
 	expectedRevision int64,
 	doc memory.Document,
 ) (*memory.Entry, error) {
+	if err := authorizeDocument(ctx, owner, &doc); err != nil {
+		return nil, err
+	}
 	if owner == "" || actor == "" || requestKey == "" || entryID == "" {
 		return nil, memory.ErrInvalid
 	}
@@ -111,7 +125,7 @@ func (s *Service) Update(
 	var entry *memory.Entry
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row table.MemoryEntry
-		if err := tx.Where("owner_id = ? AND id = ?", owner, entryID).Take(&row).Error; err != nil {
+		if err := table.TenantQuery(ctx, tx).Where("owner_id = ? AND id = ?", owner, entryID).Take(&row).Error; err != nil {
 			return mapError(err)
 		}
 		entry = row.ToDomain()
@@ -124,8 +138,8 @@ func (s *Service) Update(
 		entry = entryFromDocument(&doc, owner)
 		entry.ID = row.ID
 		entry.Revision = row.Revision + 1
-		if err := tx.Model(&table.MemoryEntry{}).
-			Where("id = ?", row.ID).
+		if err := table.TenantQuery(ctx, tx).Model(&table.MemoryEntry{}).
+			Where("id = ? AND owner_id = ?", row.ID, owner).
 			Updates(table.MemoryEntryFromDomain(entry)).
 			Error; err != nil {
 			return err
@@ -149,13 +163,17 @@ func (s *Service) Retire(
 	owner, actor, requestKey, entryID string,
 	expectedRevision int64,
 ) (*memory.Entry, error) {
+	scope, err := requireScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if owner == "" || actor == "" || requestKey == "" || entryID == "" {
 		return nil, memory.ErrInvalid
 	}
 	var entry *memory.Entry
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row table.MemoryEntry
-		if err := tx.Where("owner_id = ? AND id = ?", owner, entryID).Take(&row).Error; err != nil {
+		if err := table.TenantQuery(ctx, tx).Where("owner_id = ? AND id = ?", owner, entryID).Take(&row).Error; err != nil {
 			return mapError(err)
 		}
 		entry = row.ToDomain()
@@ -168,7 +186,7 @@ func (s *Service) Retire(
 		now := time.Now().Unix()
 		entry.RetiredAt = &now
 		entry.Revision++
-		if err := tx.Model(&table.MemoryEntry{}).Where("id = ?", row.ID).Updates(map[string]any{
+		if err := table.TenantQuery(ctx, tx).Model(&table.MemoryEntry{}).Where("id = ? AND owner_id = ?", row.ID, owner).Updates(map[string]any{
 			"retired_at": now,
 			"revision":   entry.Revision,
 		}).Error; err != nil {
@@ -176,6 +194,7 @@ func (s *Service) Retire(
 		}
 		op := &memory.Operation{
 			ID:               newOperationID(),
+			TenantID:         scope.TenantID,
 			OwnerID:          owner,
 			RequestKey:       requestKey,
 			IntentDigest:     digestIntent(memory.OperationRetire, entryID, expectedRevision, nil),
@@ -202,6 +221,9 @@ func (s *Service) Restore(
 	expectedRevision int64,
 	doc memory.Document,
 ) (*memory.Entry, error) {
+	if err := authorizeDocument(ctx, owner, &doc); err != nil {
+		return nil, err
+	}
 	if owner == "" || actor == "" || requestKey == "" || entryID == "" {
 		return nil, memory.ErrInvalid
 	}
@@ -215,7 +237,7 @@ func (s *Service) Restore(
 	var entry *memory.Entry
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row table.MemoryEntry
-		if err := tx.Where("owner_id = ? AND id = ?", owner, entryID).Take(&row).Error; err != nil {
+		if err := table.TenantQuery(ctx, tx).Where("owner_id = ? AND id = ?", owner, entryID).Take(&row).Error; err != nil {
 			return mapError(err)
 		}
 		entry = row.ToDomain()
@@ -229,8 +251,9 @@ func (s *Service) Restore(
 		entry.ID = row.ID
 		entry.Revision = row.Revision + 1
 		entry.RetiredAt = nil
-		if err := tx.Model(&table.MemoryEntry{}).
-			Where("id = ?", row.ID).
+		if err := table.TenantQuery(ctx, tx).Model(&table.MemoryEntry{}).
+			Where("id = ? AND owner_id = ?", row.ID, owner).
+			Select("*").Omit("id", "created_at", "updated_at").
 			Updates(table.MemoryEntryFromDomain(entry)).
 			Error; err != nil {
 			return err
@@ -261,7 +284,7 @@ func (s *Service) RecallTx(
 		return nil, memory.ErrInvalid
 	}
 	var rows []table.MemoryEntry
-	q := tx.WithContext(ctx).Where(
+	q := table.TenantQuery(ctx, tx).Where(
 		"owner_id = ? AND scope_kind = ? AND tenant_id = ? AND project_id = ? AND actor_id = ? AND retired_at IS NULL",
 		scope.Owner, string(scope.Kind), scope.Tenant, scope.Project, scope.Actor,
 	)
@@ -324,6 +347,26 @@ func selectEntries(entries []memory.Entry, query string, filter memory.RecallFil
 	return selected
 }
 
+func requireScope(ctx context.Context) (access.Scope, error) {
+	scope, ok := access.FromContext(ctx)
+	if !ok || scope.TenantID == "" || strings.TrimSpace(scope.TenantID) != scope.TenantID {
+		return access.Scope{}, memory.ErrForbidden
+	}
+	return scope, nil
+}
+
+func authorizeDocument(ctx context.Context, owner string, doc *memory.Document) error {
+	scope, err := requireScope(ctx)
+	if err != nil {
+		return err
+	}
+	if doc.Scope.Tenant != scope.TenantID || doc.Scope.Project != scope.ProjectID {
+		return memory.ErrForbidden
+	}
+	doc.Scope.Owner = owner
+	return nil
+}
+
 func validateDocument(doc *memory.Document) error {
 	if doc.Kind == "" || doc.SubjectKey == "" && doc.Kind != memory.KindFact {
 		return memory.ErrInvalid
@@ -347,9 +390,11 @@ func validateDocument(doc *memory.Document) error {
 }
 
 func entryFromDocument(doc *memory.Document, owner string) *memory.Entry {
+	scope := doc.Scope
+	scope.Owner = owner
 	return &memory.Entry{
 		ID:               doc.EntryID,
-		Scope:            doc.Scope,
+		Scope:            scope,
 		AgentID:          doc.AgentID,
 		Kind:             doc.Kind,
 		SubjectKey:       doc.SubjectKey,
@@ -371,6 +416,7 @@ func operationFromDocument(
 ) *memory.Operation {
 	return &memory.Operation{
 		ID:               newOperationID(),
+		TenantID:         doc.Scope.Tenant,
 		OwnerID:          owner,
 		RequestKey:       requestKey,
 		IntentDigest:     digestIntent(opType, doc.EntryID, expectedRevision, doc),

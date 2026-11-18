@@ -10,6 +10,8 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
@@ -65,10 +67,100 @@ func factDocument(scope memory.Scope, subject, summary, body string) memory.Docu
 	}
 }
 
+func TestMemoryAPIRequiresTrustedScope(t *testing.T) {
+	svc := NewService(nil)
+	for _, test := range []struct {
+		name string
+		ctx  context.Context
+	}{
+		{name: "missing", ctx: context.Background()},
+		{name: "empty tenant", ctx: access.WithScope(context.Background(), access.Scope{})},
+		{name: "blank tenant", ctx: access.WithScope(context.Background(), access.Scope{TenantID: " "})},
+		{name: "untrimmed tenant", ctx: access.WithScope(context.Background(), access.Scope{TenantID: " tenant-a"})},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			doc := factDocument(memory.Scope{Kind: memory.ScopeOwnerPrivate, Tenant: "tenant-a"}, "editor", "editor", "tabs")
+			for name, call := range map[string]func() error{
+				"Create": func() error {
+					_, err := svc.Create(test.ctx, "owner", "actor", "key", doc)
+					return err
+				},
+				"Get": func() error {
+					_, err := svc.Get(test.ctx, "owner", "entry")
+					return err
+				},
+				"List": func() error {
+					_, err := svc.List(test.ctx, "owner", "", 10)
+					return err
+				},
+				"Update": func() error {
+					_, err := svc.Update(test.ctx, "owner", "actor", "key", "entry", 1, doc)
+					return err
+				},
+				"Retire": func() error {
+					_, err := svc.Retire(test.ctx, "owner", "actor", "key", "entry", 1)
+					return err
+				},
+				"Restore": func() error {
+					_, err := svc.Restore(test.ctx, "owner", "actor", "key", "entry", 1, doc)
+					return err
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					if err := call(); !errors.Is(err, memory.ErrForbidden) {
+						t.Fatalf("error = %v, want ErrForbidden", err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestMemoryDocumentMustMatchTrustedScope(t *testing.T) {
+	svc := NewService(nil)
+	ctx := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-a", ProjectID: "project-a"})
+	for _, test := range []struct {
+		name    string
+		tenant  string
+		project string
+	}{
+		{name: "other tenant", tenant: "tenant-b", project: "project-a"},
+		{name: "missing tenant", project: "project-a"},
+		{name: "other project", tenant: "tenant-a", project: "project-b"},
+		{name: "missing project", tenant: "tenant-a"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			doc := factDocument(memory.Scope{
+				Kind: memory.ScopeOwnerPrivate, Owner: "forged", Tenant: test.tenant, Project: test.project,
+			}, "editor", "editor", "tabs")
+			for name, call := range map[string]func() error{
+				"Create": func() error {
+					_, err := svc.Create(ctx, "owner", "actor", "key", doc)
+					return err
+				},
+				"Update": func() error {
+					_, err := svc.Update(ctx, "owner", "actor", "key", "entry", 1, doc)
+					return err
+				},
+				"Restore": func() error {
+					_, err := svc.Restore(ctx, "owner", "actor", "key", "entry", 1, doc)
+					return err
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					if err := call(); !errors.Is(err, memory.ErrForbidden) {
+						t.Fatalf("error = %v, want ErrForbidden", err)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestMemoryCreateGetListUpdateRetireRestore(t *testing.T) {
-	svc, _ := testService(t)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	svc, store := testService(t)
+	ctx := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-a"})
+	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a", Tenant: "tenant-a"}
 
 	entry, err := svc.Create(ctx, "owner-a", "actor-a", "key-1",
 		factDocument(scope, "editor", "editor preference", "use tabs"))
@@ -133,12 +225,121 @@ func TestMemoryCreateGetListUpdateRetireRestore(t *testing.T) {
 	if restored.RetiredAt != nil || restored.Revision != 4 {
 		t.Fatalf("unexpected restored entry: %+v", restored)
 	}
+	persisted, err := svc.Get(ctx, "owner-a", restored.ID)
+	if err != nil || persisted.RetiredAt != nil || persisted.Revision != 4 {
+		t.Fatalf("persisted restored entry: %+v, err=%v", persisted, err)
+	}
+	var receipts []table.MemoryOperation
+	if err = store.DB().Where("entry_id = ?", entry.ID).Find(&receipts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(receipts) != 4 {
+		t.Fatalf("receipts = %d, want 4", len(receipts))
+	}
+	for _, receipt := range receipts {
+		if receipt.TenantID != scope.Tenant || receipt.ToDomain().TenantID != scope.Tenant {
+			t.Fatalf("receipt lost tenant: %+v", receipt)
+		}
+	}
+}
+
+func TestMemorySameOwnerTenantIsolation(t *testing.T) {
+	svc, store := testService(t)
+	ctxA := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-a", ProjectID: "project-a"})
+	ctxB := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-b", ProjectID: "project-b"})
+	scopeA := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "forged-owner", Tenant: "tenant-a", Project: "project-a"}
+	scopeB := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "forged-owner", Tenant: "tenant-b", Project: "project-b"}
+	docA := factDocument(scopeA, "editor", "editor A", "tabs")
+	docB := factDocument(scopeB, "editor", "editor B", "spaces")
+	entryA, err := svc.Create(ctxA, "owner", "actor", "shared-key", docA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryB, err := svc.Create(ctxB, "owner", "actor", "shared-key", docB)
+	if err != nil {
+		t.Fatalf("same owner/requestKey in another tenant: %v", err)
+	}
+	if entryA.Scope.Owner != "owner" || entryB.Scope.Owner != "owner" {
+		t.Fatal("document owner was trusted")
+	}
+	var receipts []table.MemoryOperation
+	if err = store.DB().Where("owner_id = ? AND request_key = ?", "owner", "shared-key").Order("tenant_id").Find(&receipts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(receipts) != 2 || receipts[0].TenantID != "tenant-a" || receipts[1].TenantID != "tenant-b" {
+		t.Fatalf("tenant receipts: %+v", receipts)
+	}
+	var savedDoc memory.Document
+	if err = json.Unmarshal(receipts[0].Document, &savedDoc); err != nil || savedDoc.Scope.Owner != "owner" {
+		t.Fatalf("receipt owner: %+v, err=%v", savedDoc.Scope, err)
+	}
+	for _, test := range []struct {
+		name  string
+		ctx   context.Context
+		own   *memory.Entry
+		other *memory.Entry
+		doc   memory.Document
+	}{
+		{name: "tenant-a", ctx: ctxA, own: entryA, other: entryB, doc: docA},
+		{name: "tenant-b", ctx: ctxB, own: entryB, other: entryA, doc: docB},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			entries, err := svc.List(test.ctx, "owner", "", 10)
+			if err != nil || len(entries) != 1 || entries[0].ID != test.own.ID {
+				t.Fatalf("List = %+v, err=%v", entries, err)
+			}
+			if _, err = svc.Get(test.ctx, "owner", test.other.ID); !errors.Is(err, memory.ErrNotFound) {
+				t.Fatalf("cross-tenant Get = %v", err)
+			}
+			if _, err = svc.Update(test.ctx, "owner", "actor", "cross-update", test.other.ID, 1, test.doc); !errors.Is(err, memory.ErrNotFound) {
+				t.Fatalf("cross-tenant Update = %v", err)
+			}
+			if _, err = svc.Retire(test.ctx, "owner", "actor", "cross-retire", test.other.ID, 1); !errors.Is(err, memory.ErrNotFound) {
+				t.Fatalf("cross-tenant Retire = %v", err)
+			}
+			if _, err = svc.Restore(test.ctx, "owner", "actor", "cross-restore", test.other.ID, 1, test.doc); !errors.Is(err, memory.ErrNotFound) {
+				t.Fatalf("cross-tenant Restore = %v", err)
+			}
+		})
+	}
+	duplicateDoc := factDocument(scopeA, "different-subject", "duplicate receipt", "data")
+	if _, err = svc.Create(ctxA, "owner", "actor", "shared-key", duplicateDoc); err == nil {
+		t.Fatal("same tenant/owner/requestKey accepted a second receipt")
+	}
+	entries, err := svc.List(ctxA, "owner", "", 10)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("duplicate receipt did not roll back entry: %+v, err=%v", entries, err)
+	}
+	updated, err := svc.Update(ctxA, "owner", "actor", "update", entryA.ID, 1, docA)
+	if err != nil || updated.Scope.Owner != "owner" {
+		t.Fatalf("Update owner: %+v, err=%v", updated, err)
+	}
+	retired, err := svc.Retire(ctxA, "owner", "actor", "retire", entryA.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := svc.Restore(ctxA, "owner", "actor", "restore", entryA.ID, retired.Revision, docA)
+	if err != nil || restored.Scope.Owner != "owner" {
+		t.Fatalf("Restore owner: %+v, err=%v", restored, err)
+	}
+	for _, test := range []struct {
+		scope memory.Scope
+		id    string
+	}{
+		{scope: entryA.Scope, id: entryA.ID},
+		{scope: entryB.Scope, id: entryB.ID},
+	} {
+		entries := recallInTx(t, svc, store, test.scope, "", "", memory.RecallFilter{})
+		if len(entries) != 1 || entries[0].ID != test.id {
+			t.Fatalf("worker RecallTx scope %+v: %+v", test.scope, entries)
+		}
+	}
 }
 
 func TestMemorySubjectUniqueIndex(t *testing.T) {
 	svc, _ := testService(t)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-a"})
+	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a", Tenant: "tenant-a"}
 	doc := factDocument(scope, "editor", "one", "a")
 
 	if _, err := svc.Create(ctx, "owner-a", "actor-a", "key-1", doc); err != nil {
@@ -156,8 +357,8 @@ func TestMemorySubjectUniqueIndex(t *testing.T) {
 
 func TestMemoryRecallTx(t *testing.T) {
 	svc, store := testService(t)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-a"})
+	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a", Tenant: "tenant-a"}
 
 	plain, err := svc.Create(ctx, "owner-a", "actor-a", "key-1",
 		factDocument(scope, "editor", "editor preference", "use tabs"))
@@ -178,7 +379,7 @@ func TestMemoryRecallTx(t *testing.T) {
 	}
 
 	err = store.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		entries, err := svc.RecallTx(ctx, tx, scope, "agent-1", "", memory.RecallFilter{})
+		entries, err := svc.RecallTx(context.Background(), tx, scope, "agent-1", "", memory.RecallFilter{})
 		if err != nil {
 			return err
 		}
@@ -199,7 +400,7 @@ func TestMemoryRecallTx(t *testing.T) {
 		t.Fatalf("Retire: %v", err)
 	}
 	err = store.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		entries, err := svc.RecallTx(ctx, tx, scope, "agent-1", "", memory.RecallFilter{})
+		entries, err := svc.RecallTx(context.Background(), tx, scope, "agent-1", "", memory.RecallFilter{})
 		if err != nil {
 			return err
 		}
@@ -214,7 +415,7 @@ func TestMemoryRecallTx(t *testing.T) {
 
 	err = store.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		entries, err := svc.RecallTx(
-			ctx,
+			context.Background(),
 			tx,
 			memory.Scope{
 				Kind:  memory.ScopeProjectShared,
@@ -239,8 +440,8 @@ func TestMemoryRecallTx(t *testing.T) {
 
 func TestMemoryRecallTxExpiredSkipped(t *testing.T) {
 	svc, store := testService(t)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-a"})
+	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a", Tenant: "tenant-a"}
 
 	past := int64(1)
 	doc := factDocument(scope, "temp", "temporary", "expires")
@@ -249,7 +450,7 @@ func TestMemoryRecallTxExpiredSkipped(t *testing.T) {
 		t.Fatalf("Create expired: %v", err)
 	}
 	err := store.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		entries, err := svc.RecallTx(ctx, tx, scope, "", "", memory.RecallFilter{})
+		entries, err := svc.RecallTx(context.Background(), tx, scope, "", "", memory.RecallFilter{})
 		if err != nil {
 			return err
 		}
@@ -287,8 +488,8 @@ func recallInTx(
 
 func TestMemoryRecallTxTermMatching(t *testing.T) {
 	svc, store := testService(t)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-a"})
+	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a", Tenant: "tenant-a"}
 
 	if _, err := svc.Create(ctx, "owner-a", "actor-a", "key-1",
 		factDocument(scope, "editor", "editor preference", "use tabs")); err != nil {
@@ -317,8 +518,8 @@ func TestMemoryRecallTxTermMatching(t *testing.T) {
 
 func TestMemoryRecallTxTagFilter(t *testing.T) {
 	svc, store := testService(t)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-a"})
+	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a", Tenant: "tenant-a"}
 
 	goDoc := factDocument(scope, "vet", "vet procedure", "run go vet")
 	goDoc.Conditions.TaskTags = []string{"go"}
@@ -339,8 +540,8 @@ func TestMemoryRecallTxTagFilter(t *testing.T) {
 
 func TestMemoryRecallTxBoundsAndOrdering(t *testing.T) {
 	svc, store := testService(t)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-a"})
+	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a", Tenant: "tenant-a"}
 
 	first, err := svc.Create(ctx, "owner-a", "actor-a", "key-1",
 		factDocument(scope, "one", "first", "aaaa"))

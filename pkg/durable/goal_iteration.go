@@ -22,11 +22,13 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 	}
 	defer tx.Rollback()
 	var goal table.Goal
-	err := tx.Where("durable_goal.status = ?", GoalActive).
+	err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).
+		Where("durable_goal.status = ?", GoalActive).
 		Where(`EXISTS (
 			SELECT 1 FROM durable_run AS previous
 			JOIN durable_evaluation AS receipt ON receipt.run_id = previous.id AND receipt.goal_id = durable_goal.id
 			WHERE previous.id = durable_goal.active_run_id AND previous.owner_id = durable_goal.owner_id
+			  AND previous.tenant_id = durable_goal.tenant_id
 			  AND previous.goal_id = durable_goal.id AND previous.status = 'Completed'
 			  AND previous.stall_mark <> '' AND receipt.status = 'Failed'
 			  AND NOT EXISTS (
@@ -36,6 +38,7 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 		Where(`NOT EXISTS (
 			SELECT 1 FROM durable_run AS busy
 			WHERE busy.owner_id = durable_goal.owner_id AND busy.session_id = durable_goal.session_id
+			  AND busy.tenant_id = durable_goal.tenant_id
 			  AND busy.status IN ('Queued', 'Running', 'WaitingClarification', 'NeedsReview', 'WaitingExternal')
 		)`).
 		Order("durable_goal.updated_at, durable_goal.id").
@@ -48,7 +51,8 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 		return nil, err
 	}
 	var session table.Session
-	err = tx.Where("owner_id = ? AND id = ?", goal.OwnerID, goal.SessionID).
+	err = table.TenantQuery(ctx, tx).
+		Where("tenant_id = ? AND owner_id = ? AND id = ?", goal.TenantID, goal.OwnerID, goal.SessionID).
 		Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 		Take(&session).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -57,10 +61,14 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = ensureNoActiveRun(tx, goal.OwnerID, goal.SessionID); err != nil {
+	if err = ensureNoActiveRun(
+		table.TenantQuery(ctx, tx).Where("tenant_id = ?", goal.TenantID),
+		goal.OwnerID, goal.SessionID,
+	); err != nil {
 		return nil, err
 	}
-	previous, err := readRun(tx.Where("owner_id = ? AND id = ?", goal.OwnerID, goal.ActiveRunID))
+	previous, err := readRun(table.TenantQuery(ctx, tx).
+		Where("tenant_id = ? AND owner_id = ? AND id = ?", goal.TenantID, goal.OwnerID, goal.ActiveRunID))
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +125,7 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 		}
 	}
 	if reason != "" {
-		if err = tx.Model(&table.Goal{}).Where("id = ?", goal.ID).
+		if err = table.TenantQuery(ctx, tx.Model(&table.Goal{})).Where("id = ?", goal.ID).
 			Updates(map[string]any{"status": GoalBlocked, "updated_at": gorm.Expr("clock_timestamp()")}).
 			Error; err != nil {
 			return nil, err
@@ -155,20 +163,21 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 	id := NewID()
 	if err = tx.Model(&table.Run{}).Create(map[string]any{
 		"id": id, "owner_id": goal.OwnerID, "session_id": goal.SessionID,
+		"tenant_id": goal.TenantID, "project_id": goal.ProjectID,
 		"request_key":  "goal-iteration:" + goal.ID + ":" + previous.ID,
 		"request_hash": Hash(data), "spec": string(data), "status": Queued,
 		"deadline": deadline, "max_attempts": previous.MaxAttempts, "goal_id": goal.ID,
 	}).Error; err != nil {
 		return nil, recordError(err)
 	}
-	next, err := readRun(tx.Where("id = ?", id))
+	next, err := readRun(table.TenantQuery(ctx, tx).Where("id = ?", id))
 	if err != nil {
 		return nil, err
 	}
 	if err = appendMessage(tx, next, "User", Message{Role: "user", Content: spec.Query}); err != nil {
 		return nil, err
 	}
-	if err = tx.Model(&table.Goal{}).Where("id = ?", goal.ID).
+	if err = table.TenantQuery(ctx, tx.Model(&table.Goal{})).Where("id = ?", goal.ID).
 		Updates(map[string]any{"active_run_id": id, "updated_at": gorm.Expr("clock_timestamp()")}).
 		Error; err != nil {
 		return nil, err

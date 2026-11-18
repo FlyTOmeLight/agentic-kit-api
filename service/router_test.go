@@ -26,6 +26,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
@@ -84,18 +85,24 @@ func newRouterWithCallback(
 	}
 	t.Cleanup(log.Close)
 	artifactServer, _ := newFakeArtifact(t)
-	routes := newRoutes(store, redisClient, newArtifactClient(t, artifactServer), nil, nil, callbackCfg)
+	identity := func(c *gin.Context) {
+		token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		if owner := tokens[token]; owner != "" {
+			c.Set(constants.KeyUserID, owner)
+			c.Set(constants.KeyTenantID, "tenant")
+			c.Set(constants.KeyProjectID, c.GetHeader(constants.HeaderProjectID))
+			c.Request = c.Request.WithContext(access.WithScope(c.Request.Context(), access.Scope{
+				TenantID: "tenant", ProjectID: c.GetHeader(constants.HeaderProjectID),
+			}))
+		}
+		c.Next()
+	}
+	authentication := Authentication{
+		User: []gin.HandlerFunc{identity}, Propagation: []gin.HandlerFunc{identity},
+		Callback: []gin.HandlerFunc{identity},
+	}
+	routes := newRoutes(store, redisClient, newArtifactClient(t, artifactServer), nil, nil, callbackCfg, authentication)
 	h, err := host.NewHTTPHost(manager, log, nil, testRoutes{register: func(g *gin.RouterGroup) {
-		// Test double for the future Forge middleware: it only establishes the
-		// identity context and does not authenticate or authorize requests.
-		g.Use(func(c *gin.Context) {
-			token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-			if owner := tokens[token]; owner != "" {
-				c.Set(constants.KeyUserID, owner)
-				c.Set(constants.KeyTenantID, "test-tenant")
-			}
-			c.Next()
-		})
 		routes.register(g)
 		if extra != nil {
 			extra(g)
@@ -109,6 +116,21 @@ func newRouterWithCallback(
 }
 
 const testToken = "test-bearer-token-at-least-24-chars"
+
+type scopeTransport struct {
+	base    http.RoundTripper
+	tenant  string
+	project string
+}
+
+func (transport scopeTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	request = request.Clone(request.Context())
+	request.Header.Set(constants.HeaderTenantID, transport.tenant)
+	if transport.project != "" {
+		request.Header.Set(constants.HeaderProjectID, transport.project)
+	}
+	return transport.base.RoundTrip(request)
+}
 
 func TestScenarioBusinessRoutesAreAbsent(t *testing.T) {
 	router := NewRouter(t, nil, nil, nil)
@@ -307,6 +329,7 @@ func TestCallbackSecurity(t *testing.T) {
 		nil,
 		map[string]string{testToken: "owner"},
 		config.CallbackConfig{
+			Enabled:        true,
 			SigningSecret:  secret,
 			AllowedSources: []string{"approval-system"},
 		},
@@ -376,8 +399,12 @@ func TestSignedCallbackResumesRunWithoutQueryOverride(t *testing.T) {
 	ctx := context.Background()
 	secret := "callback-test-secret"
 	source := "approval-system"
-	router := newRouterWithCallback(t, store, nil, map[string]string{testToken: "owner"},
-		config.CallbackConfig{SigningSecret: secret, AllowedSources: []string{source}}, nil)
+	serviceToken := "test-service-token-at-least-24-chars"
+	router := newRouterWithCallback(t, store, nil, map[string]string{
+		testToken:    "owner",
+		serviceToken: "service",
+	},
+		config.CallbackConfig{Enabled: true, SigningSecret: secret, AllowedSources: []string{source}}, nil)
 	session := createHTTPConversation(t, router)
 	response := request(router, http.MethodPost, "/v1/sessions/"+session.ID+"/messages",
 		`{"query":"wait for approval"}`, testToken, "callback-run")
@@ -412,7 +439,8 @@ func TestSignedCallbackResumesRunWithoutQueryOverride(t *testing.T) {
 			strings.NewReader(body),
 		)
 		httpRequest.Header.Set("Content-Type", "application/json")
-		httpRequest.Header.Set("Authorization", "Bearer "+testToken)
+		// Authenticated service identity must not replace the run's stored owner.
+		httpRequest.Header.Set("Authorization", "Bearer "+serviceToken)
 		httpRequest.Header.Set("X-Agentic-Source", source)
 		httpRequest.Header.Set("X-Agentic-Signature", callbackSignature(secret, path, source, body))
 		recorder := httptest.NewRecorder()
@@ -434,7 +462,7 @@ func TestSignedCallbackResumesRunWithoutQueryOverride(t *testing.T) {
 func TestCallbackBodyLimitsAndJSONBinding(t *testing.T) {
 	path := "/internal/v1/executions/run/callback"
 	for _, secret := range []string{"", "test-secret"} {
-		router := newRouterWithCallback(t, nil, nil, nil, config.CallbackConfig{SigningSecret: secret}, nil)
+		router := newRouterWithCallback(t, nil, nil, nil, config.CallbackConfig{Enabled: true, SigningSecret: secret}, nil)
 		for _, test := range []struct {
 			name, body, contentType, query string
 			status                         int

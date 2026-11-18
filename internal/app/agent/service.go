@@ -16,6 +16,7 @@ import (
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
@@ -102,6 +103,12 @@ func (s *service) CreateAgent(
 		return nil, err
 	}
 	row := table.Agent{ID: durable.NewID(), OwnerID: owner, Name: name, Draft: config, Revision: 1}
+	if scope, ok := access.FromContext(ctx); ok {
+		if scope.TenantID == "" {
+			return nil, agent.ErrInvalid
+		}
+		row.TenantID, row.ProjectID = scope.TenantID, scope.ProjectID
+	}
 	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return nil, err
 	}

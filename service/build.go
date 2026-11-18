@@ -26,11 +26,40 @@ func (m *artifactModule) Initialize(context.Context) error { return nil }
 
 func (m *artifactModule) Close(_ context.Context) error { return m.client.Close() }
 
+type tenantModule struct{ client *client.Tenant }
+
+func (m *tenantModule) Initialize(context.Context) error { return nil }
+
+func (m *tenantModule) Close(context.Context) error { return m.client.Close() }
+
 // Build owns standalone connections; combined applications inject their own
 // shared connections through New instead.
 func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if err := cfg.ValidateAPI(); err != nil {
 		return err
+	}
+	tenant, err := client.NewTenant(cfg.Tenant.Endpoint, cfg.Tenant.ServiceAPIKey,
+		time.Duration(cfg.Tenant.Timeout)*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	if err = runtime.Initialize(ctx, &tenantModule{client: tenant}); err != nil {
+		return err
+	}
+	authentication := Authentication{User: tenant.User()}
+	authentication.Propagation, err = tenant.Propagation(cfg.Tenant.AllowedPropagationServices)
+	if err != nil {
+		return err
+	}
+	authentication.Service, err = tenant.Service(cfg.Sandbox.AllowedServices)
+	if err != nil {
+		return err
+	}
+	if cfg.Callback.Enabled {
+		authentication.Callback, err = tenant.Service(cfg.Callback.AllowedServices)
+		if err != nil {
+			return err
+		}
 	}
 	runtime.Config.Subscribe(prepareHTTPConfig)
 	database := &frameworkdb.Module{Config: &cfg.DB}
@@ -45,7 +74,8 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if err = store.InitSchema(ctx); err != nil {
 		return err
 	}
-	artifact, err := client.NewArtifact(cfg.Artifact.Endpoint, time.Duration(cfg.Artifact.Timeout)*time.Millisecond)
+	artifact, err := client.NewArtifact(cfg.Artifact.Endpoint, cfg.Tenant.ServiceAPIKey,
+		time.Duration(cfg.Artifact.Timeout)*time.Millisecond)
 	if err != nil {
 		return err
 	}
@@ -53,7 +83,7 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 		artifact.Close()
 		return err
 	}
-	api, err := NewWithSandbox(*cfg, runtime.Log, store, cache.client, artifact, database.DB)
+	api, err := NewWithSandbox(*cfg, runtime.Log, store, cache.client, artifact, database.DB, authentication)
 	if err != nil {
 		return err
 	}

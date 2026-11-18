@@ -1,6 +1,6 @@
 # Agent 资产接入 artifact-go 技术设计
 
-状态：API 核心接入已实施，真实身份与 artifact 联调待完成。2026-11-13 使用 artifact-go v0.5.0 完成 API 独立模块构建及 race 回归；Worker 兼容验证另记于验证记录。Controller 尚未透传 Forge 会话 Cookie、CSRF 与 Origin，身份 middleware 也尚未接入，因此不能按已上线功能验收。下文保留 2026-10-20 的设计背景和目标，当前实现及验证范围以代码和 [验证记录](verification.md) 为准。本文与 [ADR-0008](adr/0008-memory-artifact-versions.md)「本提案不迁移 Agent 资产版本」不同，偏离理由见 §2 与 [ADR-0009](adr/0009-agent-versions-in-artifact.md)。
+API 已接入 Forge 鉴权、tenant 隔离和 artifact 出站服务身份传播。API 使用自身服务凭据传播已核验的目标身份。当前使用已发布的 artifact-go `v0.5.1`，独立构建和 OrbStack 联调范围见 [验证记录](verification.md#2026-11-17-agent-版本发布与-run-快照)。下文保留 2026-10-20 的设计背景和实施方案，正文存储决策见 [ADR-0009](adr/0009-agent-versions-in-artifact.md)。
 
 ## 1. 背景
 
@@ -54,21 +54,21 @@ Agent 资产的六个操作在 `pkg/durable/agent_service.go`：`CreateAgent`、
 - **访问哪个数据范围**：租户、可选项目、可选个人归属。artifact 要求租户必填。
 - **凭什么允许**：artifact 部署中的 `IdentityResolver` 负责核验，它只接受已验证结果，不信任客户端自报 Header。
 
-本服务今天只有一个 `owner`，取自 `auth.UserID(c)`（`service/routes.go:33` 注释说明身份的 middleware 尚未接入）。据此定义调用契约：
+本服务已接入 Forge middleware，`owner` 取自验证后的 `auth.UserID(c)`；tenant/project 通过 `access.WithScope` 写入请求 context，HTTP 用户与 propagation 路由末端均拒绝空租户。artifact 调用契约如下：
 
-- 请求携带**调用者的已核验令牌**（由 `auth.TrustedIdentityHeaders` 或 Forge middleware 写入框架的 `TenantID`/`UserID` 键），不伪造身份 Header。
+- `Build` 将 API 自身的 `Tenant.ServiceAPIKey` 注入 `NewArtifact`，用于出站 Bearer。`RequestIdentity` 只读取 middleware 已核验的 user/tenant/project 和 RequestID，忽略入站 Authorization、Cookie、CSRF 和 Origin，不混用会话与 Bearer。
 - `TenantID` 取自框架的已核验租户键，`ProjectID` 取自已核验的项目键（可为空）。
-- `ResourceUserID` = 本次操作的 `owner`。只有当 artifact 的 resolver 能核验「这个 actor 有权代表这个归属」时才发送；否则不发送，退化为租户/项目共享范围会产生**跨用户可见的资产**，不能作为静默默认。
+- `PropagatedUserID` = 本次操作的已验证用户；SDK 通过 `x-impersonate-target-*` 传播用户、租户及可选项目。`ResourceUserID` 固定为同一用户，保留个人归属。空项目用 nil；缺少有效 tenant 或 actor 时，适配器在远端调用前拒绝，不能省略 owner 并退化为共享范围。
 
-artifact 内置的 Forge resolver（`integration/forgetenant/client.go`）只允许 `X-Resource-User-ID` 等于已认证用户本身，因此**当前形态下每个用户只能看到自己的 Agent**——这正是今天的语义。要让服务端代表其他 owner（例如系统预置 Agent），必须在 artifact 部署新增一个受信服务 resolver 和对应的授权契约；本轮不做。
+artifact 部署必须启用身份传播，并将该 key 对应的 API 服务名加入传播白名单。artifact 校验服务身份和目标范围，`X-Resource-User-ID` 与传播用户相同，保持每个用户只访问自己的 Agent。系统预置或共享 Agent 仍需要新的 AssetScope 与授权契约，另行设计。浏览器不得持有服务凭据。
 
-**上线前提**：Forge middleware 把 `TenantID` 写入请求上下文之前，本服务无法发布版本。这不是新增限制，而是把今天「没有真实租户」这个缺口暴露在接入点，避免用配置项或共享范围把它盖住。
+**验证边界**：本地 SDK 与假服务测试验证出站凭据、传播头及拒绝路径；真实 Forge/artifact 环境仍需验证服务白名单、目标身份和个人资源授权。缺少已验证租户或用户时，直接调用适配器返回依赖不可用错误，不设默认身份。
 
 ## 3. 数据模型
 
 ### 3.1 `agent` 表
 
-保持不变：`id`、`owner_id`、`name`、`draft`、`revision`、`published_revision`、`published_version`、`created_at`、`updated_at`。
+当前字段：`id`、`tenant_id`、`project_id`、`owner_id`、`name`、`draft`、`revision`、`published_revision`、`published_version`、`created_at`、`updated_at`。tenant 来自已验证 scope，查询同时约束 tenant 与 owner。
 
 不新增 `artifact_id` 列：集合名固定为 `agentID`，发布时用固定请求键幂等创建集合即可，不需要本地缓存远端 ID。
 
@@ -85,7 +85,7 @@ artifact 内置的 Forge resolver（`integration/forgetenant/client.go`）只允
 
 ### 3.3 初始化
 
-`internal/schema/init.go` 已对 `table.Agent`、`table.AgentVersion` 执行 AutoMigrate，模型改动后无需改初始化代码。按 [布局约束](layout.md#共享持久化边界)，初始化只面向空库或空 schema，不做历史迁移或回填；含旧 `config` 列的库不在本轮处理范围。
+`internal/schema/init.go` 已对 `table.Agent`、`table.AgentVersion` 执行 AutoMigrate。按 [布局约束](layout.md#共享持久化边界)，初始化只面向空库或空 schema，不迁移或回填旧的无 tenant 数据，也不删除已有旧索引（如历史 `memory_operation_owner_key`）；含旧 `config` 列的库及旧索引升级需另行处理。
 
 ### 3.4 共享类型
 
@@ -95,29 +95,30 @@ artifact 内置的 Forge resolver（`integration/forgetenant/client.go`）只允
 
 ### 4.1 依赖版本
 
-2026-11-13 的实现固定 artifact-go v0.5.0、server-go v0.13.0、Go 1.27.1。`go.mod` 必须显式声明 artifact-go；仅在 `go.work` 引入本地目录会掩盖依赖遗漏。验收使用 `GOWORK=off` 与 `-mod=readonly`。
+`go.mod` 固定 artifact-go `v0.5.1`，所用 SDK 支持 `BearerToken` 和 `PropagatedUserID`。独立构建使用 `GOWORK=off` 和 `-mod=readonly`。
 
 只 import `sdk/go/artifactv1`，不 import 服务端 `internal` 包。
 
 ### 4.2 消费方接口
 
-`internal/client/artifact.go` 定义的小接口；artifactv1 类型只出现在该文件：
+`internal/client/artifact.go` 定义的小接口；artifactv1 类型限制在 `internal/client`：
 
 ```go
 // ArtifactStore 保存 Agent 版本的不可变正文。
 type ArtifactStore interface {
     // EnsureCollection 幂等创建并返回集合 ID（type=agent，name=agentID，整数编号）。
-    EnsureCollection(ctx context.Context, actor, agentID string) (string, error)
+    EnsureCollection(ctx context.Context, identity Identity, agentID string) (string, error)
     // PublishVersion 用固定 requestKey 发布不可变版本；重放返回原版本。
-    PublishVersion(ctx context.Context, actor, artifactID, requestKey string, payload []byte) (VersionRef, error)
+    PublishVersion(ctx context.Context, identity Identity, artifactID, requestKey string, payload []byte) (VersionRef, error)
     // GetPayload 按固定版本 ID 读取正文。
-    GetPayload(ctx context.Context, actor, artifactID, versionID string) ([]byte, error)
+    GetPayload(ctx context.Context, identity Identity, artifactID, versionID string) ([]byte, error)
+    Close() error
 }
 
 type VersionRef struct{ ID, URI string }
 ```
 
-`actor` 是已核验的 `owner`，用于构造 `RequestIdentity`；租户和项目由装配层从框架身份键取得后注入客户端，不进入每个调用点。
+接口中的 `Identity` 即 `client.Identity`，由 Controller 为每次请求构造，包含已验证的租户、可选项目、目标用户及 RequestID。目标身份随本次调用传递；共享客户端仅持有 API 自身的服务凭据。每次调用覆盖继承的 SDK 身份，避免带入其他凭据或范围。
 
 ### 4.3 幂等键
 
@@ -226,7 +227,7 @@ func PrepareApplication(config agent.AgentConfig, agentID string, version int64)
 
 ### 7.2 `internal/client/artifact.go`（新增）
 
-§4.2 接口的实现。构造时接收 endpoint、超时和身份取值函数；每次调用用 `artifactv1.WithRequestIdentity` 注入 `TenantID`、`ProjectID`、`ResourceUserID`。错误集中转换为 `pkg/agent` 错误族（`*serrors.Error` 的 HTTP 状态与 Code 映射到 `ErrInvalid`/`ErrNotFound`/`ErrConflict`/`ErrUnavailable`）。不自动重试；`Close` 由装配层负责。
+§4.2 接口的实现。构造时接收 endpoint、API 自身 service key 和超时，拒绝空 service key；每次调用用 `artifactv1.WithRequestIdentity` 注入 `BearerToken`、`TenantID`、`ProjectID`、`PropagatedUserID` 及同用户的 `ResourceUserID`。错误集中转换为 `pkg/agent` 错误族（`*serrors.Error` 的 HTTP 状态映射到 `ErrInvalid`/`ErrNotFound`/`ErrConflict`/`ErrUnavailable`）。不自动重试；`Close` 由装配层负责。
 
 ### 7.3 `internal/app/apperror`
 
@@ -269,7 +270,7 @@ Timeout = 5000          # 毫秒
 
 校验：`Endpoint` 为绝对 HTTP(S) URL，且无 userinfo、query、fragment；`Timeout` 非负（0 用 SDK 默认）。
 
-**不设 `TenantID`、`BearerToken` 配置项**：租户必须来自已核验身份（框架的 `KeyTenantID`），令牌必须来自调用者或部署注入的凭据链。把它们做成常量配置等于让服务以单一身份代所有租户访问，这正是 §2.4 要避免的。身份 middleware 接入前，发布操作会在运行时因缺少租户而返回 503，而不是静默使用某个默认租户。
+`Artifact` 段不增加 `TenantID` 或 `BearerToken`：租户和目标用户来自已核验请求身份；出站服务凭据复用 `Tenant.ServiceAPIKey`，不接受入站 Bearer 替代。部署需配置 artifact 传播白名单。缺少租户或用户时返回 503，不使用默认租户或共享归属。
 
 启动只校验配置格式，不探测远端；远端不可用不影响启动，只影响发布和版本读取。
 
@@ -299,7 +300,7 @@ Timeout = 5000          # 毫秒
 
 ### 10.2 `internal/client/artifact`（httptest 假服务）
 
-身份 Header（tenant/project/resource-user）、两个固定 requestKey、payload 原样、`*serrors.Error` 到错误族的映射、超时。
+验证 API 自身 service Bearer、已核验目标 tenant/user/可选 project 的传播头、同用户的 resource-user；确认入站 Bearer、Cookie、CSRF、Origin 不被转发，继承的 SDK 身份被覆盖，各请求范围不串用，空 tenant/actor 阻止所有远端操作。另验证两个固定 requestKey、payload 原样、`*serrors.Error` 到错误族的映射、超时。假服务只验证传输与本地行为，不证明真实 Forge 授权通过。
 
 ### 10.3 `pkg/durable`
 
@@ -309,9 +310,9 @@ Timeout = 5000          # 毫秒
 
 注入假 `ArtifactStore`；`TestAPIFrameworkLifecycle` 等用例启动 httptest 假 artifact 并设置 `ARTIFACT_ENDPOINT`。HTTP 契约断言（路径、状态码、响应体）保持原样。`service/conversations_test.go` 等直接读 `durable.Agent`/`AgentVersion` 的断言继续有效。
 
-### 10.5 可选真实联调
+### 10.5 Forge 联调
 
-`TEST_ARTIFACT_ENDPOINT`、`TEST_ARTIFACT_TENANT_ID`、`TEST_ARTIFACT_TOKEN` 同时存在时跑真实 artifact-go：建集合 → 发布 → 同 revision 重放 → 改配置再发布 → 读取版本，核对远端版本数与本地行数。缺环境时显式跳过并说明原因。
+配置 artifact endpoint 和 API 自身的 `Tenant.ServiceAPIKey`，在 artifact 部署的传播白名单加入对应服务名。用户请求选择已授权的 tenant 和可选 project。OrbStack 联调已覆盖用户 API key、发布两个版本、读取正文和 Run 版本固定。其余场景的验证范围见 [验证记录](verification.md#2026-11-17-agent-版本发布与-run-快照)。
 
 ### 10.6 worker（单独提交）
 
@@ -343,17 +344,15 @@ Timeout = 5000          # 毫秒
 
 | 风险 | 说明 | 处理 |
 | --- | --- | --- |
-| artifact 未发版 | 无 tag，只能固定 commit；SDK 依赖 server-go v0.13.0 | 固定 `d9a2e25` 并同步升级 server-go；发版后改为 tag |
-| 身份 middleware 未接入 | 无已核验租户则无法发布 | 作为上线前提；不做配置兜底 |
 | 不能代其他 owner 发布 | 内置 Forge resolver 只允许本人归属 | 本轮保持「每人只看自己的 Agent」；系统级共享 AssetScope 后续单独设计 |
-| 发布与版本读取新增依赖 | artifact 不可用时 503 | 创建、更新、草稿读取、列表、Run 提交不受影响（正文已预取） |
+| 发布、版本读取和新任务提交依赖 artifact | artifact 不可用时 503 | 草稿操作、已接受 Run 的执行与幂等重放不依赖远端正文读取 |
 | 孤儿远端版本 | 第 4 步失败时留下未关联版本 | 记录为可接受，不增加对账任务 |
 | 版本读取变慢 | 每次一次远端调用 | 读取频率低；必要时后续加只读缓存 |
 | worker 独立构建 | 仍等 API 发版 | 联合验证以 `go.work` 为准 |
 
 ## 14. 实施顺序
 
-1. 依赖：升级 server-go 到 v0.13.0，固定 artifact-go `d9a2e25`，跑全量测试确认无回归。
+1. 固定依赖 server-go `v0.13.0`、forge-tenant-api `v0.13.0`、artifact-go `v0.5.1`，并验证独立构建。
 2. 配置：`internal/config` 的 `[Artifact]` 段与校验。
 3. `pkg/agent` 错误族；`internal/client/artifact.go` 与单测；`apperror` 新增映射。
 4. 表模型与 `internal/table/agent_query.go`。

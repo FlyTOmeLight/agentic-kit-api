@@ -56,6 +56,9 @@ Addrs = ["localhost:6379"]
 DB = 0
 [Artifact]
 Endpoint = "http://127.0.0.1:18080"
+[Tenant]
+Endpoint = "https://tenant.example.test"
+ServiceAPIKey = "test-service-key-at-least-32-characters"
 `)
 	cfg, err := Load(path)
 	if err != nil {
@@ -141,6 +144,9 @@ DB = 0
 [Artifact]
 Endpoint = "${env:ARTIFACT_ENDPOINT:http://127.0.0.1:18080}"
 Timeout = 5000
+[Tenant]
+Endpoint = "https://tenant.example.test"
+ServiceAPIKey = "test-service-key-at-least-32-characters"
 `)
 	t.Setenv("TEST_CONFIG_REDIS_ADDR", "localhost:6379")
 	t.Setenv("SERVER_CONFIG_PATH", path)
@@ -193,6 +199,27 @@ Timeout = 5000
 		func(c *Service) { c.Artifact.Endpoint = "http://127.0.0.1/?q=1" },
 		func(c *Service) { c.Artifact.Endpoint = "http://127.0.0.1/#fragment" },
 		func(c *Service) { c.Artifact.Timeout = -1 },
+		func(c *Service) { c.Tenant = TenantConfig{} },
+		func(c *Service) { c.Tenant.Endpoint = "http://tenant.example.test" },
+		func(c *Service) { c.Tenant.Endpoint = "https://user:pass@tenant.example.test" },
+		func(c *Service) { c.Tenant.Endpoint = "https://tenant.example.test/?q=1" },
+		func(c *Service) { c.Tenant.Endpoint = "https://tenant.example.test/#fragment" },
+		func(c *Service) { c.Tenant.ServiceAPIKey = "short" },
+		func(c *Service) { c.Tenant.ServiceAPIKey += "\n" },
+		func(c *Service) { c.Tenant.Timeout = -1 },
+		func(c *Service) { c.Tenant.AllowedPropagationServices = []string{" "} },
+		func(c *Service) { c.Sandbox.AllowedServices = []string{""} },
+		func(c *Service) { c.Callback.AllowedServices = []string{" service "} },
+		func(c *Service) { c.Callback.Enabled = true },
+		func(c *Service) {
+			c.Callback = CallbackConfig{Enabled: true, SigningSecret: "test", AllowedSources: []string{"approval"}}
+		},
+		func(c *Service) {
+			c.Callback = CallbackConfig{Enabled: true, SigningSecret: "test", AllowedServices: []string{"approval"}}
+		},
+		func(c *Service) {
+			c.Callback = CallbackConfig{Enabled: true, AllowedSources: []string{"approval"}, AllowedServices: []string{"approval"}}
+		},
 	} {
 		bad := cfg
 		change(&bad)
@@ -205,6 +232,10 @@ Timeout = 5000
 		CheckpointImage:         "saver:v1",
 		CheckpointStoreHostPath: "/checkpoints",
 	}
+	cfg.Callback = CallbackConfig{
+		Enabled: true, SigningSecret: "test", AllowedSources: []string{"approval"}, AllowedServices: []string{"approval"},
+	}
+	cfg.Tenant.Endpoint = "http://127.0.0.1:8080"
 	if err := cfg.ValidateAPI(); err != nil {
 		t.Fatal(err)
 	}

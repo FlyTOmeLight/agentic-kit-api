@@ -8,7 +8,9 @@ import (
 
 type Agent struct {
 	ID                string            `gorm:"type:text;primaryKey;not null"`
-	OwnerID           string            `gorm:"type:text;not null;index:agent_owner,priority:1"`
+	TenantID          string            `gorm:"type:text;not null;index:agent_owner,priority:1"`
+	ProjectID         string            `gorm:"type:text;not null"`
+	OwnerID           string            `gorm:"type:text;not null;index:agent_owner,priority:2"`
 	Name              string            `gorm:"type:text;not null"`
 	Draft             agent.AgentConfig `gorm:"serializer:json;type:jsonb;not null"`
 	Revision          int64             `gorm:"not null"`

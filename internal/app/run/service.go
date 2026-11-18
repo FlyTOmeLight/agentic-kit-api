@@ -13,6 +13,7 @@ type Service interface {
 	Cancel(ctx context.Context, owner, id string) error
 	SupplyResult(ctx context.Context, owner, id, step, result string, kind durable.InteractionKind) error
 	SupplyExternalResult(ctx context.Context, owner, id, step, externalRef, result string) error
+	SupplyExternalResultByRunID(ctx context.Context, id, step, externalRef, result string) error
 	Events(ctx context.Context, owner, id string, after int64) ([]durable.Event, error)
 	CreateGoal(ctx context.Context, goal durable.Goal) (*durable.Goal, bool, error)
 	GetGoal(ctx context.Context, owner, id string) (*durable.Goal, error)

@@ -77,15 +77,15 @@ func TestInitCreatesTargetSchemaAndIsRepeatable(t *testing.T) {
 		}
 	}
 	if err = db.Exec(
-		`INSERT INTO durable_run (id, owner_id, session_id, request_key, request_hash, spec, status, deadline, max_attempts, waiting_kind)
-		 VALUES ('x','o','s','k','h','{}','Queued',clock_timestamp(),1,'Bogus')`,
+		`INSERT INTO durable_run (id, tenant_id, project_id, owner_id, session_id, request_key, request_hash, spec, status, deadline, max_attempts, waiting_kind)
+		 VALUES ('x','t','','o','s','k','h','{}','Queued',clock_timestamp(),1,'Bogus')`,
 	).Error; err == nil {
 		t.Fatal("waiting_kind constraint missing")
 	}
 	for i, status := range []string{"WaitingExternal", "Blocked"} {
 		if err = db.Exec(
-			`INSERT INTO durable_run (id, owner_id, session_id, request_key, request_hash, spec, status, deadline, max_attempts)
-			 VALUES (?, 'o', 's', ?, 'h', '{}', ?, clock_timestamp(), 1)`,
+			`INSERT INTO durable_run (id, tenant_id, project_id, owner_id, session_id, request_key, request_hash, spec, status, deadline, max_attempts)
+			 VALUES (?, 't', '', 'o', 's', ?, 'h', '{}', ?, clock_timestamp(), 1)`,
 			"status_"+status,
 			"status_key_"+status,
 			status,
@@ -94,8 +94,8 @@ func TestInitCreatesTargetSchemaAndIsRepeatable(t *testing.T) {
 		}
 	}
 	if err = db.Exec(
-		`INSERT INTO durable_run (id, owner_id, session_id, request_key, request_hash, spec, status, deadline, max_attempts)
-		 VALUES ('bad_status','o','s','bad_status_key','h','{}','Bogus',clock_timestamp(),1)`,
+		`INSERT INTO durable_run (id, tenant_id, project_id, owner_id, session_id, request_key, request_hash, spec, status, deadline, max_attempts)
+		 VALUES ('bad_status','t','','o','s','bad_status_key','h','{}','Bogus',clock_timestamp(),1)`,
 	).Error; err == nil {
 		t.Fatal("run status constraint missing")
 	}

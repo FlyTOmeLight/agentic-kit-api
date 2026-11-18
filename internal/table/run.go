@@ -30,9 +30,11 @@ type ExecutionSnapshot struct {
 
 type Run struct {
 	ID                      string                    `gorm:"type:text;primaryKey;not null"`
-	OwnerID                 string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:1;uniqueIndex:durable_session_active,priority:1,where:status = 'Queued' OR status = 'Running' OR status = 'WaitingClarification' OR status = 'NeedsReview' OR status = 'WaitingExternal'"`
+	TenantID                string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:1;uniqueIndex:durable_session_active,priority:1,where:status = 'Queued' OR status = 'Running' OR status = 'WaitingClarification' OR status = 'NeedsReview' OR status = 'WaitingExternal'"`
+	ProjectID               string                    `gorm:"type:text;not null"`
+	OwnerID                 string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:2"`
 	SessionID               string                    `gorm:"type:text;not null;uniqueIndex:durable_session_active,priority:2"`
-	RequestKey              string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:2"`
+	RequestKey              string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:3"`
 	RequestHash             string                    `gorm:"type:text;not null"`
 	Spec                    ExecutionSnapshot         `gorm:"serializer:json;type:jsonb;not null"`
 	ContextSnapshot         ContextSnapshot           `gorm:"type:text;not null;default:'{}'"`

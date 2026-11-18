@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	frameworkerrors "github.com/FlyTOmeLight/server-go/errors"
@@ -19,16 +20,12 @@ import (
 
 const artifactType = "agent"
 
-// Identity is the caller's verified request identity. The artifact service
-// authenticates it; this client only transports it.
+// Identity is the caller's verified request identity.
 type Identity struct {
-	TenantID       string
-	ProjectID      *string
-	ResourceUserID *string
-	Session        string
-	CSRFToken      string
-	Origin         string
-	RequestID      string
+	TenantID         string
+	ProjectID        *string
+	PropagatedUserID string
+	RequestID        string
 }
 
 // VersionRef is the fixed identity of a published version.
@@ -58,15 +55,21 @@ type ArtifactStore interface {
 	Close() error
 }
 
-type artifactClient struct{ sdk *artifactv1.Client }
+type artifactClient struct {
+	sdk           *artifactv1.Client
+	serviceAPIKey string
+}
 
 // NewArtifact constructs the adapter. The caller closes it after requests stop.
-func NewArtifact(endpoint string, timeout time.Duration) (ArtifactStore, error) {
+func NewArtifact(endpoint, serviceAPIKey string, timeout time.Duration) (ArtifactStore, error) {
+	if strings.TrimSpace(serviceAPIKey) == "" {
+		return nil, errors.New("artifact service API key is required")
+	}
 	sdk, err := artifactv1.NewClient(artifactv1.ClientConfig{Endpoint: endpoint, Timeout: timeout})
 	if err != nil {
 		return nil, err
 	}
-	return &artifactClient{sdk: sdk}, nil
+	return &artifactClient{sdk: sdk, serviceAPIKey: serviceAPIKey}, nil
 }
 
 func (c *artifactClient) Close() error { return c.sdk.Close() }
@@ -79,7 +82,7 @@ func (c *artifactClient) EnsureCollection(
 	if err := validateIdentity(identity, agentID); err != nil {
 		return "", err
 	}
-	created, err := c.sdk.CreateArtifact(withIdentity(ctx, identity), &artifactv1.CreateArtifactRequest{
+	created, err := c.sdk.CreateArtifact(c.withIdentity(ctx, identity), &artifactv1.CreateArtifactRequest{
 		RequestKey:    collectionKey(agentID),
 		Type:          artifactType,
 		Name:          agentID,
@@ -105,7 +108,7 @@ func (c *artifactClient) PublishVersion(
 	}
 	// Published Agent versions back reproducible runs, so retention must not
 	// evict them.
-	published, err := c.sdk.CreateVersion(withIdentity(ctx, identity), &artifactv1.CreateVersionRequest{
+	published, err := c.sdk.CreateVersion(c.withIdentity(ctx, identity), &artifactv1.CreateVersionRequest{
 		ArtifactPath: artifactv1.ArtifactPath{ArtifactID: artifactID},
 		RequestKey:   requestKey,
 		Payload:      payload,
@@ -128,7 +131,7 @@ func (c *artifactClient) GetPayload(
 	if versionID == "" {
 		return nil, agent.ErrInvalid
 	}
-	version, err := c.sdk.GetVersion(withIdentity(ctx, identity), &artifactv1.GetVersionRequest{
+	version, err := c.sdk.GetVersion(c.withIdentity(ctx, identity), &artifactv1.GetVersionRequest{
 		VersionPath: artifactv1.VersionPath{
 			ArtifactPath: artifactv1.ArtifactPath{ArtifactID: artifactID},
 			VersionID:    versionID,
@@ -144,21 +147,24 @@ func validateIdentity(identity Identity, agentID string) error {
 	if agentID == "" {
 		return agent.ErrInvalid
 	}
-	if identity.TenantID == "" {
+	if strings.TrimSpace(identity.TenantID) == "" || identity.TenantID != strings.TrimSpace(identity.TenantID) {
 		return fmt.Errorf("%w: verified tenant is required", agent.ErrUnavailable)
+	}
+	if strings.TrimSpace(identity.PropagatedUserID) == "" ||
+		identity.PropagatedUserID != strings.TrimSpace(identity.PropagatedUserID) {
+		return fmt.Errorf("%w: verified user is required", agent.ErrUnavailable)
 	}
 	return nil
 }
 
-func withIdentity(ctx context.Context, identity Identity) context.Context {
+func (c *artifactClient) withIdentity(ctx context.Context, identity Identity) context.Context {
 	return artifactv1.WithRequestIdentity(ctx, artifactv1.RequestIdentity{
-		Session:        identity.Session,
-		CSRFToken:      identity.CSRFToken,
-		Origin:         identity.Origin,
-		TenantID:       identity.TenantID,
-		ProjectID:      identity.ProjectID,
-		ResourceUserID: identity.ResourceUserID,
-		RequestID:      identity.RequestID,
+		BearerToken:      c.serviceAPIKey,
+		TenantID:         identity.TenantID,
+		ProjectID:        identity.ProjectID,
+		PropagatedUserID: identity.PropagatedUserID,
+		ResourceUserID:   &identity.PropagatedUserID,
+		RequestID:        identity.RequestID,
 	})
 }
 

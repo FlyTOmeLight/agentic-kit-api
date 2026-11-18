@@ -32,7 +32,7 @@ func (s *Store) AuthorizeExecution(
 		CheckedAt time.Time `gorm:"column:checked_at"`
 		ExpiresAt time.Time `gorm:"column:expires_at"`
 	}
-	q := s.db.WithContext(ctx).
+	q := table.TenantQuery(ctx, s.db).
 		Model(&table.Run{}).
 		Select("durable_run.*, clock_timestamp() AS checked_at, LEAST(lease_until, deadline) AS expires_at").
 		Where(

@@ -34,14 +34,28 @@ func (s *Store) CreateGoal(ctx context.Context, g Goal) (*Goal, bool, error) {
 		return nil, false, err
 	}
 	defer tx.Rollback()
+	var sessionRow table.Session
+	if err := table.TenantQuery(ctx, tx).
+		Where("owner_id = ? AND id = ?", g.OwnerID, g.SessionID).
+		Take(&sessionRow).
+		Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, ErrNotFound
+		}
+		return nil, false, err
+	}
 	if err := tx.Exec(
 		`SELECT pg_advisory_xact_lock(hashtextextended(?,0))`,
-		g.OwnerID+":"+g.RequestKey,
+		sessionRow.TenantID+":"+g.OwnerID+":"+g.RequestKey,
 	).Error; err != nil {
 		return nil, false, err
 	}
 	var existing table.Goal
-	err := tx.Where("owner_id = ? AND request_key = ?", g.OwnerID, g.RequestKey).Take(&existing).Error
+	err := table.TenantQuery(ctx, tx).
+		Where("tenant_id = ?", sessionRow.TenantID).
+		Where("owner_id = ? AND request_key = ?", g.OwnerID, g.RequestKey).
+		Take(&existing).
+		Error
 	if err == nil {
 		if existing.RequestHash != g.RequestHash {
 			return nil, false, ErrConflict
@@ -53,6 +67,8 @@ func (s *Store) CreateGoal(ctx context.Context, g Goal) (*Goal, bool, error) {
 	}
 	goal := table.Goal{
 		ID:          NewID(),
+		TenantID:    sessionRow.TenantID,
+		ProjectID:   sessionRow.ProjectID,
 		OwnerID:     g.OwnerID,
 		SessionID:   g.SessionID,
 		RequestKey:  g.RequestKey,
@@ -75,7 +91,7 @@ func (s *Store) CreateGoal(ctx context.Context, g Goal) (*Goal, bool, error) {
 // GetGoal returns the goal owned by owner with the given id.
 func (s *Store) GetGoal(ctx context.Context, owner, id string) (*Goal, error) {
 	var row table.Goal
-	if err := s.db.WithContext(ctx).
+	if err := table.TenantQuery(ctx, s.db).
 		Where("owner_id = ? AND id = ?", owner, id).
 		Take(&row).
 		Error; err != nil {
@@ -92,8 +108,7 @@ func (s *Store) ListGoals(ctx context.Context, owner string, status GoalStatus, 
 	if limit <= 0 {
 		limit = 50
 	}
-	query := s.db.WithContext(ctx).
-		Model(&table.Goal{}).
+	query := table.TenantQuery(ctx, s.db.Model(&table.Goal{})).
 		Where("owner_id = ?", owner)
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -126,7 +141,7 @@ func (s *Store) TransitionGoal(ctx context.Context, owner, id string, to GoalSta
 	default:
 		from = []GoalStatus{GoalActive, GoalBlocked}
 	}
-	tag := s.db.WithContext(ctx).
+	tag := table.TenantQuery(ctx, s.db).
 		Model(&table.Goal{}).
 		Where("owner_id = ? AND id = ? AND status IN ?", owner, id, from).
 		Updates(map[string]any{"status": to, "updated_at": gorm.Expr("clock_timestamp()")})
@@ -154,7 +169,7 @@ func (s *Store) CheckGoalProgress(ctx context.Context, owner, goalID string) (*G
 	}
 	defer tx.Rollback()
 	var goalRow table.Goal
-	if err := tx.Model(&table.Goal{}).
+	if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).
 		Where("owner_id = ? AND id = ?", owner, goalID).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Take(&goalRow).
@@ -171,7 +186,7 @@ func (s *Store) CheckGoalProgress(ctx context.Context, owner, goalID string) (*G
 		return goalFromRow(goalRow), tx.Commit().Error
 	}
 	var runRow table.Run
-	if err := tx.Model(&table.Run{}).
+	if err := table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Where("id = ? AND owner_id = ?", goalRow.ActiveRunID, owner).
 		Take(&runRow).
 		Error; err != nil {
@@ -245,7 +260,7 @@ func (s *Store) CheckGoalProgress(ctx context.Context, owner, goalID string) (*G
 	default:
 		newStatus = GoalActive
 	}
-	if err := tx.Model(&table.Goal{}).
+	if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).
 		Where("id = ?", goalRow.ID).
 		Updates(map[string]any{
 			"status":          newStatus,
@@ -257,7 +272,7 @@ func (s *Store) CheckGoalProgress(ctx context.Context, owner, goalID string) (*G
 		return nil, err
 	}
 	if !undetermined {
-		if err := tx.Model(&table.Run{}).
+		if err := table.TenantQuery(ctx, tx.Model(&table.Run{})).
 			Where("id = ?", goalRow.ActiveRunID).
 			Update("stall_mark", currentMark).
 			Error; err != nil {
@@ -277,7 +292,7 @@ func (s *Store) BindGoalToRun(ctx context.Context, owner, goalID, runID string) 
 		return err
 	}
 	defer tx.Rollback()
-	tag := tx.
+	tag := table.TenantQuery(ctx, tx).
 		Model(&table.Goal{}).
 		Where("owner_id = ? AND id = ? AND status = ?", owner, goalID, GoalActive).
 		Updates(map[string]any{"active_run_id": runID, "updated_at": gorm.Expr("clock_timestamp()")})
@@ -287,7 +302,7 @@ func (s *Store) BindGoalToRun(ctx context.Context, owner, goalID, runID string) 
 	if tag.RowsAffected != 1 {
 		return ErrConflict
 	}
-	tag = tx.Model(&table.Run{}).
+	tag = table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Where("owner_id = ? AND id = ?", owner, runID).
 		Update("goal_id", goalID)
 	if tag.Error != nil {
@@ -332,7 +347,7 @@ func (s *Store) SteerGoal(ctx context.Context, owner, goalID, content string) er
 	}
 	defer tx.Rollback()
 	var goalRow table.Goal
-	if err := tx.Model(&table.Goal{}).
+	if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).
 		Where("owner_id = ? AND id = ?", owner, goalID).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Take(&goalRow).
@@ -346,7 +361,7 @@ func (s *Store) SteerGoal(ctx context.Context, owner, goalID, content string) er
 		return ErrConflict
 	}
 	var runRow table.Run
-	if err := tx.Model(&table.Run{}).
+	if err := table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Where("id = ? AND owner_id = ?", goalRow.ActiveRunID, owner).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Take(&runRow).
@@ -366,7 +381,7 @@ func (s *Store) SteerGoal(ctx context.Context, owner, goalID, content string) er
 	if len(merged) > 4096 {
 		return ErrInvalid
 	}
-	if err := tx.Model(&table.Run{}).
+	if err := table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Where("id = ?", runRow.ID).
 		Updates(map[string]any{
 			"pending_steer": merged,
@@ -375,7 +390,7 @@ func (s *Store) SteerGoal(ctx context.Context, owner, goalID, content string) er
 		return err
 	}
 	// Steering resets the stall counter: the human is actively redirecting.
-	if err := tx.Model(&table.Goal{}).
+	if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).
 		Where("id = ?", goalRow.ID).
 		Update("stall_count", 0).
 		Error; err != nil {

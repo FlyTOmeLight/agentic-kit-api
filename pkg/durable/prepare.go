@@ -126,7 +126,7 @@ func PrepareApplicationSubmission(
 // together. Incomplete turns are omitted rather than injecting orphan calls.
 func loadConversationHistory(tx *gorm.DB, owner, session string) ([]contextbuilder.MessageGroup, error) {
 	var runs []table.Run
-	if err := tx.Model(&table.Run{}).
+	if err := table.TenantQuery(tx.Statement.Context, tx).Model(&table.Run{}).
 		Select("id").
 		Where("owner_id = ? AND session_id = ?", owner, session).
 		Order("created_at, id").

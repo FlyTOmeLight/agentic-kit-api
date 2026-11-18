@@ -88,11 +88,11 @@ func createRunClaim(t *testing.T, store *Store, in AcquireInput) {
 	t.Helper()
 	err := store.db.Exec(
 		`INSERT INTO durable_run
-		(id, owner_id, session_id, request_key, request_hash, spec, state, status,
+		(id, tenant_id, project_id, owner_id, session_id, request_key, request_hash, spec, state, status,
 		 worker_id, epoch, lease_until, deadline, max_attempts)
-		VALUES (?, ?, ?, ?, 'hash', '{}', '{}', 'Running', ?, ?,
+		VALUES (?, ?, ?, ?, ?, ?, 'hash', '{}', '{}', 'Running', ?, ?,
 		        clock_timestamp() + interval '4 hours', clock_timestamp() + interval '5 hours', 3)`,
-		in.RunID, in.OwnerID, in.RunID, in.RunID, in.WorkerID, in.RunEpoch,
+		in.RunID, in.TenantID, "project-1", in.OwnerID, in.RunID, in.RunID, in.WorkerID, in.RunEpoch,
 	).Error
 	if err != nil {
 		t.Fatal(err)
@@ -302,9 +302,9 @@ func TestRunAuthorizationClampsAndBlocksStaleWorker(t *testing.T) {
 	runExpiry := time.Now().Add(2 * time.Minute).UTC()
 	if err := store.DB().Exec(
 		`INSERT INTO durable_run
-		 (id, owner_id, session_id, request_key, request_hash, spec, state, status,
+		 (id, tenant_id, project_id, owner_id, session_id, request_key, request_hash, spec, state, status,
 		  worker_id, epoch, lease_until, deadline, max_attempts)
-		 VALUES ('run-auth-1', 'owner-1', 'sess-1', 'rk-1', 'rh-1', '{}', '{}', 'Running',
+		 VALUES ('run-auth-1', 't1', 'project-1', 'owner-1', 'sess-1', 'rk-1', 'rh-1', '{}', '{}', 'Running',
 		         'worker-a', 2, ?, ?, 3)`,
 		runExpiry, runExpiry.Add(10*time.Minute),
 	).Error; err != nil {
@@ -419,9 +419,9 @@ func TestCompletedRunAllowsPostRunEvaluationOperation(t *testing.T) {
 	runExpiry := time.Now().Add(2 * time.Minute).UTC()
 	if err := store.DB().Exec(
 		`INSERT INTO durable_run
-		 (id, owner_id, session_id, request_key, request_hash, spec, state, status,
+		 (id, tenant_id, project_id, owner_id, session_id, request_key, request_hash, spec, state, status,
 		  worker_id, epoch, lease_until, deadline, max_attempts)
-		 VALUES ('run-eval-1', 'owner-1', 'sess-1', 'rk-eval-1', 'rh-eval-1', '{}', '{}', 'Running',
+		 VALUES ('run-eval-1', 't1', 'project-1', 'owner-1', 'sess-1', 'rk-eval-1', 'rh-eval-1', '{}', '{}', 'Running',
 		         'worker-a', 1, ?, ?, 3)`,
 		runExpiry, runExpiry.Add(10*time.Minute),
 	).Error; err != nil {

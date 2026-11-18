@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
@@ -54,17 +55,22 @@ func (tx *Tx) Submit(
 	if prepare == nil {
 		return execution.Submission{}, ErrInvalid
 	}
+	scope, scoped := access.FromContext(ctx)
+	if scoped && (scope.TenantID == "" || (cmd.Kind == execution.SubmitApplication &&
+		(cmd.ExecutionSpec.Scope.TenantID != scope.TenantID || cmd.ExecutionSpec.Scope.ProjectID != scope.ProjectID))) {
+		return execution.Submission{}, ErrInvalid
+	}
 	var run *Run
 	created := false
 	err := func() error {
 		if err := tx.db.Exec(
 			`SELECT pg_advisory_xact_lock(hashtextextended(?,0))`,
-			cmd.Owner+":"+cmd.RequestKey,
+			scope.TenantID+":"+cmd.Owner+":"+cmd.RequestKey,
 		).Error; err != nil {
 			return err
 		}
 		var existing table.Run
-		err := tx.db.Where("owner_id = ? AND request_key = ?", cmd.Owner, cmd.RequestKey).Take(&existing).Error
+		err := table.TenantQuery(ctx, tx.db).Where("owner_id = ? AND request_key = ?", cmd.Owner, cmd.RequestKey).Take(&existing).Error
 		if err == nil {
 			if existing.RequestHash != cmd.RequestHash {
 				return ErrConflict
@@ -79,7 +85,11 @@ func (tx *Tx) Submit(
 		if err != nil {
 			return err
 		}
-		if err = ensureNoActiveRun(tx.db, cmd.Owner, sessionID); err != nil {
+		sessionRow, err := table.GetSession(tx.db.WithContext(ctx), cmd.Owner, sessionID)
+		if err != nil {
+			return recordError(err)
+		}
+		if err = ensureNoActiveRun(table.TenantQuery(ctx, tx.db), cmd.Owner, sessionID); err != nil {
 			return err
 		}
 		prepared, err := prepare(ctx, tx.db, execution.SubmissionFacts{
@@ -108,7 +118,7 @@ func (tx *Tx) Submit(
 		}
 		if cmd.GoalID != "" {
 			var goalRow table.Goal
-			if err = tx.db.Where("owner_id = ? AND id = ? AND status = ?", cmd.Owner, cmd.GoalID, GoalActive).
+			if err = table.TenantQuery(ctx, tx.db).Where("owner_id = ? AND id = ? AND session_id = ? AND status = ?", cmd.Owner, cmd.GoalID, sessionID, GoalActive).
 				Take(&goalRow).
 				Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -121,6 +131,8 @@ func (tx *Tx) Submit(
 		if err = tx.db.Model(&table.Run{}).Create(map[string]any{
 			"id":               id,
 			"owner_id":         cmd.Owner,
+			"tenant_id":        sessionRow.TenantID,
+			"project_id":       sessionRow.ProjectID,
 			"session_id":       sessionID,
 			"request_key":      cmd.RequestKey,
 			"request_hash":     cmd.RequestHash,
@@ -137,7 +149,7 @@ func (tx *Tx) Submit(
 			return recordError(err)
 		}
 		if cmd.GoalID != "" {
-			if err = tx.db.Model(&table.Goal{}).
+			if err = table.TenantQuery(ctx, tx.db).Model(&table.Goal{}).
 				Where("owner_id = ? AND id = ? AND status = ?", cmd.Owner, cmd.GoalID, GoalActive).
 				Update("active_run_id", id).
 				Error; err != nil {
@@ -168,7 +180,7 @@ func lockSubmitSession(ctx context.Context, tx *gorm.DB, cmd execution.SubmitCom
 	switch cmd.Kind {
 	case execution.SubmitChat:
 		var conversation table.Session
-		if err := tx.WithContext(ctx).Where("owner_id = ? AND id = ?", cmd.Owner, cmd.SessionID).
+		if err := table.TenantQuery(ctx, tx).Where("owner_id = ? AND id = ?", cmd.Owner, cmd.SessionID).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Take(&conversation).
 			Error; err != nil {
@@ -187,16 +199,18 @@ func lockSubmitSession(ctx context.Context, tx *gorm.DB, cmd execution.SubmitCom
 		// The caller verified the agent exists and belongs to the owner while
 		// prefetching the published config, so the request AgentID is trusted.
 		var session table.Session
-		err := tx.Where("owner_id = ? AND id = ?", cmd.Owner, sessionID).
+		err := table.TenantQuery(ctx, tx).Where("owner_id = ? AND id = ?", cmd.Owner, sessionID).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Take(&session).
 			Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			session = table.Session{
-				ID:      sessionID,
-				OwnerID: cmd.Owner,
-				AgentID: input.AgentID,
-				Title:   input.Scope.TaskID,
+				ID:        sessionID,
+				OwnerID:   cmd.Owner,
+				TenantID:  input.Scope.TenantID,
+				ProjectID: input.Scope.ProjectID,
+				AgentID:   input.AgentID,
+				Title:     input.Scope.TaskID,
 			}
 			if err = tx.Create(&session).Error; err != nil {
 				return "", "", err
@@ -216,7 +230,7 @@ func ensureNoActiveRun(tx *gorm.DB, owner, sessionID string) error {
 	var active int64
 	if err := tx.Model(&table.Run{}).
 		Where("owner_id = ? AND session_id = ? AND status IN ?", owner, sessionID, []Status{
-			Queued, Running, WaitingClarification, NeedsReview,
+			Queued, Running, WaitingClarification, NeedsReview, WaitingExternal,
 		}).
 		Count(&active).
 		Error; err != nil {

@@ -21,7 +21,7 @@ func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 		return err
 	}
 	defer tx.Rollback()
-	run, err := lockLease(ctx, tx, l)
+	run, err := lockLease(ctx, table.TenantQuery(ctx, tx), l)
 	if err != nil {
 		return err
 	}
@@ -50,14 +50,19 @@ func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 		updates["lease_until"] = nil
 		updates["worker_id"] = ""
 	}
-	if err = tx.Model(&table.Run{}).Where("id = ?", l.RunID).Updates(updates).Error; err != nil {
-		return err
+	result := table.TenantQuery(ctx, tx.Model(&table.Run{})).Where("id = ?", l.RunID).Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrLeaseLost
 	}
 	if b.Kind == BoundaryComplete {
-		err = tx.Model(&table.Run{}).Where("id = ?", l.RunID).Where(`EXISTS (
+		err = table.TenantQuery(ctx, tx.Model(&table.Run{})).Where("id = ?", l.RunID).Where(`EXISTS (
 			SELECT 1 FROM durable_goal AS goal
 			JOIN durable_run_environment AS env ON env.run_id = durable_run.id
 			WHERE goal.id = durable_run.goal_id AND goal.owner_id = durable_run.owner_id
+			  AND goal.tenant_id = durable_run.tenant_id
 			  AND goal.status = 'Active' AND goal.active_run_id = durable_run.id
 			  AND goal.evaluator->>'kind' = 'command'
 			  AND btrim(COALESCE(goal.evaluator->>'config', '')) <> ''
@@ -96,7 +101,7 @@ func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 		return err
 	}
 	if status.Terminal() {
-		row := tx.Model(&table.Run{}).Where("id = ?", l.RunID)
+		row := table.TenantQuery(ctx, tx.Model(&table.Run{})).Where("id = ?", l.RunID)
 		var stored table.Run
 		if err = row.Take(&stored).Error; err != nil {
 			return err
@@ -140,11 +145,11 @@ func (s *Store) RecordDecision(ctx context.Context, l Lease, state json.RawMessa
 		return err
 	}
 	defer tx.Rollback()
-	run, err := lockLease(ctx, tx, l)
+	run, err := lockLease(ctx, table.TenantQuery(ctx, tx), l)
 	if err != nil {
 		return err
 	}
-	err = tx.Model(&table.Run{}).
+	result := table.TenantQuery(ctx, tx.Model(&table.Run{})).
 		Where("id = ?", l.RunID).
 		Updates(map[string]any{
 			"state":        string(state),
@@ -152,10 +157,12 @@ func (s *Store) RecordDecision(ctx context.Context, l Lease, state json.RawMessa
 			"error":        "",
 			"waiting_step": "",
 			"waiting_kind": "",
-		}).
-		Error
-	if err != nil {
-		return err
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrLeaseLost
 	}
 	if err = appendMessage(tx, run, "Assistant", message); err != nil {
 		return err

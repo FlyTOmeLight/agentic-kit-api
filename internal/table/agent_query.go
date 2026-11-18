@@ -15,13 +15,13 @@ import (
 
 func GetAgent(db *gorm.DB, owner, id string) (Agent, error) {
 	var row Agent
-	err := db.Where("owner_id = ? AND id = ?", owner, id).Take(&row).Error
+	err := TenantQuery(db.Statement.Context, db).Where("owner_id = ? AND id = ?", owner, id).Take(&row).Error
 	return row, err
 }
 
 func ListAgents(db *gorm.DB, owner, after string, limit int) ([]Agent, error) {
 	var rows []Agent
-	err := db.
+	err := TenantQuery(db.Statement.Context, db).
 		Where("owner_id = ? AND id > ?", owner, after).
 		Order("id").
 		Limit(limit).
@@ -32,7 +32,7 @@ func ListAgents(db *gorm.DB, owner, after string, limit int) ([]Agent, error) {
 
 func LockAgent(db *gorm.DB, owner, id string) (Agent, error) {
 	var row Agent
-	err := db.Where("owner_id = ? AND id = ?", owner, id).
+	err := TenantQuery(db.Statement.Context, db).Where("owner_id = ? AND id = ?", owner, id).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Take(&row).
 		Error
@@ -64,12 +64,14 @@ func AdvancePublished(db *gorm.DB, row *Agent, revision, number int64) error {
 
 func GetVersion(db *gorm.DB, agentID string, number int64) (AgentVersion, error) {
 	var row AgentVersion
-	err := db.Where("agent_id = ? AND number = ?", agentID, number).Take(&row).Error
+	agents := TenantQuery(db.Statement.Context, db.Session(&gorm.Session{NewDB: true})).
+		Model(&Agent{}).Select("id").Where("id = ?", agentID)
+	err := db.Where("agent_id IN (?) AND number = ?", agents, number).Take(&row).Error
 	return row, err
 }
 
 func GetSession(db *gorm.DB, owner, id string) (Session, error) {
 	var row Session
-	err := db.Where("owner_id = ? AND id = ?", owner, id).Take(&row).Error
+	err := TenantQuery(db.Statement.Context, db).Where("owner_id = ? AND id = ?", owner, id).Take(&row).Error
 	return row, err
 }

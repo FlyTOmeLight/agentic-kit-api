@@ -2,7 +2,7 @@
 
 Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方式见 [SDK 用法](../sdk/go/agenticv1/README.md)。SDK 不依赖 Gin；服务端负责校验。
 
-业务接口的身份与权限计划由 forge-tenant-api 提供的 middleware 统一处理。本服务不再维护静态 Bearer token 或 config owner 白名单。middleware 接入后，所有对象按它写入的 owner 隔离；访问其他 owner 的对象返回 404。当前不支持跨 owner 共享 Agent。在 middleware 接入前，本服务没有请求身份，不能视为已完成鉴权。
+用户业务接口已接入 forge-tenant-api v0.13.0 的 `MiddlewareAuthorization`，要求 `x-forge-tenant-id`，可选 `x-forge-project-id`；Scope 回调返回空 Scope、`RequireTenant=true`、Action 为空。本层不定义项目业务权限政策，也不维护静态 Bearer token 或 config owner 白名单。middleware 将已验证的 tenant/project 写入请求的 `access.Scope`，所有用户路由末端强制校验非空租户，缺失时拒绝请求。对象按 tenant 和已验证 owner 隔离；访问其他 tenant 或 owner 的对象返回 404。当前不支持跨 owner 共享 Agent。
 
 | 方法和路径 | 用途 | 请求 |
 | --- | --- | --- |
@@ -34,7 +34,9 @@ Agent 创建时 revision=1，编辑成功递增 revision。编辑或发布携带
 
 已发布的 `AgentVersion.config` 来自 artifact-go 的不可变正文，本地只保存版本指针，响应形状不变。发布先完成远端写入，再复核本地 revision 并提交版本指针；远端成功而本地提交失败可能留下未引用版本，但不会占用公开版本号。远端依赖不可用时发布、版本读取和新任务提交返回 503；同一请求已接受后的幂等重放直接返回原 Run，不重新读取 artifact。
 
-提交消息返回 202 和 Run；同一 owner 的相同请求编号、相同 session/query 重试返回 200 和原任务，不重复保存用户消息。发布新版本不改变该行为。请求编号重复但输入不同、同一会话已有活动任务、无效状态转换返回 409。
+artifact 出站请求统一使用 API 自身的 `Tenant.ServiceAPIKey` 作为 Bearer。`RequestIdentity` 只读取 Forge middleware 已核验的 user/tenant/project 与 RequestID；适配器将 tenant/user/可选 project 写入 `x-impersonate-target-*`，并将同一用户写入 `X-Resource-User-ID`，保持个人归属。入站 Authorization、`forge_session` Cookie、CSRF 和 Origin 均不转发，也不混用 Cookie 与 Bearer；浏览器不得持有服务凭据。缺少有效 tenant 或 actor 时，适配器在请求远端前返回依赖不可用错误，不退化为共享范围。artifact 部署须启用服务传播，并将该 key 对应的 API 服务名列入允许名单；当前本地联调使用包含 `PropagatedUserID` 的 SDK，正式依赖仍为 v0.5.0，需待包含该字段的版本发布后升级。真实 Forge/artifact 联调尚未完成；入站会话示例见 [README](../README.md#调用接口)。
+
+提交消息返回 202 和 Run；同一 tenant、owner 的相同请求编号、相同 session/query 重试返回 200 和原任务，不重复保存用户消息，也不重放其他租户的 Run。发布新版本不改变该行为。请求编号重复但输入不同、同一会话已有活动任务、无效状态转换返回 409。
 
 列表返回 `{"items":[]}`。默认 limit=50；Agent、会话、任务列表最多 100 项，按 ID 升序，after 是上一页最后一项 ID。ID 排序不代表创建时间。消息列表最多 200 项，按会话内 seq 升序，after 默认 0，下一页使用上一页最后一项 seq。Agent、会话和消息时间以 UTC RFC3339 返回。
 
@@ -56,7 +58,7 @@ server-go HTTPHost 提供无需鉴权的 `GET /ping`（200，正文 `pong`）、
 
 ## 沙箱控制面（阶段 2，默认关闭）
 
-配置 `[Sandbox].K8sContext` 后注册以下路由并启用真实调度；未配置时申请只写入 `Provisioning` 元数据，exec/release 返回 409 `NotReady`。当前边界与验证范围见[阶段 2 验证](sandbox-center/phase2-verification.md)。
+`Sandbox.AllowedServices` 非空并装配服务认证后才注册以下路由，空白名单不注册。`[Sandbox].K8sContext` 控制真实调度；未配置时申请只写入 `Provisioning` 元数据，exec/release 返回 409 `NotReady`。当前边界与验证范围见[阶段 2 验证](sandbox-center/phase2-verification.md)。
 
 | 方法和路径 | 用途 | 请求 |
 | --- | --- | --- |
@@ -81,7 +83,7 @@ Completed Run 的原沙箱可为 command 验收继续续租。完成事务为满
 
 当前验收执行者由独立的 `evaluation_claim_worker_id`、`evaluation_epoch`、`evaluation_lease_until` 表示，可与原沙箱 Worker 不同。新派发只允许固定的 `eval-<sandboxID>` 请求键与 Goal 配置的验收命令，另须提交匹配有效 claim 的 `evaluationWorkerId`、`evaluationEpoch`，派发前再次检查。普通命令仍要求有效 Running claim。操作创建后，响应通过 `X-Sandbox-Operation-ID` 返回操作 ID，包含后续失败响应；SDK 保留该 ID 供查询。网络响应丢失且没有 ID 时可同参重放原请求以获取去重回执，不得换请求键重新执行。
 
-执行输出保存 guard/execd 的原始事件流，未解析为结构化结果。当前路由未接入 Forge 租户身份，`tenantId`/`ownerId` 由调用方提供。
+执行输出保存 guard/execd 的原始事件流，未解析为结构化结果。沙箱路由使用 Forge 服务认证和 `Sandbox.AllowedServices` 白名单；申请的 `tenantId`/`ownerId` 仍由可信调用方在请求体提供，不从 Forge 用户 scope 推导。
 
 ## Gin 请求与错误契约
 
@@ -93,11 +95,13 @@ Completed Run 的原沙箱可为 command 验收继续续租。完成事务为满
 
 错误码包括 Unauthorized、Forbidden、InvalidParameter、PayloadTooLarge、InvalidCursor、APINotFound、NotFound、MethodNotAllowed、Conflict、InternalError。请求体超过 1 MiB 返回 413，未知字段或连续多个 JSON 文档返回 400；URI、Query、Header 与 JSON 在同一请求对象中完成绑定和校验，参数错误统一返回 InvalidParameter（包含消息 after 为负数）；SSE 的复合事件游标格式错误仍返回 InvalidCursor。绑定错误返回框架校验信息，未分类的内部错误不向客户端暴露数据库详情。`statusCode` 是框架错误编号，实际 HTTP 状态以响应状态行为准；`requestId` 用于关联日志。
 
-请求日志只记录方法、路由模板、状态与耗时，不记录 token 或请求体。Recovery 在响应未提交时返回 JSON 500；SSE 已开始后只结束处理，不向事件流追加 JSON 错误。这些行为由 server-go HTTPHost 统一管理；身份鉴权由后续接入的 Forge middleware 负责，调用方应用负责项目业务授权。SSE 不设整段响应的写入超时，调用方取消与进程退出会结束订阅。SSE 响应头、事件编码、心跳和逐次写入期限由 server-go stream 管理，底层使用 gin-contrib/sse 编码，字段冒号后是否有空格不影响标准 SSE 消费端。
+请求日志只记录方法、路由模板、状态与耗时，不记录 token 或请求体。Recovery 在响应未提交时返回 JSON 500；SSE 已开始后只结束处理，不向事件流追加 JSON 错误。这些行为由 server-go HTTPHost 统一管理；身份鉴权由已接入的 Forge middleware 负责，调用方应用负责项目业务授权。SSE 不设整段响应的写入超时，调用方取消与进程退出会结束订阅。SSE 响应头、事件编码、心跳和逐次写入期限由 server-go stream 管理，底层使用 gin-contrib/sse 编码，字段冒号后是否有空格不影响标准 SSE 消费端。
 
 ## 受信任应用执行
 
-`POST /internal/v1/executions` 的服务身份与调用权限由 Forge middleware 校验。请求为：
+内部 execution、goal、lease 路由仅在 `Tenant.AllowedPropagationServices` 非空时注册，使用 `MiddlewareInternalPropagation` 验证服务 Authorization 和服务白名单，并接收 `x-impersonate-target-tenant-id`、`x-impersonate-target-user-id`、可选 `x-impersonate-target-project-id`。已验证的 tenant/project 写入请求 context，路由末端同样拒绝空租户。`spec.scope` 的 tenant/project 必须匹配验证 scope，owner 取自验证身份；请求体不是授权证明。可信 worker 直连数据库、直接调用 Store 时仍保留无 HTTP scope 的内部契约。
+
+`POST /internal/v1/executions` 请求为：
 
 ```json
 {"spec":{"agentID":"已发布 Agent ID","agentVersion":1,"scope":{"tenantID":"t","projectID":"p","actorID":"u","taskID":"task","roundID":"round"},"query":"本轮要求"},"timeoutSeconds":1800}
@@ -107,7 +111,7 @@ Agent 定义先通过 `/v1/agents` 创建、编辑与发布。应用执行必须
 
 同一 owner、tenant、project、task 复用同一个 Session；不同项目的同名 task 不共享历史。后续轮次允许选择同一 Agent 的其他已发布版本，但不能在同一任务中更换 Agent 身份。同一会话已有活动 Run 时返回 409。上下文策略与普通聊天一致：最近 20 个已完成轮次的用户输入与最终答案。
 
-幂等键必填。同键同输入返回原 Run，包括发布新版本之后的重试；同键不同输入返回 409。Agent、发布版本不存在或属于其他 owner 时返回 404。创建会话、Run、输入消息与事件在同一事务提交。应用服务凭据不能下发给浏览器；应用从已验证的用户与任务构造 scope，敏感操作仍动态检查业务权限。
+幂等键必填。同一 tenant、owner 内同键同输入返回原 Run，包括发布新版本之后的重试；同键不同输入返回 409。不同租户的相同 owner 和请求键不会重放另一租户的 Run。Agent、发布版本不存在或属于其他 tenant/owner 时返回 404。创建会话、Run、输入消息与事件在同一事务提交。应用服务凭据不能下发给浏览器；应用从已验证的用户与任务构造 scope，敏感操作仍动态检查业务权限。
 
 `GET /internal/v1/executions/{id}/lease?epoch=N` 返回当前数据库时钟下的执行权；取消、旧 epoch、超过 deadline 或其他 owner 均无法通过。模型工具参数不能提供该执行身份，Worker 在 HTTP headers 中注入真实 run ID 和 epoch。运行时执行权不替代业务授权或外部进程停止确认。projectID 是可选的执行上下文；工具或文件系统绑定本身不要求选择项目，资源是否允许使用由调用方授权。
 
@@ -146,7 +150,7 @@ StallMark 基于已完成 Step ID 的排序集合、配置版本、Run 输出哈
 
 `POST /internal/v1/executions/{id}/callback` 接受 JSON `{"stepID":"approval","externalRef":"approval-42","result":"approved"}`。成功或相同结果重放返回 204；Step 或 externalRef 不匹配、重放结果变化返回 409。JSON 字段不会被 Query 参数覆盖，请求体上限为 1 MiB。
 
-配置 `[Callback].SigningSecret`（示例配置从 `CALLBACK_SIGNING_SECRET` 读取）启用 HMAC-SHA256。`AllowedSources` 可配置为 `["approval-system"]`；配置白名单时必须同时配置签名密钥，且来源名不得为空或包含首尾空白。空配置保留原有行为，不提供回调来源认证。
+callback 默认不注册。设置 `[Callback].Enabled=true` 时，必须同时配置 `SigningSecret`（示例配置从 `CALLBACK_SIGNING_SECRET` 读取）、`AllowedSources` 和 `AllowedServices`，否则启动校验失败。路由使用独立的 Forge 服务认证及服务白名单，并在 handler 中校验来源白名单和 HMAC-SHA256；三项检查同时生效。`AllowedSources` 可配置为 `["approval-system"]`，来源名不得为空或包含首尾空白。
 
 发送端提供 `X-Agentic-Source` 和 `X-Agentic-Signature: sha256=<hex>`，签名内容按以下顺序拼接，换行均为单个 LF，正文后不额外添加换行：
 
@@ -157,7 +161,7 @@ POST\n
 <原始 JSON 正文>
 ```
 
-签名缺失、格式错误、正文/路径/来源被篡改返回 401；来源不在配置白名单返回 403。重试复用相同路径、正文与签名，由持久化幂等约束避免重复恢复；当前协议没有时间戳过期窗口。此签名校验不建立 owner 身份，仍依赖前文所述的身份 middleware。
+签名缺失、格式错误、正文/路径/来源被篡改返回 401；来源不在配置白名单返回 403。重试复用相同路径、正文与签名，由持久化幂等约束避免重复恢复；当前协议没有时间戳过期窗口。HMAC 不建立用户 owner 身份，callback 的调用服务身份由独立服务认证建立，不使用 execution/goal/lease 的 propagation 鉴权链。
 
 ### 沙箱工具绑定
 

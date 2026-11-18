@@ -6,19 +6,24 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/FlyTOmeLight/server-go/constants"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
+	"github.com/FlyTOmeLight/artifact-go/sdk/go/artifactv1"
 )
+
+const testArtifactServiceKey = "api-service-key-for-artifact-tests"
 
 func newTestStore(t *testing.T, handler http.Handler) ArtifactStore {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	store, err := NewArtifact(server.URL, 2*time.Second)
+	store, err := NewArtifact(server.URL, testArtifactServiceKey, 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,14 +33,11 @@ func newTestStore(t *testing.T, handler http.Handler) ArtifactStore {
 
 func testIdentity() Identity {
 	project := "project-1"
-	user := "user-1"
 	return Identity{
-		TenantID:       "tenant-1",
-		ProjectID:      &project,
-		ResourceUserID: &user,
-		Session:        "session-token",
-		CSRFToken:      "csrf-token",
-		Origin:         "https://forge.example",
+		TenantID:         "tenant-1",
+		ProjectID:        &project,
+		PropagatedUserID: "user-1",
+		RequestID:        "request-1",
 	}
 }
 
@@ -79,6 +81,7 @@ func TestPublishVersionProtectsAndReturnsFixedIdentity(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/artifacts/artifact-1/versions" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
+		assertIdentityHeaders(t, r)
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
@@ -117,6 +120,7 @@ func TestGetPayloadReadsFixedVersion(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/artifacts/artifact-1/versions/version-1" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
+		assertIdentityHeaders(t, r)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": "version-1", "artifactID": "artifact-1", "state": "ready",
 			"payload": map[string]any{"systemPrompt": "hello"},
@@ -161,21 +165,100 @@ func TestArtifactErrorsMapToDomainSentinels(t *testing.T) {
 	}
 }
 
-func TestMissingTenantFailsBeforeCallingArtifact(t *testing.T) {
-	store := newTestStore(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Fatal("artifact must not be called without a verified tenant")
+func TestInvalidIdentityFailsBeforeCallingArtifact(t *testing.T) {
+	for _, test := range []struct {
+		name, tenant, user string
+	}{
+		{name: "missing tenant", user: "user-1"},
+		{name: "blank tenant", tenant: " ", user: "user-1"},
+		{name: "padded tenant", tenant: " tenant-1", user: "user-1"},
+		{name: "missing user", tenant: "tenant-1"},
+		{name: "blank user", tenant: "tenant-1", user: " "},
+		{name: "padded user", tenant: "tenant-1", user: " user-1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls atomic.Int32
+			store := newTestStore(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			identity := testIdentity()
+			identity.TenantID, identity.PropagatedUserID = test.tenant, test.user
+			ctx := context.Background()
+			_, ensureErr := store.EnsureCollection(ctx, identity, "agent-1")
+			_, publishErr := store.PublishVersion(ctx, identity, "artifact-1", "key-1", []byte(`{}`))
+			_, readErr := store.GetPayload(ctx, identity, "artifact-1", "version-1")
+			for _, err := range []error{ensureErr, publishErr, readErr} {
+				if !errors.Is(err, agent.ErrUnavailable) {
+					t.Errorf("invalid identity accepted: %v", err)
+				}
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("invalid identity reached artifact: %d calls", calls.Load())
+			}
+		})
+	}
+}
+
+func TestNewArtifactRequiresServiceKey(t *testing.T) {
+	for _, key := range []string{"", " \t"} {
+		store, err := NewArtifact("http://127.0.0.1:18080", key, time.Second)
+		if err == nil {
+			_ = store.Close()
+			t.Fatal("missing service key accepted")
+		}
+	}
+}
+
+func TestArtifactReplacesInheritedCredentials(t *testing.T) {
+	store := newTestStore(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertIdentityHeaders(t, r)
+		writeJSON(w, http.StatusCreated, map[string]any{"id": "artifact-1"})
 	}))
-	identity := testIdentity()
-	identity.TenantID = ""
-	if _, err := store.EnsureCollection(
-		context.Background(),
-		identity,
-		"agent-1",
-	); !errors.Is(
-		err,
-		agent.ErrUnavailable,
-	) {
-		t.Fatalf("missing tenant accepted: %v", err)
+	ctx := artifactv1.WithRequestIdentity(context.Background(), artifactv1.RequestIdentity{
+		BearerToken: "untrusted-inbound-token",
+		Session:     "untrusted-inbound-session",
+		CSRFToken:   "untrusted-csrf",
+		Origin:      "https://untrusted.example",
+		TenantID:    "untrusted-tenant",
+	})
+	if _, err := store.EnsureCollection(ctx, testIdentity(), "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestArtifactIdentityIsPerRequest(t *testing.T) {
+	store := newTestStore(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+testArtifactServiceKey {
+			t.Error("service credential lost")
+		}
+		user := r.Header.Get(constants.HeaderImpersonateUserID)
+		if user == "" || r.Header.Get("X-Resource-User-ID") != user {
+			t.Error("private owner must match propagated user")
+		}
+		switch user {
+		case "user-1":
+			assertIdentityHeaders(t, r)
+		case "user-2":
+			if r.Header.Get(constants.HeaderTenantID) != "tenant-2" ||
+				r.Header.Get(constants.HeaderImpersonateTenantID) != "tenant-2" ||
+				r.Header.Get(constants.HeaderProjectID) != "" ||
+				r.Header.Get(constants.HeaderImpersonateProjectID) != "" {
+				t.Error("scope leaked between requests")
+			}
+		default:
+			t.Errorf("unexpected user %q", user)
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"id": "artifact-1"})
+	}))
+	for _, identity := range []Identity{
+		testIdentity(),
+		{TenantID: "tenant-2", PropagatedUserID: "user-2"},
+		testIdentity(),
+	} {
+		if _, err := store.EnsureCollection(context.Background(), identity, "agent-1"); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -190,14 +273,21 @@ func assertIdentityHeaders(t *testing.T, r *http.Request) {
 	if got := r.Header.Get("X-Resource-User-ID"); got != "user-1" {
 		t.Fatalf("resource user header %q", got)
 	}
-	if got := r.Header.Get("X-CSRF-Token"); got != "csrf-token" {
-		t.Fatalf("csrf header %q", got)
+	for header, want := range map[string]string{
+		"Authorization":                      "Bearer " + testArtifactServiceKey,
+		constants.HeaderImpersonateTenantID:  "tenant-1",
+		constants.HeaderImpersonateUserID:    "user-1",
+		constants.HeaderImpersonateProjectID: "project-1",
+		"X-Request-ID":                       "request-1",
+	} {
+		if got := r.Header.Get(header); got != want {
+			t.Errorf("%s header %q, want %q", header, got, want)
+		}
 	}
-	if got := r.Header.Get("Origin"); got != "https://forge.example" {
-		t.Fatalf("origin header %q", got)
-	}
-	if cookie, err := r.Cookie("forge_session"); err != nil || cookie.Value != "session-token" {
-		t.Fatalf("session cookie missing: %v", err)
+	for _, header := range []string{"Cookie", "X-CSRF-Token", "Origin"} {
+		if got := strings.TrimSpace(r.Header.Get(header)); got != "" {
+			t.Errorf("browser credential forwarded in %s", header)
+		}
 	}
 }
 
