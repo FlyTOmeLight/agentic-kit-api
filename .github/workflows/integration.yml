@@ -50,4 +50,4 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://agentic:agentic_test@127.0.0.1:5432/agentic?sslmode=disable
           TEST_REDIS_URL: redis://127.0.0.1:6379/0
-        run: make integration
+        run: make integration INTEGRATION_TIMEOUT=3m
