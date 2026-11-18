@@ -2,6 +2,10 @@
 
 本文件按日期保留历史检查结果，条目中的路径、版本和限制描述当时的实现。当前功能、布局和契约分别以 README、docs/layout.md 和 docs/api.md 为准；可复用经验见 docs/lessons/。
 
+## 2026-11-18 ActorProject 执行召回授权
+
+`GOWORK=off GOFLAGS=-mod=readonly make integration` 通过，包含 API 全仓竞态测试和 `go vet`。`TestApplicationActorProjectRecall` 使用本机 PostgreSQL 和受控 Forge HTTP 服务，验证项目读权限检查使用当前用户与已验范围、撤权后首次提交和重放都被拒绝、依赖故障返回 `MemoryUnavailable`。项目条目使用预置投影，验证只有标记为 `Project` 的条目进入 Run 快照，以及缺少项目授权的 `RecallTx` 调用被拒绝。ActorProject 维护入口和真实 Forge 项目授权联调留待后续验证。
+
 ## 2026-11-17 Agent 版本发布与 Run 快照
 
 OrbStack 的 `forge` release revision 15 使用 Artifact `v0.5.1` 和 Forge Tenant API `v0.13.0`。Forge 的 `/internal/v1/service/self` 返回 `agentic-kit-api`，Artifact 的出站调用接收方白名单配置为 `artifact.forgeTenant.allowedPropagationServices=["agentic-kit-api"]`。API 入站的 `[Tenant].AllowedPropagationServices` 单独用于内部执行接口和 Goal 等路由的调用服务认证。

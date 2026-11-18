@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -20,10 +21,11 @@ import (
 
 // Service accepts chat and application runs through the shared durable algorithm.
 type Service struct {
-	store    *durable.Store
-	artifact client.ArtifactStore
-	recaller durable.MemoryRecaller
-	pricing  execpkg.PricingCatalog
+	store            *durable.Store
+	artifact         client.ArtifactStore
+	recaller         durable.MemoryRecaller
+	pricing          execpkg.PricingCatalog
+	projectReadCheck access.ProjectReadCheck
 
 	collections sync.Map // agentID → artifact collection ID
 }
@@ -41,6 +43,11 @@ func (s *Service) WithPricing(catalog execpkg.PricingCatalog) *Service {
 // submission selects Recall. Call it during construction, before serving.
 func (s *Service) WithMemoryRecaller(recaller durable.MemoryRecaller) *Service {
 	s.recaller = recaller
+	return s
+}
+
+func (s *Service) WithProjectReadCheck(check access.ProjectReadCheck) *Service {
+	s.projectReadCheck = check
 	return s
 }
 
@@ -119,15 +126,34 @@ func (s *Service) SubmitApplication(
 	memorySelection memory.Selection,
 	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
-	if scope, ok := access.FromContext(ctx); ok {
+	scope, verified := access.FromContext(ctx)
+	if verified {
 		if scope.TenantID == "" || spec.Scope == nil ||
 			spec.Scope.TenantID != scope.TenantID || spec.Scope.ProjectID != scope.ProjectID {
 			return nil, false, agent.ErrInvalid
 		}
 	}
-	if memorySelection == memory.SelectionRecall && spec.Scope != nil &&
-		spec.Scope.ProjectID == "" && spec.Scope.ActorID != owner {
-		return nil, false, memory.ErrForbidden
+	if memorySelection == memory.SelectionRecall && spec.Scope != nil {
+		if spec.Scope.ActorID != owner {
+			return nil, false, memory.ErrForbidden
+		}
+		if spec.Scope.ProjectID != "" {
+			if !verified || owner == "" || s.projectReadCheck == nil {
+				return nil, false, memory.ErrForbidden
+			}
+			allowed, err := s.projectReadCheck(ctx, owner, scope)
+			if err != nil {
+				return nil, false, fmt.Errorf(
+					"%w: Forge project read check: %w",
+					memory.ErrUnavailable,
+					err,
+				)
+			}
+			if !allowed {
+				return nil, false, memory.ErrForbidden
+			}
+			ctx = access.WithProjectRead(ctx, owner, scope)
+		}
 	}
 	hash := applicationRequestHash(spec, ttl, memorySelection, filter)
 	if run, err := s.replay(ctx, owner, key, hash); err != nil || run != nil {

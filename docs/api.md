@@ -72,7 +72,9 @@ SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payloa
 
 HTTP 维护入口开放 OwnerPrivate 和租户级 ActorPrivate。服务从 Forge 验证结果确定租户、项目和 owner，写入文档的 `scope.tenant`、`scope.project` 必须与验证结果一致。ActorPrivate 要求请求处于租户级且 `scope.project` 为空。`scope.actor` 可省略或填写当前用户，服务保存核验后的用户 ID。`outputVisibility` 省略时默认 `Private`，ActorPrivate 只接受 `Private`。项目请求及其他租户或用户看不到该条目及其版本历史。
 
-租户级应用执行显式指定 `memory=Recall` 时，`spec.scope.actorID` 必须等于 Forge 核验的用户 ID，否则返回 403，包括幂等重放。成功接受的 Run 冻结当时选中的本地投影。Create 返回 201，其余 Memory 维护操作成功返回 200。Entry 的 `revision` 表示当前投影修订，启用归档时还返回固定的 `activeVersionRef`。
+应用执行显式指定 `memory=Recall` 时，`spec.scope.actorID` 必须等于 Forge 核验的用户 ID，否则返回 403，包括幂等重放。带项目的执行还会在首次提交和重放前检查当前用户的项目读权限。无权限返回 403，Forge 权限检查失败返回 503 `MemoryUnavailable`。项目执行只召回同一租户、项目和用户下标记为 `Project` 的 ActorProject 投影。成功接受的 Run 冻结当时选中的本地投影。
+
+Create 返回 201，其余 Memory 维护操作成功返回 200。Entry 的 `revision` 表示当前投影修订，启用归档时还返回固定的 `activeVersionRef`。
 
 `POST /v1/memories` 的 body 必须包含完整 `document`。`PUT /v1/memories/{id}` 的 body 必须包含 `expectedRevision` 和完整 `document`；`restore` 为 `false` 或省略时执行 Update，只允许修改活跃条目；`restore` 为 `true` 时执行 Restore，只允许恢复已停用条目。两种操作都要求 `expectedRevision` 等于操作开始时的当前 revision，成功后 revision 递增。Scope、agentID、kind、subjectKey 等身份字段不能通过更新改变。对活跃条目请求 Restore、对已停用条目执行普通 Update、revision 不匹配或同键不同参数均返回 409。`POST /v1/memories/{id}/retire` 只接受 `expectedRevision`。
 

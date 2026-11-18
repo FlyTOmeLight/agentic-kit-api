@@ -47,7 +47,7 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if err = runtime.Initialize(ctx, &tenantModule{client: tenant}); err != nil {
 		return err
 	}
-	authentication := Authentication{User: tenant.User()}
+	authentication := Authentication{User: tenant.User(), ProjectRead: tenant.CanReadProject}
 	authentication.Propagation, err = tenant.Propagation(cfg.Tenant.AllowedPropagationServices)
 	if err != nil {
 		return err
