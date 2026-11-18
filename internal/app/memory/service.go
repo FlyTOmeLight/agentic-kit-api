@@ -799,13 +799,21 @@ func (s *Service) RecallTx(
 		"owner_id = ? AND scope_kind = ? AND tenant_id = ? AND project_id = ? AND actor_id = ? AND retired_at IS NULL",
 		scope.Owner, string(scope.Kind), scope.Tenant, scope.Project, scope.Actor,
 	)
-	if scope.Kind == memory.ScopeActorPrivate {
+	switch scope.Kind {
+	case memory.ScopeActorPrivate:
 		request, err := requireScope(ctx)
 		if err != nil || request.TenantID != scope.Tenant || request.ProjectID != "" ||
 			scope.Project != "" || scope.Actor != scope.Owner {
 			return nil, memory.ErrForbidden
 		}
 		q = q.Where("output_visibility = ?", memory.OutputPrivate)
+	case memory.ScopeActorProject:
+		request, err := requireScope(ctx)
+		if err != nil || request.TenantID != scope.Tenant || request.ProjectID != scope.Project ||
+			scope.Project == "" || scope.Actor != scope.Owner || !access.HasProjectRead(ctx, scope.Owner, request) {
+			return nil, memory.ErrForbidden
+		}
+		q = q.Where("output_visibility = ?", memory.OutputProject)
 	}
 	if agentID != "" {
 		q = q.Where("agent_id = ? OR agent_id = ''", agentID)

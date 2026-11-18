@@ -16,6 +16,7 @@ import (
 	appmemory "github.com/FlyTOmeLight/agentic-kit-api/internal/app/memory"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/sandboxcenter"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
@@ -26,6 +27,7 @@ type Authentication struct {
 	Service     []core.HandlerFunc
 	Propagation []core.HandlerFunc
 	Callback    []core.HandlerFunc
+	ProjectRead access.ProjectReadCheck
 }
 
 type API struct {

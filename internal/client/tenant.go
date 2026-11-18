@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"slices"
@@ -40,6 +41,17 @@ func NewTenant(endpoint, serviceAPIKey string, timeout time.Duration) (*Tenant, 
 
 func (t *Tenant) Close() error {
 	return errors.Join(t.services.Close(), t.client.Close())
+}
+
+func (t *Tenant) CanReadProject(ctx context.Context, userID string, scope access.Scope) (bool, error) {
+	result, err := t.client.CheckAccess(ctx, &tenantv1.CheckAccessRequest{
+		UserID: userID, TenantID: scope.TenantID, ProjectID: scope.ProjectID, Action: tenantv1.AccessRead,
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.Allowed && result.Read && result.TenantID == scope.TenantID &&
+		result.ProjectID == scope.ProjectID, nil
 }
 
 func (t *Tenant) User() []core.HandlerFunc {

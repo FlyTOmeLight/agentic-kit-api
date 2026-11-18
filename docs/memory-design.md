@@ -1,6 +1,6 @@
 # Agentic Kit 通用 Agent Memory 技术设计
 
-状态：本地 OwnerPrivate 和租户级 ActorPrivate 的人工维护、显式 Restore、生效投影、操作回执和生效版本历史 API 已实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。配置归档时，API 后台已能继续未完成的 Create/Update/Restore。本地真实 artifact HTTP 服务与 PostgreSQL 联调覆盖服务凭据、固定版本、幂等、作用域隔离及代理故障下的 Pending 恢复，见[验证记录](verification.md#memory-真实-artifact-联合验证)。ActorProject、ProjectShared、自动提炼、语义检索及版本删除/回收待实施，外部部署验收尚未完成。
+状态：本地 OwnerPrivate 和租户级 ActorPrivate 的人工维护、显式 Restore、生效投影、操作回执和生效版本历史 API 已实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。ActorProject 执行召回已接入 Forge 项目读权限检查，只选取项目可见的本地投影。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。配置归档时，API 后台已能继续未完成的 Create/Update/Restore。本地真实 artifact HTTP 服务与 PostgreSQL 联调覆盖服务凭据、固定版本、幂等、作用域隔离及代理故障下的 Pending 恢复，见[验证记录](verification.md#memory-真实-artifact-联合验证)。ActorProject 维护入口、ProjectShared、自动提炼、语义检索及版本删除/回收待实施，外部部署验收尚未完成。
 
 本文替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 的范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
 
@@ -220,15 +220,15 @@ Agent 版本不因本设计增加自动开启学习的开关。服务端政策�
 
 沿用框架的同事务 prepare：durable 先处理原请求回放，再锁会话、读取规范事实；当前由 `pkg/durable/prepare.go` 调用注入的 Memory `RecallTx`，从同一个数据库事务读取 Entry 与完整生效投影。它不调用 artifact；迁移到目标 `app/execution/context.go` 属于后续目录重组。
 
-查询先过滤精确 MemoryScope、Agent 限制、停用/过期、条件及 OutputVisibility/OutputAudience，再按受控词项和标签匹配，稳定排序后限制条目数及材料字节。已实现口径：召回请求可携带 `RecallFilter{Terms, Tags, MaxEntries, MaxBytes}`；查询文本与显式 Terms 一起按词项规则（ASCII 连续字母数字为一个词项、小写归一，汉字逐字成词项，见 `memory.MatchTerms`）要求全部命中条目的 subjectKey/summary/body；Tags 要求全部出现在 `Conditions.TaskTags`（大小写不敏感）。排序按 revision 降序、ID 升序稳定；默认上限 `DefaultRecallMaxEntries=8`、`DefaultRecallMaxBytes=32KiB`，显式负值关闭对应上限；字节超限跳过该条并继续选择后续更小条目。中文片段与代码标识符使用明确词项规则并有固定验收样例；不宣称语义检索能力，不先引入向量库。
+查询先按精确 MemoryScope、Agent 限制、停用和过期状态筛选，并应用各范围的输出可见性规则。召回请求可携带 `RecallFilter{Terms, Tags, MaxEntries, MaxBytes}`；查询文本与显式 Terms 一起按词项规则（ASCII 连续字母数字为一个词项、小写归一，汉字逐字成词项，见 `memory.MatchTerms`）要求全部命中条目的 subjectKey/summary/body；Tags 要求全部出现在 `Conditions.TaskTags`（大小写不敏感）。排序按 revision 降序、ID 升序稳定；默认上限 `DefaultRecallMaxEntries=8`、`DefaultRecallMaxBytes=32KiB`，显式负值关闭对应上限；字节超限跳过该条并继续选择后续更小条目。中文片段与代码标识符使用明确词项规则并有固定验收样例；不宣称语义检索能力，不先引入向量库。
 
 一次查询读取引用与内容的一致行；其语句快照是本次选择时点。并发纠正/停用在该时点之后提交，已选结果仍可进入此次 Run；在其之后开始的召回读取新状态。首版不要求对整个记忆集合加锁，也不承诺多条 Entry 属于同一知识发布批次。
 
 将选中条目的完整正文、条件、来源、固定版本引用及顺序映射为 ContextBlock；与策略和预算一起编码到 ContextSnapshot，并与 Session/Run/用户消息/事件原子提交。无匹配保存 Recall/Empty，Off 保存明确关闭；本地读取或投影校验失败使接受事务回滚，不能静默降为 Empty。投影正常时 artifact 暂时离线不影响 Recall，这来自已完成的本地生效契约。
 
-普通聊天使用 OwnerPrivate，按 Forge 验证的租户、项目和当前 owner 查询。租户级应用执行使用 ActorPrivate，提交在幂等回放前核验 `spec.scope.actorID` 等于当前用户，并按租户及 `Private` 输出可见性查询。带 project 的应用执行已派生 ActorProject 范围，该范围的维护授权留待后续开放。应用执行和聊天均接受 `memory`（Off/Recall）与 `memoryFilter`（同 §7.2），Off 携带 filter 报 400 Invalid。
+普通聊天使用 OwnerPrivate，按 Forge 验证的租户、项目和当前 owner 查询。租户级应用执行使用 ActorPrivate，提交在幂等回放前核验 `spec.scope.actorID` 等于当前用户，并按租户及 `Private` 输出可见性查询。带项目的应用执行使用 ActorProject，并在幂等回放和接受事务之前用 Forge `CheckAccess` 检查当前用户对该项目的 `read` 权限。事务内的 `RecallTx` 要求本次检查与用户、租户和项目都匹配。执行请求尚无可信的私人结果受众字段，因此项目执行只召回显式标记为 `Project` 的条目。ActorProject 的维护入口留待后续开放。应用执行和聊天均接受 `memory`（Off/Recall）与 `memoryFilter`（同 §7.2），Off 携带 filter 报 400 Invalid。
 
-同键已成功提交直接读取原 Run；后续记忆更新、策略变化或 artifact 故障均不触发重新召回。未成功接受的请求可在重试时重新选择，以最终接受的快照为准。
+同键已成功提交且当前请求通过授权时，直接读取原 Run。后续记忆更新、策略变化或 artifact 故障均不触发重新召回。未成功接受的请求可在重试时重新选择，以最终接受的快照为准。
 
 ### 7.3 每轮模型输入与恢复
 

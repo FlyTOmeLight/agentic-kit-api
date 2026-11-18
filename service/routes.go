@@ -46,7 +46,7 @@ func newRoutes(
 ) *routes {
 	exec := appexec.NewService(store, artifact).WithPricing(pricing)
 	memorySvc := appmemory.NewService(store.DB(), archive)
-	exec = exec.WithMemoryRecaller(memorySvc)
+	exec = exec.WithMemoryRecaller(memorySvc).WithProjectReadCheck(authentication.ProjectRead)
 	r := &routes{
 		agent:           agent.NewController(agent.NewService(store.DB(), artifact)),
 		session:         session.NewController(session.NewService(store, exec)),
