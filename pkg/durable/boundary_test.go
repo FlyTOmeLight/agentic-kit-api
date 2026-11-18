@@ -126,8 +126,8 @@ func TestCommitBoundaryDerivesStatusMessageEvent(t *testing.T) {
 	}
 	for _, tc := range steps {
 		t.Run(tc.name, func(t *testing.T) {
-			session := testConversation(t, s, Spec{MaxTurns: 5})
-			r, _, err := s.Submit(ctx, "owner", session.ID, NewID(), "question", time.Hour, 3)
+			session, cfg := testConversation(t, s, Spec{MaxTurns: 5})
+			r, _, err := submitFixture(t, s, "owner", session.ID, NewID(), "question", time.Hour, 3, cfg)
 			if err != nil {
 				t.Fatal(err)
 			}

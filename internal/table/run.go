@@ -29,29 +29,47 @@ type ExecutionSnapshot struct {
 }
 
 type Run struct {
-	ID              string                    `gorm:"type:text;primaryKey;not null"`
-	OwnerID         string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:1;uniqueIndex:durable_session_active,priority:1,where:status = 'Queued' OR status = 'Running' OR status = 'WaitingClarification' OR status = 'NeedsReview'"`
-	SessionID       string                    `gorm:"type:text;not null;uniqueIndex:durable_session_active,priority:2"`
-	RequestKey      string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:2"`
-	RequestHash     string                    `gorm:"type:text;not null"`
-	Spec            ExecutionSnapshot         `gorm:"serializer:json;type:jsonb;not null"`
-	ContextSnapshot ContextSnapshot           `gorm:"type:text;not null;default:'{}'"`
-	State           json.RawMessage           `gorm:"serializer:json;type:jsonb;not null;default:'{}'"`
-	Status          execution.Status          `gorm:"type:text;not null;check:durable_run_status_check,status IN ('Queued','Running','WaitingClarification','NeedsReview','Completed','Failed','Canceled')"`
-	WorkerID        string                    `gorm:"type:text;not null;default:''"`
-	Epoch           int64                     `gorm:"type:bigint;not null;default:0"`
-	LeaseUntil      *time.Time                `gorm:"type:timestamptz"`
-	AvailableAt     time.Time                 `gorm:"type:timestamptz;not null;default:clock_timestamp();index:durable_run_queue,priority:1,where:status = 'Queued' OR status = 'Running'"`
-	Deadline        time.Time                 `gorm:"type:timestamptz;not null"`
-	Attempt         int                       `gorm:"type:integer;not null;default:0"`
-	MaxAttempts     int                       `gorm:"type:integer;not null"`
-	EventSeq        int64                     `gorm:"type:bigint;not null;default:0"`
-	Output          string                    `gorm:"type:text;not null;default:''"`
-	Error           string                    `gorm:"type:text;not null;default:''"`
-	WaitingStep     string                    `gorm:"type:text;not null;default:''"`
-	WaitingKind     execution.InteractionKind `gorm:"type:text;not null;default:'';check:durable_run_waiting_kind_check,waiting_kind IN ('','Clarification','Review')"`
-	CreatedAt       time.Time                 `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false;index:durable_run_queue,priority:2"`
-	UpdatedAt       time.Time                 `gorm:"type:timestamptz;not null;default:clock_timestamp();autoUpdateTime:false"`
+	ID                      string                    `gorm:"type:text;primaryKey;not null"`
+	TenantID                string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:1;uniqueIndex:durable_session_active,priority:1,where:status = 'Queued' OR status = 'Running' OR status = 'WaitingClarification' OR status = 'NeedsReview' OR status = 'WaitingExternal'"`
+	ProjectID               string                    `gorm:"type:text;not null"`
+	OwnerID                 string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:2"`
+	SessionID               string                    `gorm:"type:text;not null;uniqueIndex:durable_session_active,priority:2"`
+	RequestKey              string                    `gorm:"type:text;not null;uniqueIndex:durable_run_owner_id_request_key_key,priority:3"`
+	RequestHash             string                    `gorm:"type:text;not null"`
+	Spec                    ExecutionSnapshot         `gorm:"serializer:json;type:jsonb;not null"`
+	ContextSnapshot         ContextSnapshot           `gorm:"type:text;not null;default:'{}'"`
+	State                   json.RawMessage           `gorm:"serializer:json;type:jsonb;not null;default:'{}'"`
+	Status                  execution.Status          `gorm:"type:text;not null;check:durable_run_status_check,status IN ('Queued','Running','WaitingClarification','NeedsReview','WaitingExternal','Blocked','Completed','Failed','Canceled')"`
+	WorkerID                string                    `gorm:"type:text;not null;default:''"`
+	Epoch                   int64                     `gorm:"type:bigint;not null;default:0"`
+	LeaseUntil              *time.Time                `gorm:"type:timestamptz"`
+	EvaluationDeadline      *time.Time                `gorm:"type:timestamptz"`
+	EvaluationWorkerID      string                    `gorm:"type:text;not null;default:''"`
+	EvaluationClaimWorkerID string                    `gorm:"type:text;not null;default:''"`
+	EvaluationEpoch         int64                     `gorm:"type:bigint;not null;default:0"`
+	EvaluationLeaseUntil    *time.Time                `gorm:"type:timestamptz;index:durable_run_evaluation,priority:1,where:status = 'Completed' AND evaluation_deadline IS NOT NULL"`
+	AvailableAt             time.Time                 `gorm:"type:timestamptz;not null;default:clock_timestamp();index:durable_run_queue,priority:1,where:status = 'Queued' OR status = 'Running'"`
+	Deadline                time.Time                 `gorm:"type:timestamptz;not null"`
+	Attempt                 int                       `gorm:"type:integer;not null;default:0"`
+	MaxAttempts             int                       `gorm:"type:integer;not null"`
+	EventSeq                int64                     `gorm:"type:bigint;not null;default:0"`
+	Output                  string                    `gorm:"type:text;not null;default:''"`
+	Error                   string                    `gorm:"type:text;not null;default:''"`
+	WaitingStep             string                    `gorm:"type:text;not null;default:''"`
+	WaitingKind             execution.InteractionKind `gorm:"type:text;not null;default:'';check:durable_run_waiting_kind_check,waiting_kind IN ('','Clarification','Review')"`
+	WaitingExternalRef      string                    `gorm:"type:text;not null;default:''"`
+
+	GoalID           string    `gorm:"type:text;not null;default:'';index:durable_run_goal,priority:1,where:goal_id <> ''"`
+	ParentRunID      string    `gorm:"type:text;not null;default:'';index:durable_run_parent,priority:1,where:parent_run_id <> ''"`
+	ParentStepID     string    `gorm:"type:text;not null;default:''"`
+	PendingSteer     string    `gorm:"type:text;not null;default:''"`
+	CompactedSummary string    `gorm:"type:text;not null;default:''"`
+	FirstKeptSeq     int64     `gorm:"type:bigint;not null;default:0"`
+	StallMark        string    `gorm:"type:text;not null;default:''"`
+	TokensUsed       int64     `gorm:"type:bigint;not null;default:0"`
+	CostUSD          float64   `gorm:"type:double precision;not null;default:0"`
+	CreatedAt        time.Time `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false;index:durable_run_queue,priority:2"`
+	UpdatedAt        time.Time `gorm:"type:timestamptz;not null;default:clock_timestamp();autoUpdateTime:false"`
 }
 
 func (Run) TableName() string { return "durable_run" }
@@ -79,13 +97,14 @@ func (s ContextSnapshot) Value() (driver.Value, error) {
 }
 
 type Step struct {
-	RunID     string       `gorm:"type:text;primaryKey;not null"`
-	StepID    string       `gorm:"type:text;primaryKey;not null"`
-	InputHash string       `gorm:"type:text;not null"`
-	Policy    agent.Policy `gorm:"type:text;not null;check:durable_step_policy_check,policy IN ('ReadOnly','Idempotent','Unsafe')"`
-	Status    string       `gorm:"type:text;not null;check:durable_step_status_check,status IN ('Started','Completed')"`
-	Result    string       `gorm:"type:text;not null;default:''"`
-	Run       *Run         `gorm:"foreignKey:RunID;references:ID;constraint:durable_step_run_id_fkey,OnUpdate:NO ACTION,OnDelete:NO ACTION"`
+	RunID       string       `gorm:"type:text;primaryKey;not null"`
+	StepID      string       `gorm:"type:text;primaryKey;not null"`
+	InputHash   string       `gorm:"type:text;not null"`
+	Policy      agent.Policy `gorm:"type:text;not null;check:durable_step_policy_check,policy IN ('ReadOnly','Idempotent','Unsafe')"`
+	Status      string       `gorm:"type:text;not null;check:durable_step_status_check,status IN ('Started','Completed')"`
+	Result      string       `gorm:"type:text;not null;default:''"`
+	ExternalRef string       `gorm:"type:text;not null;default:''"`
+	Run         *Run         `gorm:"foreignKey:RunID;references:ID;constraint:durable_step_run_id_fkey,OnUpdate:NO ACTION,OnDelete:NO ACTION"`
 }
 
 func (Step) TableName() string { return "durable_step" }
@@ -101,3 +120,18 @@ type Event struct {
 }
 
 func (Event) TableName() string { return "durable_event" }
+
+// Usage records one model call's token and cost usage exactly once per (run, turn,
+// call). The primary key is the idempotency anchor: a checkpoint replay that
+// re-records the same call is a no-op. Zero tokens means known zero usage.
+type Usage struct {
+	RunID     string    `gorm:"type:text;primaryKey;not null"`
+	Turn      int64     `gorm:"type:bigint;primaryKey;not null"`
+	Call      string    `gorm:"type:text;primaryKey;not null"`
+	Tokens    int64     `gorm:"type:bigint;not null;default:0"`
+	CostUSD   float64   `gorm:"type:double precision;not null;default:0"`
+	CreatedAt time.Time `gorm:"type:timestamptz;not null;default:clock_timestamp();autoCreateTime:false"`
+	Run       *Run      `gorm:"foreignKey:RunID;references:ID;constraint:durable_usage_run_id_fkey,OnUpdate:NO ACTION,OnDelete:NO ACTION"`
+}
+
+func (Usage) TableName() string { return "durable_usage" }

@@ -2,12 +2,13 @@ package memory
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/contextbuilder"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
@@ -17,25 +18,26 @@ import (
 func TestArchivedMemoryFreezesOnlyActivatedContent(t *testing.T) {
 	archive := &fakeArchiver{}
 	svc, store := testServiceWithArchive(t, archive)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+	ctx := archiveTestContext()
+	scope := archiveTestScope("owner")
 	entry, err := svc.Create(ctx, "owner", "actor", "create",
 		factDocument(scope, "editor", "editor preference", "use tabs"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent, err := store.CreateAgent(ctx, "owner", "memory", durable.AgentConfig{
-		Model: durable.ModelSpec{Name: "test", BaseURL: "http://model.test/v1"}, MaxTurns: 5,
-	})
-	if err != nil {
-		t.Fatal(err)
+	config := agent.AgentConfig{
+		Model: agent.ModelSpec{Name: "test", BaseURL: "http://model.test/v1"}, MaxTurns: 5,
 	}
-	if _, err := store.PublishAgent(ctx, "owner", agent.ID, agent.Revision); err != nil {
+	record := table.Agent{
+		ID: durable.NewID(), TenantID: scope.Tenant, OwnerID: scope.Owner,
+		Name: "memory", Draft: config, Revision: 1, PublishedRevision: 1, PublishedVersion: 1,
+	}
+	if err := store.DB().Create(&record).Error; err != nil {
 		t.Fatal(err)
 	}
 	submit := func() (*durable.Run, contextbuilder.Snapshot) {
 		t.Helper()
-		session, err := store.CreateSession(ctx, "owner", agent.ID, "")
+		session, err := store.CreateSession(ctx, "owner", record.ID, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -43,7 +45,7 @@ func TestArchivedMemoryFreezesOnlyActivatedContent(t *testing.T) {
 			Owner: "owner", RequestKey: durable.NewID(), RequestHash: durable.Hash([]byte(session.ID)),
 			TTL: time.Hour, MaxAttempts: 3, Kind: execution.SubmitChat,
 			SessionID: session.ID, Query: "editor", Memory: memory.SelectionRecall,
-		}, durable.PrepareChatSubmissionWith(svc))
+		}, durable.PrepareChatSubmission(config, record.ID, record.PublishedVersion, svc))
 		if err != nil {
 			t.Fatal(err)
 		}

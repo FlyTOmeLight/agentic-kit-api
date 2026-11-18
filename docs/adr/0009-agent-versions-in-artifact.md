@@ -16,6 +16,6 @@
 
 **编号。** 公开版本号仍由本地在 agent 行锁内分配。远端编号与序列号只用于追溯，不进入 HTTP 契约，避免本地提交失败导致公开版本号出现空洞。
 
-**身份。** 调用使用调用者已核验的身份（actor、租户、项目），不设租户或令牌的固定配置，也不允许服务替任意 owner 选择归属。artifact 内置的 Forge resolver 只允许用户选择自己的个人范围，本轮据此保持「每个用户只能访问自己的 Agent」。系统预置或共享 Agent 需要新的 AssetScope 与对应授权契约，另行设计。
+**身份。** Forge middleware 已核验用户身份及 tenant/project，并通过 `access.WithScope` 写入请求 context；HTTP 用户与 propagation 路由末端强制非空租户，本地对象按 tenant 与 owner 隔离。`Build` 向 artifact 客户端注入 API 自身的 `Tenant.ServiceAPIKey`；`RequestIdentity` 仅选择已核验的 user/tenant/project。适配器发送 service Bearer 和目标身份传播头，并将 `X-Resource-User-ID` 固定为同一用户，以保留个人范围。artifact 验证服务身份及传播白名单；入站 Authorization、Cookie、CSRF、Origin 均不转发。缺 tenant 或 actor 时拒绝远端调用，不设默认租户、不退化为共享范围。浏览器不持有服务凭据。系统预置或共享 Agent 需要新的 AssetScope 与对应授权契约，另行设计。
 
-**前提。** 本决定依赖 artifact-go 的集合幂等创建、可选资源归属与可信身份解析。artifact-go 尚无 tag，依赖固定到提交；身份 middleware 接入前不得上线发布路径。
+**前提。** 当前使用 Forge SDK `v0.13.0` 和支持 `BearerToken`、`PropagatedUserID` 的 artifact-go `v0.5.1`。artifact 部署须允许该 API 服务传播身份。初始化只面向空库或空 schema，旧库的数据迁移和旧索引升级由部署方另行处理。独立构建及 OrbStack 联调范围见 [验证记录](../verification.md#2026-11-17-agent-版本发布与-run-快照)。

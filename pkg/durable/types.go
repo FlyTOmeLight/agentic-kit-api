@@ -52,6 +52,8 @@ type ExecutionSpec = execution.ExecutionSpec
 
 type FilesystemBinding = execution.FilesystemBinding
 
+type RunAuthorization = execution.RunAuthorization
+
 type Boundary = execution.Boundary
 
 type BoundaryKind = execution.BoundaryKind
@@ -61,6 +63,20 @@ type ContextInfo = execution.ContextInfo
 type Source = execution.Source
 
 type InteractionKind = execution.InteractionKind
+
+type Goal = execution.Goal
+
+type GoalStatus = execution.GoalStatus
+
+type EvaluatorKind = execution.EvaluatorKind
+
+type EvaluatorSpec = execution.EvaluatorSpec
+
+type BudgetSpec = execution.BudgetSpec
+
+type Evaluation = execution.Evaluation
+
+type EvaluationStatus = execution.EvaluationStatus
 
 type StepIntent = execution.StepIntent
 
@@ -74,11 +90,13 @@ const (
 	BoundaryFail               = execution.BoundaryFail
 	BoundaryAwaitClarification = execution.BoundaryAwaitClarification
 	BoundaryAwaitReview        = execution.BoundaryAwaitReview
+	BoundaryAwaitExternal      = execution.BoundaryAwaitExternal
 	InteractionClarification   = execution.InteractionClarification
 	InteractionReview          = execution.InteractionReview
 	StepExecute                = execution.StepExecute
 	StepReplay                 = execution.StepReplay
 	StepUncertain              = execution.StepUncertain
+	StepExternalWait           = execution.StepExternalWait
 )
 
 const (
@@ -86,12 +104,25 @@ const (
 	Running              = execution.Running
 	WaitingClarification = execution.WaitingClarification
 	NeedsReview          = execution.NeedsReview
+	WaitingExternal      = execution.WaitingExternal
+	Blocked              = execution.Blocked
 	Completed            = execution.Completed
 	Failed               = execution.Failed
 	Canceled             = execution.Canceled
 	ReadOnly             = agent.ReadOnly
 	Idempotent           = agent.Idempotent
 	Unsafe               = agent.Unsafe
+	GoalActive           = execution.GoalActive
+	GoalPaused           = execution.GoalPaused
+	GoalBlocked          = execution.GoalBlocked
+	GoalComplete         = execution.GoalComplete
+	GoalFailed           = execution.GoalFailed
+	EvaluatorNone        = execution.EvaluatorNone
+	EvaluatorCommand     = execution.EvaluatorCommand
+	EvaluatorHTTP        = execution.EvaluatorHTTP
+	EvaluationPassed     = execution.EvaluationPassed
+	EvaluationFailed     = execution.EvaluationFailed
+	EvaluationError      = execution.EvaluationError
 )
 
 var (

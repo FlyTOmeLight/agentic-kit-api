@@ -2,6 +2,37 @@
 
 本文件按日期保留历史检查结果，条目中的路径、版本和限制描述当时的实现。当前功能、布局和契约分别以 README、docs/layout.md 和 docs/api.md 为准；可复用经验见 docs/lessons/。
 
+## 2026-11-16 Forge 鉴权与租户隔离
+
+用户请求通过 Forge 校验身份与租户，再把可信 tenant/project 放入请求 context；Agent、Session、Run、Goal 和 Memory 的访问及身份继承接入租户隔离。内部执行接口只允许白名单服务透传用户身份，沙箱接口使用独立服务鉴权；callback 默认关闭，启用时要求服务白名单、来源白名单和签名。Agent 发布继续把正文保存到 artifact-go，Run 保留冻结的配置快照。
+
+在独立工作副本中使用 `GOWORK=off`、`GOCACHE=/private/tmp/agentic-kit-api-build`，连接本地隔离 PostgreSQL（55432）和 Redis（56379）执行：
+
+- `go test -mod=readonly -race -json -count=1 -timeout=120s ./...`：659 项通过、18 项跳过、0 项失败，计数包含子测试。跳过项需要 Kubernetes、专用沙箱或 Worker 验收环境。
+- `go vet -mod=readonly ./...`、`GOFLAGS=-mod=readonly make build`：通过。
+- 本轮修改及新增 Go 文件的 `gofmt -l`：无输出。
+
+测试覆盖 Forge 用户身份校验、伪造 Header、服务白名单、可信身份透传、跨租户读写拒绝及父子资源身份继承。框架生命周期用例使用真实 HTTP、PostgreSQL 和 Redis，Forge/artifact 为受控 HTTP 假服务；真实 Forge/artifact 联调尚未执行。本轮未修改 agentic-kit 或 agentic-kit-worker，未验证 Worker 与新鉴权接口的真实联调。
+
+本轮只验证空库或空 schema 初始化和目标结构重复初始化；不迁移或回填旧的无 tenant 数据，不清理历史 Memory 唯一索引。旧库升级和真实发布链路仍需单独验收。
+
+## 2026-11-13 Agent 资产接入 artifact-go
+
+API 的草稿事务迁到 `internal/app/agent`，已发布版本正文由 artifact-go 保存，本地 `agent_version` 保留编号和远端引用；新任务提交在事务外预取配置，再冻结 Run 快照。修复了草稿 JSON 更新的 GORM 编码错误，并把应用提交的未发布版本和跨 owner 断言移到 HTTP/SDK 层。
+
+本轮发现本地 `go.work` 掩盖了 `go.mod` 缺少 artifact-go 的问题，已显式固定到 v0.5.0 并运行 `go mod tidy`。使用 `GOWORK=off`、`GOCACHE=/private/tmp/agentic-kit-api-build`、本地隔离 PostgreSQL/Redis 执行：
+
+- `go test -mod=readonly -race -json -count=1 -timeout=120s ./...`：394 项通过、18 项跳过、0 项失败，计数包含子测试；跳过项需要专用沙箱、Kubernetes 或 Worker 验收环境。
+- `go vet -mod=readonly ./...`、`go build -mod=readonly ./...`：通过。
+- `make doc`：完成 OpenAPI 重新生成；随后 `TestOpenAPIMatchesRoutes`、`TestSwaggerServesGeneratedContract` 两项契约测试通过。
+- `go list -mod=readonly -deps`：`pkg/durable` 无 artifact SDK 依赖，`pkg/execution` 无 GORM、HTTP 或 artifact SDK 依赖。
+
+Worker 测试夹具已适配 `Accept + PrepareChatSubmission`，进程测试使用本地 artifact HTTP 假服务与测试身份常量。在 Worker 当前 workspace 下运行 `go test -mod=readonly -race -count=1 -timeout=180s ./internal/engine ./internal/adapters/sandbox`，150 项通过，包含 `TestProcessKillResumesWithoutRepeatingTool` 与 `TestProcessShutdownCancelsInFlightHTTPTool`。本轮只修改 Worker 测试，生产执行路径继续读取冻结的 Run 配置；`agentic-kit` 未改动。Worker 普通及 `sandboxe2e` 标签编译检查、两包 vet 通过；未运行依赖专用集群的 sandboxe2e smoke。
+
+artifact 请求使用本地 HTTP 假服务；以上结果不包含真实 artifact/Forge 联调，也不包含已有数据库的历史版本迁移。身份 middleware 尚未接入；Controller 到 artifact 的会话 Cookie、CSRF 与 Origin 透传尚未实现。
+
+## 首期验证基线
+
 最早验证日期：2026-10-02。使用本机 Go 1.27.1、隔离的 PostgreSQL 17.6 与 Redis 7.2.10 容器。原 agentic-kit 和现有业务数据库未修改。
 
 两个仓库均完成 gofmt、go test -race -count=1 -timeout=60s ./...、go vet ./... 和命令入口构建。测试显式设置 TEST_DATABASE_URL；API 测试还设置 TEST_REDIS_URL，没有把缺少数据库时的跳过视为通过。

@@ -157,6 +157,11 @@ definitions:
         type: integer
       filesystem:
         $ref: '#/definitions/execution.FilesystemBinding'
+      goalID:
+        description: |-
+          GoalID optionally binds the run to a durable goal. The goal must exist
+          and be Active; the run is bound atomically at accept time.
+        type: string
       query:
         type: string
       scope:
@@ -166,6 +171,18 @@ definitions:
     properties:
       allowed:
         type: boolean
+      checkedAt:
+        type: string
+      epoch:
+        type: integer
+      expiresAt:
+        type: string
+      runId:
+        type: string
+      scope:
+        $ref: '#/definitions/workspace.Scope'
+      workerId:
+        type: string
     type: object
   agenticv1.MemoryDocument:
     properties:
@@ -292,6 +309,8 @@ definitions:
         type: integer
       configVersion:
         type: string
+      costUSD:
+        type: number
       deadline:
         type: string
       epoch:
@@ -300,17 +319,27 @@ definitions:
         type: string
       eventSeq:
         type: integer
+      goalID:
+        type: string
       id:
         type: string
       output:
         type: string
       ownerID:
         type: string
+      parentRunID:
+        type: string
+      parentStepID:
+        type: string
       scope:
         $ref: '#/definitions/workspace.Scope'
       sessionID:
         type: string
       status:
+        type: string
+      tokensUsed:
+        type: integer
+      waitingExternalRef:
         type: string
       waitingKind:
         type: string
@@ -429,6 +458,39 @@ definitions:
         description: StatusCode 状态码，推荐6位数字
         type: integer
     type: object
+  execution.BudgetSpec:
+    properties:
+      maxCostUSD:
+        type: number
+      maxTokens:
+        type: integer
+      maxWallClockSeconds:
+        type: integer
+    type: object
+  execution.Evaluation:
+    properties:
+      createdAt:
+        type: string
+      goalID:
+        type: string
+      id:
+        type: string
+      output:
+        type: string
+      ownerID:
+        type: string
+      runID:
+        type: string
+      status:
+        type: string
+    type: object
+  execution.EvaluatorSpec:
+    properties:
+      config:
+        type: string
+      kind:
+        type: string
+    type: object
   execution.Event:
     properties:
       createdAt:
@@ -444,13 +506,54 @@ definitions:
     type: object
   execution.FilesystemBinding:
     properties:
+      profileId:
+        description: |-
+          ProfileID selects the sandbox-center isolation profile when Provider is
+          "Sandbox". Empty means the default coding profile.
+        type: string
       provider:
+        description: |-
+          Provider selects the execution backend: "AIO" for the legacy direct
+          adapter, "Sandbox" for the sandbox-center control plane.
+        type: string
+      restoreFromSandboxId:
         type: string
       tokenEnv:
         type: string
       url:
         type: string
       workspace:
+        type: string
+    type: object
+  execution.Goal:
+    properties:
+      activeRunID:
+        type: string
+      budget:
+        $ref: '#/definitions/execution.BudgetSpec'
+      costUSD:
+        type: number
+      createdAt:
+        type: string
+      evaluator:
+        $ref: '#/definitions/execution.EvaluatorSpec'
+      id:
+        type: string
+      lastStallMark:
+        type: string
+      objective:
+        type: string
+      ownerID:
+        type: string
+      sessionID:
+        type: string
+      stallCount:
+        type: integer
+      status:
+        type: string
+      tokensUsed:
+        type: integer
+      updatedAt:
         type: string
     type: object
   execution.Run:
@@ -461,6 +564,8 @@ definitions:
         type: integer
       configVersion:
         type: string
+      costUSD:
+        type: number
       deadline:
         type: string
       epoch:
@@ -469,17 +574,27 @@ definitions:
         type: string
       eventSeq:
         type: integer
+      goalID:
+        type: string
       id:
         type: string
       output:
         type: string
       ownerID:
         type: string
+      parentRunID:
+        type: string
+      parentStepID:
+        type: string
       scope:
         $ref: '#/definitions/workspace.Scope'
       sessionID:
         type: string
       status:
+        type: string
+      tokensUsed:
+        type: integer
+      waitingExternalRef:
         type: string
       waitingKind:
         type: string
@@ -685,6 +800,235 @@ definitions:
       versionRef:
         $ref: '#/definitions/memory.VersionRef'
     type: object
+  run.createGoalRequest:
+    properties:
+      budget:
+        $ref: '#/definitions/execution.BudgetSpec'
+      evaluator:
+        $ref: '#/definitions/execution.EvaluatorSpec'
+      objective:
+        type: string
+      requestHash:
+        maxLength: 128
+        type: string
+      requestKey:
+        maxLength: 128
+        type: string
+      sessionID:
+        maxLength: 128
+        type: string
+    required:
+    - objective
+    - requestHash
+    - requestKey
+    - sessionID
+    type: object
+  run.executionCallbackRequest:
+    properties:
+      externalRef:
+        maxLength: 128
+        type: string
+      result:
+        type: string
+      stepID:
+        maxLength: 128
+        type: string
+    required:
+    - externalRef
+    - result
+    - stepID
+    type: object
+  run.recordEvaluationRequest:
+    properties:
+      output:
+        maxLength: 65536
+        type: string
+      runID:
+        maxLength: 128
+        type: string
+      status:
+        enum:
+        - Passed
+        - Failed
+        - Error
+        type: string
+    required:
+    - runID
+    - status
+    type: object
+  run.steerGoalRequest:
+    properties:
+      content:
+        maxLength: 4096
+        type: string
+    required:
+    - content
+    type: object
+  sandboxcenter.Lease:
+    properties:
+      closedAt:
+        type: string
+      createdAt:
+        type: string
+      hardExpiresAt:
+        type: string
+      holderRunEpoch:
+        type: integer
+      holderRunId:
+        type: string
+      id:
+        type: string
+      renewedAt:
+        type: string
+      requestKey:
+        type: string
+      revision:
+        type: integer
+      sandboxGeneration:
+        type: integer
+      sandboxId:
+        type: string
+      status:
+        type: string
+      updatedAt:
+        type: string
+      version:
+        type: integer
+      workerId:
+        type: string
+    type: object
+  sandboxcenter.Operation:
+    properties:
+      completedAt:
+        type: string
+      createdAt:
+        type: string
+      dispatchedAt:
+        type: string
+      error:
+        type: string
+      executionId:
+        type: string
+      exitCode:
+        type: integer
+      id:
+        type: string
+      kind:
+        type: string
+      leaseId:
+        type: string
+      output:
+        type: string
+      receiptStoredAt:
+        type: string
+      requestKey:
+        type: string
+      sandboxId:
+        type: string
+      status:
+        type: string
+      updatedAt:
+        type: string
+      version:
+        type: integer
+    type: object
+  sandboxcenter.Sandbox:
+    properties:
+      createdAt:
+        type: string
+      destroyedAt:
+        type: string
+      generation:
+        type: integer
+      id:
+        type: string
+      leaseId:
+        type: string
+      ownerId:
+        type: string
+      podUid:
+        type: string
+      profileId:
+        type: string
+      profileRevision:
+        type: integer
+      requestKey:
+        type: string
+      requiredSave:
+        type: boolean
+      restoreFromSandboxId:
+        type: string
+      resumeCheckpoint:
+        type: string
+      savedCheckpoint:
+        type: string
+      status:
+        type: string
+      stoppedAt:
+        type: string
+      tenantId:
+        type: string
+      updatedAt:
+        type: string
+      version:
+        type: integer
+      workspaceUid:
+        type: string
+    type: object
+  sandboxcenter.acquireRequest:
+    properties:
+      ownerId:
+        type: string
+      profileId:
+        type: string
+      requestKey:
+        type: string
+      requiredSave:
+        type: boolean
+      restoreFromSandboxId:
+        type: string
+      runEpoch:
+        type: integer
+      runId:
+        type: string
+      tenantId:
+        type: string
+      ttlSeconds:
+        type: integer
+      workerId:
+        type: string
+    type: object
+  sandboxcenter.execRequest:
+    properties:
+      evaluationEpoch:
+        type: integer
+      evaluationWorkerId:
+        type: string
+      id:
+        type: string
+      requestKey:
+        type: string
+      script:
+        type: string
+    type: object
+  sandboxcenter.renewRequest:
+    properties:
+      id:
+        type: string
+      requestKey:
+        type: string
+      revision:
+        type: integer
+      ttlSeconds:
+        type: integer
+    type: object
+  sandboxcenter.sandboxView:
+    properties:
+      lease:
+        $ref: '#/definitions/sandboxcenter.Lease'
+      sandbox:
+        $ref: '#/definitions/sandboxcenter.Sandbox'
+    type: object
   workspace.Scope:
     properties:
       actorID:
@@ -765,6 +1109,60 @@ paths:
       summary: 提交执行任务
       tags:
       - Run
+  /internal/v1/executions/{id}/callback:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: run id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: JSON 请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/run.executionCallbackRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: 成功，无响应体
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "403":
+          description: 来源不允许
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 状态或幂等冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "413":
+          description: 请求体超过限制
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 外部系统回调
+      tags:
+      - Run
   /internal/v1/executions/{id}/lease:
     get:
       parameters:
@@ -779,6 +1177,10 @@ paths:
         name: epoch
         required: true
         type: integer
+      - description: 领取 worker ID
+        in: query
+        name: workerId
+        type: string
       produces:
       - application/json
       responses:
@@ -809,6 +1211,334 @@ paths:
       security:
       - BearerAuth: []
       summary: 校验任务执行权
+      tags:
+      - Run
+  /internal/v1/goals:
+    get:
+      parameters:
+      - description: 状态过滤
+        in: query
+        name: status
+        type: string
+      - description: 上限
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功
+          schema:
+            items:
+              $ref: '#/definitions/execution.Goal'
+            type: array
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 列出 Goal
+      tags:
+      - Run
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: JSON 请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/run.createGoalRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 幂等重放
+          schema:
+            $ref: '#/definitions/execution.Goal'
+        "201":
+          description: 创建成功
+          schema:
+            $ref: '#/definitions/execution.Goal'
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 幂等标识冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 创建或重放 Goal
+      tags:
+      - Run
+  /internal/v1/goals/{id}:
+    get:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功
+          schema:
+            $ref: '#/definitions/execution.Goal'
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 查询 Goal
+      tags:
+      - Run
+  /internal/v1/goals/{id}/evaluations:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: goal id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: JSON 请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/run.recordEvaluationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功或幂等重放
+          schema:
+            $ref: '#/definitions/execution.Evaluation'
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 同一 Run 的验收结果冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 记录验收结果
+      tags:
+      - Run
+  /internal/v1/goals/{id}/evaluations/{runID}:
+    get:
+      parameters:
+      - description: goal id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: run id
+        in: path
+        name: runID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功
+          schema:
+            $ref: '#/definitions/execution.Evaluation'
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 查询验收结果
+      tags:
+      - Run
+  /internal/v1/goals/{id}/pause:
+    post:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: 成功，无响应体
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 状态冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 暂停 Goal
+      tags:
+      - Run
+  /internal/v1/goals/{id}/resume:
+    post:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: 成功，无响应体
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 状态冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 恢复 Goal
+      tags:
+      - Run
+  /internal/v1/goals/{id}/steer:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: goal id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: JSON 请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/run.steerGoalRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: 成功，无响应体
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: Goal 无活跃 Run 或状态冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 注入 Steering
       tags:
       - Run
   /internal/v1/healthz:
@@ -1654,6 +2384,168 @@ paths:
       summary: 查询任务执行轨迹
       tags:
       - Run
+  /v1/sandboxes:
+    post:
+      consumes:
+      - application/json
+      description: 按 (ownerId, requestKey) 幂等；首次申请会调度 Pod 并激活租约。
+      parameters:
+      - description: 申请参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/sandboxcenter.acquireRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sandboxcenter.sandboxView'
+        "400":
+          description: 参数无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 状态或幂等冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+      summary: 申请沙箱
+      tags:
+      - Sandbox
+  /v1/sandboxes/{id}:
+    delete:
+      parameters:
+      - description: 沙箱 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sandboxcenter.Sandbox'
+      summary: 释放沙箱
+      tags:
+      - Sandbox
+    get:
+      parameters:
+      - description: 沙箱 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sandboxcenter.sandboxView'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+      summary: 查询沙箱
+      tags:
+      - Sandbox
+  /v1/sandboxes/{id}/operations:
+    post:
+      consumes:
+      - application/json
+      description: 先持久化 intent 与 dispatch 回执再派发；派发结果不可知时保留 Unknown。
+      parameters:
+      - description: 沙箱 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 执行参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/sandboxcenter.execRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sandboxcenter.Operation'
+        "409":
+          description: 沙箱未激活
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "502":
+          description: 派发结果未知
+          schema:
+            $ref: '#/definitions/errors.Error'
+      summary: 执行命令
+      tags:
+      - Sandbox
+  /v1/sandboxes/{id}/operations/{opID}:
+    get:
+      parameters:
+      - description: 沙箱 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 操作 ID
+        in: path
+        name: opID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sandboxcenter.Operation'
+        "404":
+          description: 资源不存在
+          schema:
+            $ref: '#/definitions/errors.Error'
+      summary: 查询操作回执
+      tags:
+      - Sandbox
+  /v1/sandboxes/{id}/renew:
+    post:
+      consumes:
+      - application/json
+      description: revision 单调递增；相同 revision 与 requestKey 重放返回原接受事实。
+      parameters:
+      - description: 沙箱 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 续期参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/sandboxcenter.renewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sandboxcenter.Lease'
+        "409":
+          description: 租约已关闭或过期
+          schema:
+            $ref: '#/definitions/errors.Error'
+      summary: 续租
+      tags:
+      - Sandbox
   /v1/sessions:
     get:
       parameters:

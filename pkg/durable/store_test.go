@@ -56,41 +56,15 @@ func testStore(t *testing.T) *Store {
 	return s
 }
 
-func testConversation(t *testing.T, s *Store, spec Spec) *Session {
+func testConversation(t *testing.T, s *Store, spec Spec) (*Session, AgentConfig) {
 	t.Helper()
-	cfg := AgentConfig{
-		SystemPrompt: spec.SystemPrompt,
-		Model:        spec.Model,
-		Tools:        spec.Tools,
-		MaxTurns:     spec.MaxTurns,
-	}
-	if cfg.MaxTurns == 0 {
-		cfg.MaxTurns = 5
-	}
-	if cfg.Model.Name == "" {
-		cfg.Model.Name = "test"
-	}
-	if cfg.Model.BaseURL == "" {
-		cfg.Model.BaseURL = "http://localhost:11434/v1"
-	}
-	a, err := s.CreateAgent(context.Background(), "owner", "test", cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.PublishAgent(context.Background(), "owner", a.ID, a.Revision); err != nil {
-		t.Fatal(err)
-	}
-	session, err := s.CreateSession(context.Background(), "owner", a.ID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return session
+	return chatSessionFixture(t, s, spec)
 }
 
 func createRun(t *testing.T, s *Store) *Run {
 	t.Helper()
-	session := testConversation(t, s, Spec{MaxTurns: 5})
-	r, _, err := s.Submit(context.Background(), "owner", session.ID, NewID(), "question", time.Hour, 3)
+	session, cfg := testConversation(t, s, Spec{MaxTurns: 5})
+	r, _, err := submitFixture(t, s, "owner", session.ID, NewID(), "question", time.Hour, 3, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,17 +148,30 @@ func TestIdempotencyOwnershipAndCancellation(t *testing.T) {
 	ctx := context.Background()
 	spec := Spec{Query: "hello", MaxTurns: 2}
 	key := NewID()
-	session := testConversation(t, s, spec)
-	r, created, err := s.Submit(ctx, "owner", session.ID, key, spec.Query, time.Hour, 3)
+	session, cfg := testConversation(t, s, spec)
+	r, created, err := submitFixture(t, s, "owner", session.ID, key, spec.Query, time.Hour, 3, cfg)
 	if err != nil || !created {
 		t.Fatal(err)
 	}
-	repeat, created, err := s.Submit(ctx, "owner", session.ID, key, spec.Query, time.Hour, 3)
+	repeat, created, err := submitFixture(t, s, "owner", session.ID, key, spec.Query, time.Hour, 3, cfg)
 	if err != nil || created || repeat.ID != r.ID {
 		t.Fatal("submission not idempotent", err)
 	}
 	spec.Query = "changed"
-	if _, _, err = s.Submit(ctx, "owner", session.ID, key, spec.Query, time.Hour, 3); !errors.Is(err, ErrConflict) {
+	if _, _, err = submitFixture(
+		t,
+		s,
+		"owner",
+		session.ID,
+		key,
+		spec.Query,
+		time.Hour,
+		3,
+		cfg,
+	); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatal(err)
 	}
 	if _, err = s.Get(ctx, "other", r.ID); !errors.Is(err, ErrNotFound) {
@@ -304,19 +291,13 @@ func TestDeadlineAndAttemptLimit(t *testing.T) {
 func TestSessionHistoryAndSingleActiveRun(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	session := testConversation(t, s, Spec{})
-	first, _, err := s.Submit(ctx, "owner", session.ID, "first", "first question", time.Hour, 3)
+	session, cfg := testConversation(t, s, Spec{})
+	first, _, err := submitFixture(t, s, "owner", session.ID, "first", "first question", time.Hour, 3, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = s.Submit(
-		ctx,
-		"owner",
-		session.ID,
-		"second",
-		"second question",
-		time.Hour,
-		3,
+	if _, _, err = submitFixture(
+		t, s, "owner", session.ID, "second", "second question", time.Hour, 3, cfg,
 	); !errors.Is(
 		err,
 		ErrConflict,
@@ -334,7 +315,7 @@ func TestSessionHistoryAndSingleActiveRun(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := s.Submit(ctx, "owner", session.ID, "second", "second question", time.Hour, 3)
+	second, _, err := submitFixture(t, s, "owner", session.ID, "second", "second question", time.Hour, 3, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,9 +350,9 @@ func TestJSONRoundTripAndRepeatedSchemaInit(t *testing.T) {
 			},
 		},
 	}
-	session := testConversation(t, s, spec)
+	session, cfg := testConversation(t, s, spec)
 	spec.AgentID = session.AgentID
-	run, _, err := s.Submit(ctx, "owner", session.ID, "request", spec.Query, time.Hour, 3)
+	run, _, err := submitFixture(t, s, "owner", session.ID, "request", spec.Query, time.Hour, 3, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

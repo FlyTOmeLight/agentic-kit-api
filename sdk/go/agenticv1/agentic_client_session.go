@@ -14,7 +14,7 @@ type sessionClient struct{ transport *transport }
 var _ SessionAPI = (*sessionClient)(nil)
 
 func (c *sessionClient) Create(ctx context.Context, req *CreateSessionRequest) (*Session, error) {
-	return jsonResult[Session](ctx, c.transport, http.MethodPost, "/v1/sessions", req, http.StatusCreated)
+	return jsonResult[Session](ctx, c.transport, http.MethodPost, "/v1/sessions", req, nil, http.StatusCreated)
 }
 
 func (c *sessionClient) Get(ctx context.Context, req *GetSessionRequest) (*Session, error) {
@@ -23,6 +23,7 @@ func (c *sessionClient) Get(ctx context.Context, req *GetSessionRequest) (*Sessi
 		c.transport,
 		http.MethodGet,
 		"/v1/sessions/"+url.PathEscape(req.ID),
+		nil,
 		nil,
 		http.StatusOK,
 	)
@@ -38,6 +39,7 @@ func (c *sessionClient) List(ctx context.Context, req *ListSessionsRequest) (*Pa
 		c.transport,
 		http.MethodGet,
 		withQuery("/v1/sessions", q),
+		nil,
 		nil,
 		http.StatusOK,
 	)
@@ -79,6 +81,7 @@ func (c *sessionClient) ListMessages(ctx context.Context, req *ListMessagesReque
 		http.MethodGet,
 		withQuery("/v1/sessions/"+url.PathEscape(req.SessionID)+"/messages", q),
 		nil,
+		nil,
 		http.StatusOK,
 	)
 }
@@ -89,6 +92,7 @@ func (c *sessionClient) ListRuns(ctx context.Context, req *ListSessionRunsReques
 		c.transport,
 		http.MethodGet,
 		withQuery("/v1/sessions/"+url.PathEscape(req.SessionID)+"/runs", req.PageOptions.query()),
+		nil,
 		nil,
 		http.StatusOK,
 	)

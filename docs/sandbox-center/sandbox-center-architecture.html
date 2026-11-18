@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sandbox Center · 整体设计蓝图</title>
+<meta name="description" content="企业级 Agent 沙箱管理中心整体设计：分层架构、生命周期、layerfs 工作区、恢复承诺与 worker 接管。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230d1520'/%3E%3Cpath d='M14 22h36M14 32h36M14 42h36' stroke='%23ffb547' stroke-width='5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Blueprint register tokens */
+  :root {
+    color-scheme: light dark;
+    --bg: #0d1520; --surface: #132031; --border: #22324a; --border-bright: #596b87;
+    --text: #e3ecf5; --text-dim: #92a6bb;
+    --accent: #ffb547; --accent-dim: rgba(255,181,71,.13);
+    --ok: #6fd3a0; --warn: #e8d36a; --risk: #ff7b6b; --info: #7cc0f0;
+    --node-top: color-mix(in srgb, var(--text) 7%, var(--surface));
+    --lift: rgb(0 0 0 / .45); --halo: 32%;
+    --font-body: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", sans-serif;
+    --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
+    --t-label: .75rem; --t-small: .875rem; --t-body: 1rem; --t-lead: 1.25rem;
+    --t-h2: 1.75rem; --t-h3: 1.25rem; --t-h1: clamp(2.2rem, 5.2vw, 3.9rem);
+    --s-1: .25rem; --s-2: .5rem; --s-3: .75rem; --s-4: 1rem; --s-5: 1.5rem;
+    --s-6: 2rem; --s-7: 3rem; --s-8: 4.5rem;
+    --r-1: 4px; --r-2: 10px;
+    --ease: cubic-bezier(.16,1,.3,1); --fast: 150ms; --med: 300ms; --slow: 500ms;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f2f6fa; --surface: #ffffff; --border: #d6e0ea; --border-bright: #818f9e;
+      --text: #0f1a26; --text-dim: #4d6074;
+      --accent: #a34700; --accent-dim: rgba(163,71,0,.12);
+      --ok: #1c7443; --warn: #776300; --risk: #b0341e; --info: #145f99;
+      --node-top: var(--surface); --lift: rgb(15 26 38 / .12); --halo: 22%;
+    }
+  }
+  html { font-size: 17px; scroll-behavior: smooth; }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background:
+      linear-gradient(var(--border) 1px, transparent 1px) 0 0 / 24px 24px,
+      linear-gradient(90deg, var(--border) 1px, transparent 1px) 0 0 / 24px 24px,
+      var(--bg);
+    background-blend-mode: normal;
+    color: var(--text);
+    font: 400 var(--t-body)/1.6 var(--font-body);
+    text-wrap: pretty; font-kerning: normal; font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    background: var(--bg); opacity: .86;
+  }
+  ::selection { background: var(--accent-dim); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .wrap { position: relative; max-width: 86rem; margin: 0 auto; padding: 0 var(--s-5) var(--s-8); }
+  main { display: grid; grid-template-columns: minmax(0,1fr); gap: var(--s-8); }
+  section, figure, header, aside, div { min-width: 0; }
+  h1, h2, h3, h4 { letter-spacing: -.02em; line-height: 1.15; text-wrap: balance; }
+  h1 { font-size: var(--t-h1); font-weight: 600; letter-spacing: -.035em; max-width: 24ch; }
+  h2 { font-size: var(--t-h2); font-weight: 600; margin-top: var(--s-3); }
+  h3 { font-size: var(--t-h3); font-weight: 600; }
+  h4 { font-size: var(--t-body); font-weight: 600; }
+  p { max-width: 68ch; }
+  code { font: .9em var(--font-mono); font-variant-ligatures: none; }
+  .eyebrow { display: flex; align-items: center; gap: var(--s-2); font: 600 var(--t-label) var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--accent); }
+  .eyebrow::before { content: ""; width: 1.5rem; height: 2px; background: currentColor; }
+  .lead { font-size: var(--t-lead); line-height: 1.5; color: var(--text-dim); max-width: 62ch; }
+  .lead b { color: var(--text); font-weight: 600; }
+  .meta { display: flex; flex-wrap: wrap; gap: var(--s-2); font: 500 var(--t-label) var(--font-mono); color: var(--text-dim); }
+  .meta span { border: 1px solid var(--border); border-radius: var(--r-1); padding: .2rem .5rem; }
+
+  /* header */
+  .masthead { padding: var(--s-7) 0 var(--s-6); display: grid; gap: var(--s-4); }
+  .kicker { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-4); flex-wrap: wrap; }
+  .version { font: 500 var(--t-label) var(--font-mono); color: var(--text-dim); }
+  .legend { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); margin-top: var(--s-2); font: 500 var(--t-label) var(--font-mono); color: var(--text-dim); }
+  .legend b { font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+  .chip { display: inline-flex; align-items: center; gap: .35rem; border: 1px solid currentColor; border-radius: var(--r-1); padding: .1rem .4rem; font: 600 var(--t-label) var(--font-mono); white-space: nowrap; }
+  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.risk { color: var(--risk); } .chip.info { color: var(--info); }
+
+  /* nav */
+  .toc { position: sticky; top: 0; z-index: 20; display: flex; gap: var(--s-1); overflow-x: auto; padding: var(--s-3) 0; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--border); scrollbar-width: thin; }
+  .toc a { flex: 0 0 auto; font: 500 var(--t-label) var(--font-mono); color: var(--text-dim); text-decoration: none; padding: .3rem .55rem; border: 1px solid transparent; border-radius: var(--r-1); }
+  .toc a:hover { color: var(--text); border-color: var(--border-bright); }
+  .toc a.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+
+  /* section opener */
+  .sec { scroll-margin-top: 4rem; }
+  .sec-head { display: grid; gap: var(--s-3) var(--s-5); border-top: 1px solid var(--border); padding-top: var(--s-5); margin-bottom: var(--s-5); align-items: baseline; }
+  @media (min-width: 56rem) { .sec-head { grid-template-columns: 2.2fr 9.8fr; } }
+  .sec-label { font: 600 var(--t-label) var(--font-mono); color: var(--accent); letter-spacing: .08em; text-transform: uppercase; }
+  .sec-deck { color: var(--text-dim); max-width: 70ch; margin-top: var(--s-2); }
+
+  /* figures */
+  figure { margin: 0; }
+  .frame {
+    border: 1px solid var(--border); border-radius: var(--r-2); padding: var(--s-5);
+    background:
+      radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 12%, transparent) 1px, transparent 1.5px) 0 0 / 20px 20px,
+      var(--surface);
+    overflow-x: auto;
+  }
+  figcaption { margin-top: var(--s-3); color: var(--text-dim); max-width: 78ch; }
+  .fig-n { font: 600 var(--t-label) var(--font-mono); color: var(--text); margin-right: var(--s-2); }
+  .ve-svg { width: 100%; min-width: 720px; height: auto; display: block; font-family: var(--font-body); }
+  .svg-note { font: 500 14px var(--font-mono); fill: var(--text-dim); }
+  .svg-label { font: 600 16px var(--font-body); fill: var(--text); }
+  .svg-sub { font: 500 13px var(--font-mono); fill: var(--text-dim); }
+
+  /* architecture board */
+  .board { display: grid; gap: var(--s-4); grid-template-columns: minmax(0,1fr); }
+  @media (min-width: 64rem) { .board { grid-template-columns: 12rem minmax(0,1fr) 12rem; align-items: start; } }
+  .rail { border: 1px dashed var(--border-bright); border-radius: var(--r-2); padding: var(--s-3); background: color-mix(in srgb, var(--surface) 70%, transparent); }
+  .rail h3 { font: 600 var(--t-label) var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: var(--s-3); }
+  .rail .rail-sub { font: 500 var(--t-label) var(--font-mono); color: var(--text-dim); margin-top: calc(-1 * var(--s-2)); margin-bottom: var(--s-3); text-transform: none; letter-spacing: 0; }
+  .rail-item { padding: var(--s-2) 0; border-top: 1px solid var(--border); }
+  .rail-item b { display: block; font-size: var(--t-small); font-weight: 600; }
+  .rail-item span { display: block; font: 400 var(--t-label)/1.5 var(--font-mono); color: var(--text-dim); margin-top: 2px; }
+  .board-main { display: grid; gap: var(--s-4); }
+  .layer { border: 1px solid var(--border-bright); border-radius: var(--r-2); background: color-mix(in srgb, var(--surface) 78%, transparent); }
+  .layer-title { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border); }
+  .layer-title h3 { font-size: var(--t-body); }
+  .layer-title small { font: 500 var(--t-label) var(--font-mono); color: var(--text-dim); text-transform: none; letter-spacing: 0; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr)); gap: 1px; background: var(--border); border-radius: 0 0 var(--r-2) var(--r-2); overflow: hidden; }
+  .card { background: var(--surface); padding: var(--s-3) var(--s-4); display: grid; gap: .2rem; align-content: start; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); flex-wrap: wrap; }
+  .card-head b { font-size: var(--t-small); font-weight: 600; }
+  .card p { font-size: var(--t-small); color: var(--text-dim); line-height: 1.45; max-width: none; }
+  .card em { font: 500 var(--t-label)/1.45 var(--font-mono); font-style: normal; color: var(--text-dim); overflow-wrap: anywhere; }
+  .card.hot { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+  .card.hot .card-head b { color: var(--accent); }
+
+  /* prose blocks */
+  .two-col { display: grid; gap: var(--s-5); grid-template-columns: minmax(0,1fr); }
+  @media (min-width: 60rem) { .two-col { grid-template-columns: minmax(0,1.1fr) minmax(0,.9fr); } }
+  .callout { border: 1px solid var(--border-bright); border-radius: var(--r-2); padding: var(--s-4); background: var(--surface); }
+  .callout h4 { margin-bottom: var(--s-2); }
+  .callout p, .callout li { font-size: var(--t-small); color: var(--text-dim); }
+  .callout ul { padding-left: 1.1rem; display: grid; gap: var(--s-1); }
+  .callout.danger { border-color: var(--risk); }
+  .callout.danger h4 { color: var(--risk); }
+
+  /* mini cards for recovery levels */
+  .levels { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem,1fr)); gap: var(--s-4); }
+  .level { border: 1px solid var(--border-bright); border-radius: var(--r-2); padding: var(--s-4); background: var(--surface); display: grid; gap: var(--s-2); }
+  .level-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+  .level-head b { font-size: var(--t-small); }
+  .level p { font-size: var(--t-small); color: var(--text-dim); }
+  .level svg { width: 100%; height: auto; }
+
+  /* table */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r-2); }
+  table { border-collapse: collapse; width: 100%; min-width: 46rem; background: var(--surface); }
+  th, td { text-align: left; padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border); vertical-align: top; font-size: var(--t-small); }
+  th { font: 600 var(--t-label) var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); background: color-mix(in srgb, var(--surface) 60%, var(--bg)); }
+  tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* review points */
+  .review { display: grid; gap: var(--s-4); counter-reset: rev; }
+  .rev { display: grid; grid-template-columns: 2.2rem minmax(0,1fr); gap: var(--s-3); border-top: 1px solid var(--border); padding-top: var(--s-4); }
+  .rev::before { counter-increment: rev; content: counter(rev, decimal-leading-zero); font: 600 var(--t-label) var(--font-mono); color: var(--accent); padding-top: .25rem; }
+  .rev h4 { margin-bottom: var(--s-1); }
+  .rev p { font-size: var(--t-small); color: var(--text-dim); max-width: 74ch; }
+  .rev .ask { display: block; margin-top: var(--s-2); font-size: var(--t-small); color: var(--text); }
+  .rev .ask b { color: var(--accent); font-weight: 600; }
+
+  footer { border-top: 1px solid var(--border); padding-top: var(--s-4); margin-top: var(--s-6); font: 500 var(--t-label)/1.7 var(--font-mono); color: var(--text-dim); }
+  footer a { color: var(--info); }
+
+  @media (max-width: 40rem) {
+    .wrap { padding: 0 var(--s-4) var(--s-7); }
+    .frame { padding: var(--s-3); }
+  }
+  @media print {
+    body { background: #fff; color: #111; }
+    body::before, .toc { display: none; }
+    .frame, .layer, .card, .level, .callout, table { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <div class="kicker">
+      <div class="eyebrow">Sandbox Center / Architecture Blueprint</div>
+      <div class="version">2026-11-09 · design v1.9 · docs/sandbox-center</div>
+    </div>
+    <h1>一个任务一个受保护环境；文件可恢复，进程不可复活</h1>
+    <p class="lead">沙箱中心把环境分配、租约、执行、文件保存和回收收敛成一条可对账的链路。<b>当前完成设计契约与阶段 1a 控制边界实测，运行实现尚未开始。</b></p>
+    <div class="chips">
+      <span class="chip ok">● 已实测</span>
+      <span class="chip info">◆ 设计契约</span>
+      <span class="chip warn">▲ 待实现</span>
+      <span class="chip risk">■ 未验证</span>
+    </div>
+    <div class="legend">
+      <span><b>●</b> 在固定版本上跑过故障注入</span>
+      <span><b>◆</b> 已声明、可编译，无运行实现</span>
+      <span><b>▲</b> 方案确定，尚未编码</span>
+      <span><b>■</b> 依赖目标集群或引擎实测</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="页面导航">
+    <a href="#overview">01 全局架构</a>
+    <a href="#lifecycle">02 生命周期</a>
+    <a href="#layerfs">03 layerfs 工作区</a>
+    <a href="#recovery">04 恢复与保存保护</a>
+    <a href="#handoff">05 Worker 接管</a>
+    <a href="#status">06 当前状态</a>
+    <a href="#review">07 已定决策</a>
+  </nav>
+
+  <main>
+    <!-- 01 -->
+    <section class="sec" id="overview">
+      <div class="sec-head">
+        <div class="sec-label">01 / 全局架构</div>
+        <div>
+          <h2>控制面定策略，执行面只认已绑定的租约</h2>
+          <p class="sec-deck">横向四层：接入、控制面、执行面、工作区与数据。左侧是平台治理边界，右侧是外部系统。Agent 客户端不持有 Kubernetes 凭证，也不直接连接 Pod IP。</p>
+        </div>
+      </div>
+
+      <figure>
+        <div class="frame">
+          <div class="board">
+            <aside class="rail" aria-label="安全与治理">
+              <h3>安全与治理</h3>
+              <div class="rail-sub">Security &amp; governance</div>
+              <div class="rail-item"><b>身份与 Run 授权</b><span>RunID · WorkerID · epoch<br>不接受请求体自报身份</span></div>
+              <div class="rail-item"><b>Profile 固定策略</b><span>不可变 revision<br>调用方只能选版本</span></div>
+              <div class="rail-item"><b>租约与 fencing</b><span>单调 fencingToken<br>旧世代写入被拒</span></div>
+              <div class="rail-item"><b>必要保存保护</b><span>SaveBlocked 阻止删除<br>时间与配额不构成放弃</span></div>
+              <div class="rail-item"><b>审计与事件</b><span>操作账本 · 释放证据<br>显式放弃记录</span></div>
+            </aside>
+
+            <div class="board-main">
+              <div class="layer">
+                <div class="layer-title"><h3>接入层</h3><small>Callers</small></div>
+                <div class="cards">
+                  <div class="card"><div class="card-head"><b>Agent worker</b><span class="chip info">◆ 契约</span></div><p>申请环境、执行工具、提交结果、显式触发检查点。</p><em>holderRunId · holderRunEpoch</em></div>
+                  <div class="card"><div class="card-head"><b>CLI / Web / IDE</b><span class="chip info">◆ 契约</span></div><p>通过统一网关访问执行、文件和终端，不接触底层资源。</p><em>HTTP · SSE · 可选 WebSocket</em></div>
+                  <div class="card"><div class="card-head"><b>sandboxv1 SDK</b><span class="chip info">◆ 契约</span></div><p>12 个职责接口、50 个公开方法；业务代码不依赖厂商协议。</p><em>不引用 internal / K8s / SQL 类型</em></div>
+                </div>
+              </div>
+
+              <div class="layer">
+                <div class="layer-title"><h3>控制面</h3><small>Policy &amp; lifecycle</small></div>
+                <div class="cards">
+                  <div class="card"><div class="card-head"><b>Sandbox API</b><span class="chip info">◆ 契约</span></div><p>认证、幂等键、参数校验、错误语义与事件订阅。</p><em>requestKey · tenant/caller 作用域</em></div>
+                  <div class="card"><div class="card-head"><b>Profile 与授权</b><span class="chip info">◆ 契约</span></div><p>发布不可变组合；实际能力取 Profile、Adapter、Runtime、租户的交集。</p><em>Hardened 默认，不自动降级</em></div>
+                  <div class="card"><div class="card-head"><b>申请 / 租约 / 配额</b><span class="chip info">◆ 契约</span></div><p>原子认领、单写持有者、续租、Retain/Destroy 释放。</p><em>fencingToken 单调递增</em></div>
+                  <div class="card"><div class="card-head"><b>Reconciler</b><span class="chip info">◆ 契约</span></div><p>持续对齐期望与实际；内存队列只做唤醒，不作事实源。</p><em>CAS 写回 · 周期全量对账</em></div>
+                  <div class="card"><div class="card-head"><b>PostgreSQL 生命周期库</b><span class="chip info">◆ 契约</span></div><p>申请、实例、租约、执行、检查点、事件与操作账本。</p><em>18 表 · 517 列</em></div>
+                </div>
+              </div>
+
+              <div class="layer">
+                <div class="layer-title"><h3>执行面</h3><small>Runtime boundary</small></div>
+                <div class="cards">
+                  <div class="card"><div class="card-head"><b>Execution Gateway</b><span class="chip info">◆ 契约</span></div><p>长连接、输出补读、取消、终端与访问票据。</p><em>SSE 游标 · 断线不等于取消</em></div>
+                  <div class="card"><div class="card-head"><b>Kubernetes Provider</b><span class="chip info">◆ 契约</span></div><p>确定性命名的 Pod，restartPolicy: Never，按 UID 和代次删除。</p><em>Pod UID · generation · boot ID</em></div>
+                  <div class="card hot"><div class="card-head"><b>Guard</b><span class="chip ok">● 实测</span></div><p>真正的 root PID 1：准入、本地截止、整实例停止、回执、挂载事实校验。</p><em>UID/GID 65534 · CapEff=0</em></div>
+                  <div class="card"><div class="card-head"><b>Runtime Adapter</b><span class="chip info">◆ 契约</span></div><p>统一 Start / Inspect / Output / Cancel / 文件接口。</p><em>能力声明与版本锁定</em></div>
+                  <div class="card hot"><div class="card-head"><b>execd（补丁版）</b><span class="chip ok">● 实测</span></div><p>仅 root-only Unix socket，不监听 TCP；用户身份由 Guard 强制。</p><em>opensandbox/execd · UDS patch</em></div>
+                </div>
+              </div>
+
+              <div class="layer">
+                <div class="layer-title"><h3>工作区与数据</h3><small>Workspace &amp; evidence</small></div>
+                <div class="cards">
+                  <div class="card hot"><div class="card-head"><b>layerfs 只读基础层</b><span class="chip info">◆ 设计</span></div><p>仓库基准或已发布检查点，按内容 digest 寻址，节点内只读共享。</p><em>lower · digest · node cache</em></div>
+                  <div class="card hot"><div class="card-head"><b>layerfs 可写层</b><span class="chip info">◆ 设计</span></div><p>每实例独立的 emptyDir，随实例销毁；合并视图挂到授权根目录。</p><em>upper · merged /workspace</em></div>
+                  <div class="card"><div class="card-head"><b>检查点</b><span class="chip info">◆ 设计</span></div><p>只固化可写层增量，记录基础层 digest、覆盖范围和静止证据。</p><em>manifest · data object · publish</em></div>
+                  <div class="card"><div class="card-head"><b>PersistentVolume</b><span class="chip info">◆ 契约</span></div><p>持续开发直接挂授权卷，不经过叠加层；重挂前隔离旧写者。</p><em>subPath · 独占挂载</em></div>
+                  <div class="card"><div class="card-head"><b>受保护回执卷</b><span class="chip ok">● 实测</span></div><p>用户不可读写；保存派发事实、终态与输出完整性。</p><em>/state · root-only</em></div>
+                </div>
+              </div>
+            </div>
+
+            <aside class="rail" aria-label="外部系统">
+              <h3>外部系统</h3>
+              <div class="rail-sub">External services</div>
+              <div class="rail-item"><b>Kubernetes</b><span>RuntimeClass · CNI<br>CSI · 节点余量</span></div>
+              <div class="rail-item"><b>Git 服务</b><span>仓库引用 · 基准 commit<br>短期访问令牌</span></div>
+              <div class="rail-item"><b>对象存储与产物</b><span>检查点数据对象<br>日志归档 · 产物版本</span></div>
+              <div class="rail-item"><b>身份与凭证</b><span>主体 · 权限 · 委托<br>短期凭证 Grant</span></div>
+              <div class="rail-item"><b>可观测</b><span>指标 · Trace<br>审计日志</span></div>
+            </aside>
+          </div>
+        </div>
+        <figcaption><span class="fig-n">Fig. 1</span>全局分层。Guard 与 execd 是唯一已有容器级实测的组件；layerfs、Center 和业务接入仍是设计契约。</figcaption>
+      </figure>
+    </section>
+
+    <!-- 02 -->
+    <section class="sec" id="lifecycle">
+      <div class="sec-head">
+        <div class="sec-label">02 / 生命周期</div>
+        <div>
+          <h2>先写事实，再产生副作用</h2>
+          <p class="sec-deck">一次任务从幂等申请到物理删除，共五个可查询阶段。保存失败不是异常分支，而是阻止删除的正常状态。</p>
+        </div>
+      </div>
+
+      <figure>
+        <div class="frame">
+          <svg class="ve-svg" viewBox="0 0 1120 360" role="img" aria-label="申请、就绪、执行、检查点、释放五阶段流程图，包含 SaveBlocked 分支">
+            <defs>
+              <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-dim)"></path>
+              </marker>
+              <marker id="ah-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"></path>
+              </marker>
+              <linearGradient id="node" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="var(--node-top)"></stop>
+                <stop offset="1" stop-color="var(--surface)"></stop>
+              </linearGradient>
+            </defs>
+
+            <text class="svg-note" x="30" y="28">text = 已持久化的事实 · 箭头 = 下一步动作</text>
+
+            <!-- nodes -->
+            <g>
+              <rect x="30" y="60" width="180" height="86" rx="6" fill="url(#node)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="120" y="92" text-anchor="middle">Acquire</text>
+              <text class="svg-sub" x="120" y="115" text-anchor="middle">requestKey → 202</text>
+              <text class="svg-sub" x="120" y="133" text-anchor="middle">Preparing</text>
+            </g>
+            <g>
+              <rect x="250" y="60" width="180" height="86" rx="6" fill="url(#node)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="340" y="92" text-anchor="middle">Ready</text>
+              <text class="svg-sub" x="340" y="115" text-anchor="middle">工作区 + 能力探测</text>
+              <text class="svg-sub" x="340" y="133" text-anchor="middle">签发 lease</text>
+            </g>
+            <g>
+              <rect x="470" y="60" width="180" height="86" rx="6" fill="url(#node)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="560" y="92" text-anchor="middle">Execute</text>
+              <text class="svg-sub" x="560" y="115" text-anchor="middle">先存 executionID</text>
+              <text class="svg-sub" x="560" y="133" text-anchor="middle">再派发命令</text>
+            </g>
+            <g>
+              <rect x="690" y="60" width="180" height="86" rx="6" fill="url(#node)" stroke="var(--accent)" stroke-width="2"></rect>
+              <text class="svg-label" x="780" y="92" text-anchor="middle">Checkpoint</text>
+              <text class="svg-sub" x="780" y="115" text-anchor="middle">静止确认 → 固化</text>
+              <text class="svg-sub" x="780" y="133" text-anchor="middle">发布后才算保存</text>
+            </g>
+            <g>
+              <rect x="910" y="60" width="180" height="86" rx="6" fill="url(#node)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="1000" y="92" text-anchor="middle">Release / Delete</text>
+              <text class="svg-sub" x="1000" y="115" text-anchor="middle">停进程 · 校验保存</text>
+              <text class="svg-sub" x="1000" y="133" text-anchor="middle">再删物理资源</text>
+            </g>
+
+            <!-- arrows -->
+            <path d="M210 103 H246" stroke="var(--text-dim)" stroke-width="1.75" fill="none" marker-end="url(#ah)"></path>
+            <path d="M430 103 H466" stroke="var(--text-dim)" stroke-width="1.75" fill="none" marker-end="url(#ah)"></path>
+            <path d="M650 103 H686" stroke="var(--text-dim)" stroke-width="1.75" fill="none" marker-end="url(#ah)"></path>
+            <path d="M870 103 H906" stroke="var(--text-dim)" stroke-width="1.75" fill="none" marker-end="url(#ah)"></path>
+
+            <!-- save blocked branch -->
+            <path d="M1000 146 V236" stroke="var(--risk)" stroke-width="2" fill="none" marker-end="url(#ah)"></path>
+            <text class="svg-sub" x="1012" y="196" fill="var(--risk)">必要保存失败</text>
+            <g>
+              <rect x="810" y="240" width="270" height="82" rx="6" fill="color-mix(in srgb, var(--risk) 10%, var(--surface))" stroke="var(--risk)" stroke-width="1.75"></rect>
+              <text class="svg-label" x="945" y="270" text-anchor="middle">Draining / SaveBlocked</text>
+              <text class="svg-sub" x="945" y="292" text-anchor="middle">停止执行，保留文件与配额</text>
+              <text class="svg-sub" x="945" y="310" text-anchor="middle">重试成功，或显式放弃</text>
+            </g>
+            <path d="M810 281 C760 281 760 146 906 146" stroke="var(--risk)" stroke-width="1.75" fill="none" stroke-dasharray="6 5" marker-end="url(#ah)"></path>
+
+            <!-- annotations -->
+            <text class="svg-sub" x="30" y="196">同键重试返回原申请，不创建第二个环境</text>
+            <text class="svg-sub" x="30" y="220">Ready 之前不把命令当作初始化探测</text>
+            <text class="svg-sub" x="30" y="244">响应丢失先查原 executionID，保持 Unknown</text>
+            <text class="svg-sub" x="30" y="268">检查点由 agentic-kit 显式触发，沙箱不自行定时</text>
+            <text class="svg-sub" x="30" y="292">删除不早于保存条件满足或授权放弃</text>
+          </svg>
+        </div>
+        <figcaption><span class="fig-n">Fig. 2</span>生命周期主链路与唯一异常分支。SaveBlocked 期间资源继续计入实际占用。</figcaption>
+      </figure>
+
+      <div class="two-col" style="margin-top:var(--s-5)">
+        <div class="callout">
+          <h4>三个版本号不能混用</h4>
+          <ul>
+            <li><code>holderRunEpoch</code>：Agent 平台的一次 worker 执行权，由 Run 库维护。</li>
+            <li><code>fencingToken</code>：工作区写权世代，由沙箱中心维护。</li>
+            <li><code>admissionEpoch</code>：Runtime 本地准入批次，由 Guard 维护。</li>
+          </ul>
+        </div>
+        <div class="callout">
+          <h4>Ready 的判定</h4>
+          <p>Pod Running 和端口打开都不够。必须同时满足：实例身份与 boot ID 一致、Runtime 能力探测通过、工作区恢复到指定版本、只读资产就位、基础命令与文件自检通过。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 -->
+    <section class="sec" id="layerfs">
+      <div class="sec-head">
+        <div class="sec-label">03 / layerfs 工作区</div>
+        <div>
+          <h2>用分层替代整卷克隆，用增量替代全量备份</h2>
+          <p class="sec-deck">只作用于 EphemeralCopy（自动 Coding）。PersistentVolume 仍直接挂载，不用叠加层。</p>
+        </div>
+      </div>
+
+      <figure>
+        <div class="frame">
+          <svg class="ve-svg" viewBox="0 0 1120 420" role="img" aria-label="layerfs 的组装、检查点保存与恢复三个场景">
+            <defs>
+              <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-dim)"></path>
+              </marker>
+              <marker id="ah2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"></path>
+              </marker>
+              <linearGradient id="node2" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="var(--node-top)"></stop>
+                <stop offset="1" stop-color="var(--surface)"></stop>
+              </linearGradient>
+            </defs>
+
+            <!-- scene labels -->
+            <text class="svg-note" x="20" y="24">A / 组装</text>
+            <text class="svg-note" x="392" y="24">B / 检查点</text>
+            <text class="svg-note" x="764" y="24">C / 恢复</text>
+            <line x1="372" y1="36" x2="372" y2="400" stroke="var(--border)" stroke-width="1"></line>
+            <line x1="744" y1="36" x2="744" y2="400" stroke="var(--border)" stroke-width="1"></line>
+
+            <!-- A -->
+            <g>
+              <rect x="20" y="56" width="330" height="64" rx="6" fill="url(#node2)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="185" y="82" text-anchor="middle">lower · 只读基础层</text>
+              <text class="svg-sub" x="185" y="104" text-anchor="middle">仓库基准 / 已发布检查点 · digest</text>
+
+              <rect x="20" y="132" width="330" height="64" rx="6" fill="url(#node2)" stroke="var(--accent)" stroke-width="2"></rect>
+              <text class="svg-label" x="185" y="158" text-anchor="middle">upper · 可写层</text>
+              <text class="svg-sub" x="185" y="180" text-anchor="middle">节点本地目录 · 仅本实例 · 随实例丢弃</text>
+
+              <text class="svg-label" x="185" y="228" text-anchor="middle">merged</text>
+              <rect x="20" y="242" width="330" height="64" rx="6" fill="url(#node2)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="185" y="268" text-anchor="middle">/workspace/repo 等授权根</text>
+              <text class="svg-sub" x="185" y="290" text-anchor="middle">execd 与用户只看到合并视图</text>
+
+              <path d="M185 120 V128" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+              <path d="M185 196 V224" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+              <text class="svg-sub" x="200" y="214">节点侧组装</text>
+              <text class="svg-sub" x="20" y="334">Guard 校验并记录挂载事实；用户不能访问 lower</text>
+              <text class="svg-sub" x="20" y="356">也不能请求替换挂载源</text>
+              <text class="svg-sub" x="20" y="384">基础层可被同节点多个实例只读共享</text>
+            </g>
+
+            <!-- B -->
+            <g>
+              <rect x="392" y="56" width="330" height="64" rx="6" fill="url(#node2)" stroke="var(--accent)" stroke-width="2"></rect>
+              <text class="svg-label" x="557" y="82" text-anchor="middle">1 · 关闭写入入口</text>
+              <text class="svg-sub" x="557" y="104" text-anchor="middle">准入屏障 · 排空在途操作</text>
+
+              <rect x="392" y="132" width="330" height="64" rx="6" fill="url(#node2)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="557" y="158" text-anchor="middle">2 · 确认进程树停止</text>
+              <text class="svg-sub" x="557" y="180" text-anchor="middle">含 setsid 脱离进程 · 文件不再变化</text>
+
+              <rect x="392" y="208" width="330" height="80" rx="6" fill="url(#node2)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="557" y="236" text-anchor="middle">3 · 固化可写层增量</text>
+              <text class="svg-sub" x="557" y="258" text-anchor="middle">新增 / 修改 / whiteout / 权限</text>
+              <text class="svg-sub" x="557" y="276" text-anchor="middle">manifest 记录 base digest + coverage</text>
+
+              <rect x="392" y="304" width="330" height="56" rx="6" fill="url(#node2)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="557" y="328" text-anchor="middle">4 · 发布到对象存储</text>
+              <text class="svg-sub" x="557" y="348" text-anchor="middle">发布确认前不算保存成功</text>
+
+              <path d="M557 120 V128" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+              <path d="M557 196 V204" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+              <path d="M557 288 V300" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+              <text class="svg-sub" x="392" y="384">排空失败 → 明确失败，不降级为 crash-consistent</text>
+            </g>
+
+            <!-- C -->
+            <g>
+              <rect x="764" y="56" width="336" height="58" rx="6" fill="url(#node2)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="932" y="80" text-anchor="middle">已发布检查点</text>
+              <text class="svg-sub" x="932" y="100" text-anchor="middle">manifest + 增量数据对象</text>
+
+              <rect x="764" y="126" width="336" height="58" rx="6" fill="url(#node2)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="932" y="150" text-anchor="middle">物化新的 lower</text>
+              <text class="svg-sub" x="932" y="170" text-anchor="middle">在新节点重建基础层 · 校验 digest</text>
+
+              <rect x="764" y="196" width="336" height="58" rx="6" fill="url(#node2)" stroke="var(--accent)" stroke-width="2"></rect>
+              <text class="svg-label" x="932" y="220" text-anchor="middle">新的空 upper</text>
+              <text class="svg-sub" x="932" y="240" text-anchor="middle">不复用旧可写层 · 不复活旧进程</text>
+
+              <rect x="764" y="266" width="336" height="58" rx="6" fill="url(#node2)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+              <text class="svg-label" x="932" y="290" text-anchor="middle">新的合并视图</text>
+              <text class="svg-sub" x="932" y="310" text-anchor="middle">与基础层 + 增量重放结果一致</text>
+
+              <path d="M932 114 V122" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+              <path d="M932 184 V192" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+              <path d="M932 254 V262" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+              <text class="svg-sub" x="764" y="356">恢复只重建文件，不恢复命令结果与外部副作用</text>
+              <text class="svg-sub" x="764" y="384">基础层就位失败 → 停在 Preparing，不进入 Ready</text>
+            </g>
+          </svg>
+        </div>
+        <figcaption><span class="fig-n">Fig. 3</span>layerfs 的三个场景。检查点只固化可写层增量；恢复重放“基础层 + 增量”，不依赖原 Pod、原节点或原可写层。</figcaption>
+      </figure>
+
+      <div class="callout" style="margin-top:var(--s-5)">
+        <h4>为什么只给 EphemeralCopy 用</h4>
+        <p>持续开发承诺的是“用户直接看到的持久卷语义”。叠加层会引入 lower/upper 映射、whiteout 和挂载状态，让 <code>git status</code>、权限与工具链排障变复杂，也容易让用户误以为底层文件已被修改。自动 Coding 需要的是快速得到干净副本、任务结束即丢弃，正好匹配分层模型。</p>
+      </div>
+    </section>
+
+    <!-- 04 -->
+    <section class="sec" id="recovery">
+      <div class="sec-head">
+        <div class="sec-label">04 / 恢复与保存保护</div>
+        <div>
+          <h2>恢复只承诺文件，保存失败阻止删除</h2>
+          <p class="sec-deck">三种恢复等级描述 Pod 丢失后可恢复的文件范围。任何等级都不恢复进程、内存或外部副作用。</p>
+        </div>
+      </div>
+
+      <figure>
+        <div class="frame">
+          <div class="levels">
+            <div class="level">
+              <div class="level-head"><b>Ephemeral</b><span class="chip info">◆ 契约</span></div>
+              <p>Pod 存在期间可用。节点或 Pod 丢失后不承诺恢复文件。</p>
+              <svg viewBox="0 0 240 92" role="img" aria-label="Ephemeral：Pod 丢失后文件全部丢失">
+                <rect x="8" y="18" width="86" height="56" rx="5" fill="var(--surface)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+                <text x="51" y="42" text-anchor="middle" class="svg-sub" fill="var(--text)">Pod</text>
+                <text x="51" y="60" text-anchor="middle" class="svg-sub">文件</text>
+                <path d="M104 46 H140" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+                <rect x="148" y="18" width="84" height="56" rx="5" fill="var(--surface)" stroke="var(--risk)" stroke-width="1.5" stroke-dasharray="5 4"></rect>
+                <text x="190" y="42" text-anchor="middle" class="svg-sub" fill="var(--risk)">Pod 丢失</text>
+                <text x="190" y="60" text-anchor="middle" class="svg-sub" fill="var(--risk)">无恢复</text>
+              </svg>
+            </div>
+            <div class="level">
+              <div class="level-head"><b>Checkpointed</b><span class="chip info">◆ 契约</span></div>
+              <p>回到最近已成功发布且可验证的检查点。检查点之后的修改可能丢失。</p>
+              <svg viewBox="0 0 240 92" role="img" aria-label="Checkpointed：Pod 丢失后回到最近已发布检查点">
+                <rect x="8" y="18" width="80" height="56" rx="5" fill="var(--surface)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+                <text x="48" y="42" text-anchor="middle" class="svg-sub" fill="var(--text)">可写层</text>
+                <text x="48" y="60" text-anchor="middle" class="svg-sub">未固化</text>
+                <path d="M96 46 H132" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+                <rect x="140" y="18" width="92" height="56" rx="5" fill="var(--surface)" stroke="var(--ok)" stroke-width="1.75"></rect>
+                <text x="186" y="42" text-anchor="middle" class="svg-sub" fill="var(--ok)">最近检查点</text>
+                <text x="186" y="60" text-anchor="middle" class="svg-sub" fill="var(--ok)">可恢复</text>
+              </svg>
+            </div>
+            <div class="level">
+              <div class="level-head"><b>Persistent</b><span class="chip info">◆ 契约</span></div>
+              <p>按持久卷的实际存储保证恢复。重挂前必须隔离旧写者。</p>
+              <svg viewBox="0 0 240 92" role="img" aria-label="Persistent：Pod 丢失后从持久卷恢复">
+                <rect x="8" y="18" width="80" height="56" rx="5" fill="var(--surface)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+                <text x="48" y="42" text-anchor="middle" class="svg-sub" fill="var(--text)">Pod</text>
+                <text x="48" y="60" text-anchor="middle" class="svg-sub">重建</text>
+                <path d="M96 46 H132" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah2)"></path>
+                <rect x="140" y="18" width="92" height="56" rx="5" fill="var(--surface)" stroke="var(--info)" stroke-width="1.75"></rect>
+                <text x="186" y="42" text-anchor="middle" class="svg-sub" fill="var(--info)">授权 PVC</text>
+                <text x="186" y="60" text-anchor="middle" class="svg-sub" fill="var(--info)">单一写者</text>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <figcaption><span class="fig-n">Fig. 4</span>三种恢复承诺的差异在“Pod 丢失后还剩什么”。Checkpointed 的恢复点只来自已发布检查点。</figcaption>
+      </figure>
+
+      <div class="two-col" style="margin-top:var(--s-5)">
+        <div class="callout danger">
+          <h4>必要保存失败 = SaveBlocked</h4>
+          <ul>
+            <li>停止用户执行，保留文件、工作区占用和实际配额。</li>
+            <li>时间到期、空闲回收、配额压力、控制面重启都不解除保护。</li>
+            <li>释放 API 没有 force 参数；放弃使用独立授权与审计。</li>
+            <li>任务拥有者确认放弃，不等于保存成功，也不等于数据已删除。</li>
+          </ul>
+        </div>
+        <div class="callout">
+          <h4>谁有权做什么</h4>
+          <ul>
+            <li>Agent 平台：显式触发检查点、提交释放、在业务界面发起放弃确认。</li>
+            <li>执行 worker：只能在受限保存权限内重试冻结范围，不能放弃。</li>
+            <li>沙箱中心：验证静止、保存、发布和对账，不推断业务阶段。</li>
+            <li>管理员：只在既有跨用户授权范围内处理异常。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 05 -->
+    <section class="sec" id="handoff">
+      <div class="sec-head">
+        <div class="sec-label">05 / Worker 接管</div>
+        <div>
+          <h2>新 worker 先只读对账，再申请新租约</h2>
+          <p class="sec-deck">首版不移交活动租约。旧 epoch 的写权限不能被继承，旧命令也不能被重复启动。</p>
+        </div>
+      </div>
+
+      <figure>
+        <div class="frame">
+          <svg class="ve-svg" viewBox="0 0 1120 340" role="img" aria-label="Worker 接管时序：旧 epoch 心跳中断后本地截止，新 epoch 只读对账、清理保存、再申请新租约">
+            <defs>
+              <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-dim)"></path>
+              </marker>
+              <marker id="ah3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"></path>
+              </marker>
+              <linearGradient id="node3" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="var(--node-top)"></stop>
+                <stop offset="1" stop-color="var(--surface)"></stop>
+              </linearGradient>
+            </defs>
+
+            <text class="svg-note" x="20" y="24">时间 →</text>
+            <line x1="20" y1="44" x2="1100" y2="44" stroke="var(--border-bright)" stroke-width="1"></line>
+
+            <!-- epoch change marker -->
+            <line x1="380" y1="44" x2="380" y2="300" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 5"></line>
+            <text class="svg-sub" x="388" y="66" fill="var(--accent)">Run epoch 1 → 2</text>
+
+            <!-- old worker lane -->
+            <text class="svg-label" x="20" y="110">旧 worker · epoch 1</text>
+            <rect x="20" y="126" width="330" height="56" rx="6" fill="url(#node3)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+            <text class="svg-sub" x="185" y="150" text-anchor="middle" fill="var(--text)">持有 lease，正常执行</text>
+            <text class="svg-sub" x="185" y="168" text-anchor="middle">续租与写入都校验当前 Run 执行权</text>
+
+            <rect x="392" y="126" width="270" height="56" rx="6" fill="url(#node3)" stroke="var(--risk)" stroke-width="1.75"></rect>
+            <text class="svg-sub" x="527" y="150" text-anchor="middle" fill="var(--risk)">心跳中断 · 上游执行权失效</text>
+            <text class="svg-sub" x="527" y="168" text-anchor="middle">本地截止时间关闭准入</text>
+
+            <rect x="704" y="126" width="396" height="56" rx="6" fill="url(#node3)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+            <text class="svg-sub" x="902" y="150" text-anchor="middle" fill="var(--text)">进程停止，文件保留</text>
+            <text class="svg-sub" x="902" y="168" text-anchor="middle">旧 worker 不能续租、写入或重新派发</text>
+
+            <path d="M350 154 H388" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah3)"></path>
+            <path d="M662 154 H700" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah3)"></path>
+
+            <!-- new worker lane -->
+            <text class="svg-label" x="392" y="222" fill="var(--accent)">新 worker · epoch 2</text>
+            <rect x="392" y="238" width="196" height="56" rx="6" fill="url(#node3)" stroke="var(--accent)" stroke-width="2"></rect>
+            <text class="svg-sub" x="490" y="262" text-anchor="middle" fill="var(--text)">领取 Run，只读对账</text>
+            <text class="svg-sub" x="490" y="280" text-anchor="middle">原申请 / 租约 / execution</text>
+
+            <rect x="620" y="238" width="196" height="56" rx="6" fill="url(#node3)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+            <text class="svg-sub" x="718" y="262" text-anchor="middle" fill="var(--text)">清理 + 必要保存</text>
+            <text class="svg-sub" x="718" y="280" text-anchor="middle">旧租约只授予清理权限</text>
+
+            <rect x="848" y="238" width="252" height="56" rx="6" fill="url(#node3)" stroke="var(--border-bright)" stroke-width="1.5"></rect>
+            <text class="svg-sub" x="974" y="262" text-anchor="middle" fill="var(--text)">确认旧租约 Released</text>
+            <text class="svg-sub" x="974" y="280" text-anchor="middle">才用新 epoch 申请新租约</text>
+
+            <path d="M588 266 H616" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah3)"></path>
+            <path d="M816 266 H844" stroke="var(--text-dim)" stroke-width="1.75" marker-end="url(#ah3)"></path>
+
+            <text class="svg-sub" x="20" y="326">已完成步骤由新 worker 用当前权限补交结果；结果 Unknown 的步骤保持待确认，不自动重放。</text>
+          </svg>
+        </div>
+        <figcaption><span class="fig-n">Fig. 5</span>接管的核心约束：旧 epoch 只能被清理，不能被继承；新租约必须等旧写者停止和保存条件确认之后才发放。</figcaption>
+      </figure>
+    </section>
+
+    <!-- 06 -->
+    <section class="sec" id="status">
+      <div class="sec-head">
+        <div class="sec-label">06 / 当前状态</div>
+        <div>
+          <h2>设计完整，运行实现只到 Guard 探针</h2>
+          <p class="sec-deck">仓库里的代码只有文档、契约和一个静态 AIO 文件绑定；Sandbox Center 本身还没有服务实现。</p>
+        </div>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>部分</th><th>状态</th><th>已有证据</th><th>缺口</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>方案与 Go 契约</td>
+              <td><span class="chip ok">● 完成</span></td>
+              <td>主方案、18 表 DDL、12 接口 / 50 方法、28 个内部接口；契约模块编译与 vet 通过。</td>
+              <td>契约不等于服务可用。</td>
+            </tr>
+            <tr>
+              <td>阶段 1a 控制边界</td>
+              <td><span class="chip ok">● 已实测</span></td>
+              <td>Docker Linux arm64：UDS 补丁、PID 1 Guard、固定身份、到期与崩溃停止写者，5 个子场景通过。</td>
+              <td>未在 Kubernetes 联合运行；未测完整攻击面。</td>
+            </tr>
+            <tr>
+              <td>阶段 1b 可续租准入 + 回执</td>
+              <td><span class="chip warn">▲ 待实现</span></td>
+              <td>协议已写明 revision、读回、Pending / DispatchStarted / 终态与 Unknown 对账。</td>
+              <td>本地截止不可延长、回执持久化、mTLS、在途文件排空。</td>
+            </tr>
+            <tr>
+              <td>最小 Sandbox Center</td>
+              <td><span class="chip warn">▲ 待实现</span></td>
+              <td>申请、租约、释放、对账与错误语义已定义。</td>
+              <td>没有 HTTP 服务、数据库事务、Provider 或 Reconciler。</td>
+            </tr>
+            <tr>
+              <td>Agent API / worker 接入</td>
+              <td><span class="chip warn">▲ 未开始</span></td>
+              <td>现有代码只有 <code>ExecutionSpec.filesystem</code> 指向 AIO 的静态绑定。</td>
+              <td>Run 环境关联、RunAuthorization、SDK Backend、跨进程接管测试。</td>
+            </tr>
+            <tr>
+              <td>layerfs</td>
+              <td><span class="chip risk">■ 未验证</span></td>
+              <td>分层模型、检查点增量与恢复语义已写入方案和契约类型；六项实现决策见 ADR-0005。</td>
+              <td>RuntimeClass 探针、节点侧挂载、OCI 增量实现、缓存策略与性能仍未验证。</td>
+            </tr>
+            <tr>
+              <td>生产 Profile</td>
+              <td><span class="chip risk">■ 未验收</span></td>
+              <td>Hardened、RuntimeClass、CNI、CSI 与性能门槛已列出。</td>
+              <td>目标集群实测、容量基线、故障注入报告。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 07 -->
+    <section class="sec" id="review">
+      <div class="sec-head">
+        <div class="sec-label">07 / 已定决策</div>
+        <div>
+          <h2>六项已确认，进入契约与阶段 2 准备</h2>
+          <p class="sec-deck">2026-11-09 已拍板，完整记录见 ADR-0005。前两项决定 layerfs 的实施路径；其余四项已写入契约和验收边界。</p>
+        </div>
+      </div>
+
+      <div class="review">
+        <div class="rev">
+          <div>
+            <h4>挂载权限：节点侧预挂载 <span class="chip ok">已定</span></h4>
+            <p>叠加挂载由节点侧 Workspace Materializer 完成，经 <code>hostPath</code> 和 <code>mountPropagation</code> 暴露合并视图。Guard 保持 <code>SETUID/SETGID</code>，不新增 <code>CAP_SYS_ADMIN</code>，只校验 digest、只读性与挂载事实。</p>
+            <span class="ask"><b>落地前提：</b>目标 RuntimeClass 先跑 overlay、mountPropagation 和 hostPath 策略探针。节点侧不可行时退到 Pod 内 <code>fuse-overlayfs</code>，仍需单独验收；Pod 内内核 overlayfs 加 <code>CAP_SYS_ADMIN</code> 不作为首版方案。</span>
+          </div>
+        </div>
+        <div class="rev">
+          <div>
+            <h4>基础层：只读 PVC 为真源 <span class="chip ok">已定</span></h4>
+            <p>每个基础层按内容 digest 对应一个只读 PVC，由 Layer Materializer 从对象存储或仓库快照生成。节点侧只读挂载后同节点同 digest 共享 lower；跨节点重新挂载同一 PVC 获得一致内容。</p>
+            <span class="ask"><b>验收边界：</b>基础层物化和挂载记录为 Preparing 的独立阶段；digest 或只读校验失败不得进入 Ready。镜像卷、节点本地缓存后续复用同一 <code>BaseLayerRef</code> 契约。</span>
+          </div>
+        </div>
+        <div class="rev">
+          <div>
+            <h4>增量格式：OCI layer 风格 <span class="chip ok">已定</span></h4>
+            <p>检查点由 manifest 和 upper 增量层组成。manifest 记录基础层 digest、增量层 digest、覆盖范围、一致性级别、生成时间和工具版本；增量层用 OCI layer 兼容的 tar 表达新增、修改、删除和 opaque 目录。</p>
+            <span class="ask"><b>恢复语义：</b>先物化新的只读基础层，再把增量层应用到新的可写层，不依赖原 Pod、原节点或原可写层；两份对象都按内容寻址并校验 digest。</span>
+          </div>
+        </div>
+        <div class="rev">
+          <div>
+            <h4>静止证明：固定证据集合 <span class="chip ok">已定</span></h4>
+            <p><code>ApplicationConsistent</code> 必须同时满足：准入屏障关闭新写入与新输入；已受理操作排空；沙箱 cgroup 除 Guard/execd 外无用户进程；无仍可写的文件描述符或在途写入；合并视图 <code>syncfs</code> 成功；基础层 digest 与挂载事实未变化。</p>
+            <span class="ask"><b>失败处理：</b>任一项无法确认即明确失败。只有调用方显式声明 <code>CrashConsistent</code> 且 Profile 允许时才降级，服务端不得静默改级。</span>
+          </div>
+        </div>
+        <div class="rev">
+          <div>
+            <h4>WarmPool：首版不按 digest 分池 <span class="chip ok">已定</span></h4>
+            <p>公共 WarmPool 只预热空工作区，认领后才物化基础层，因此 <code>T_ready</code> 包含基础层就位时间；这是首版接受的成本。当前 <code>poolKey</code> 不加入基础层 digest，避免库存按仓库版本碎片化。</p>
+            <span class="ask"><b>后续触发条件：</b>高频基准被证明值得专属库存时，只为少量 Profile 增加带 digest 的池键和预物化策略；池键格式变化必须版本化，新旧池不得互相认领。</span>
+          </div>
+        </div>
+        <div class="rev">
+          <div>
+            <h4>契约：公开 LayeredWorkspace capability <span class="chip ok">已定</span></h4>
+            <p>公开 SDK 新增 <code>CapabilityLayeredWorkspace</code>。Profile 声明非空 <code>LayeredWorkspace.Engine</code> 时必须同时声明该能力；实例就绪时还要核对实际挂载事实，不能只信声明。</p>
+            <span class="ask"><b>调用方收益：</b>可以判断恢复耗时来源，并避免把未验证的分层工作区当成普通目录；能力缺失时仍返回 <code>CapabilityUnsupported</code>。</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    事实来源：<code>docs/sandbox-center/sandbox-control-plane-technical-design.md</code> · <code>runtime-integration-plan.md</code> · <code>worker-handoff.md</code> · <code>sandbox-design-contracts/</code> · <code>guard-execd-verification.md</code>。<br>
+    生成于 2026-11-09。设计稿不是生产实现；标注“已实测”的范围仅限固定镜像、固定提交和本机 Docker/Kubernetes 实验。
+  </footer>
+</div>
+
+<script>
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var sections = links.map(function (a) { return document.querySelector(a.getAttribute('href')); });
+    if (!('IntersectionObserver' in window)) return;
+    var visible = new Map();
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) { visible.set(entry.target.id, entry.isIntersecting ? entry.intersectionRatio : 0); });
+      var bestId = null, best = 0;
+      visible.forEach(function (ratio, id) { if (ratio > best) { best = ratio; bestId = id; } });
+      if (!bestId) return;
+      links.forEach(function (a) { a.classList.toggle('active', a.getAttribute('href') === '#' + bestId); });
+    }, { rootMargin: '-20% 0px -55% 0px', threshold: [0, .15, .35, .6] });
+    sections.forEach(function (s) { if (s) observer.observe(s); });
+  })();
+</script>
+</body>
+</html>

@@ -11,12 +11,14 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
@@ -64,6 +66,9 @@ func (s *Service) Create(
 	owner, actor, requestKey string,
 	doc memory.Document,
 ) (*memory.Entry, error) {
+	if err := authorizeDocument(ctx, owner, &doc); err != nil {
+		return nil, err
+	}
 	if owner == "" || actor == "" || requestKey == "" {
 		return nil, memory.ErrInvalid
 	}
@@ -82,8 +87,11 @@ func (s *Service) Create(
 
 // Get returns one entry if the caller is authorized.
 func (s *Service) Get(ctx context.Context, owner, id string) (*memory.Entry, error) {
+	if _, err := requireScope(ctx); err != nil {
+		return nil, err
+	}
 	var row table.MemoryEntry
-	if err := privateEntries(s.db.WithContext(ctx), owner).Where("id = ?", id).Take(&row).Error; err != nil {
+	if err := privateEntries(table.TenantQuery(ctx, s.db), owner).Where("id = ?", id).Take(&row).Error; err != nil {
 		return nil, mapError(err)
 	}
 	return row.ToDomain(), nil
@@ -91,10 +99,13 @@ func (s *Service) Get(ctx context.Context, owner, id string) (*memory.Entry, err
 
 // List returns entries owned by the caller, newest first.
 func (s *Service) List(ctx context.Context, owner, after string, limit int) ([]memory.Entry, error) {
+	if _, err := requireScope(ctx); err != nil {
+		return nil, err
+	}
 	if limit < 1 || limit > 100 {
 		return nil, memory.ErrInvalid
 	}
-	q := privateEntries(s.db.WithContext(ctx), owner).Where("id > ?", after)
+	q := privateEntries(table.TenantQuery(ctx, s.db), owner).Where("id > ?", after)
 	var rows []table.MemoryEntry
 	if err := q.Order("id").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, mapError(err)
@@ -137,6 +148,9 @@ func (s *Service) prepareRevisioned(
 	doc memory.Document,
 	opType memory.OperationType,
 ) (*memory.Entry, error) {
+	if err := authorizeDocument(ctx, owner, &doc); err != nil {
+		return nil, err
+	}
 	if owner == "" || actor == "" || requestKey == "" || entryID == "" || expectedRevision < 1 {
 		return nil, memory.ErrInvalid
 	}
@@ -199,7 +213,7 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 			return err
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("owner_id = ? AND request_key = ?", op.OwnerID, op.RequestKey).
+			Where("tenant_id = ? AND owner_id = ? AND request_key = ?", op.TenantID, op.OwnerID, op.RequestKey).
 			Take(&row).Error; err != nil {
 			return err
 		}
@@ -246,7 +260,7 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 			if err := privateEntries(
 				tx.Clauses(clause.Locking{Strength: "UPDATE"}),
 				existing.OwnerID,
-			).Where("id = ?", existing.EntryID).
+			).Where("tenant_id = ? AND id = ?", existing.TenantID, existing.EntryID).
 				Take(&entryRow).
 				Error; err != nil {
 				return mapError(err)
@@ -278,7 +292,7 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 				return err
 			}
 			existing.Binding = binding
-			result := tx.Model(&table.MemoryOperation{}).
+			result := table.TenantQuery(ctx, tx.Model(&table.MemoryOperation{})).
 				Where("id = ? AND status = ?", existing.ID, string(memory.OperationPending)).
 				Update("binding", mustMarshal(binding))
 			if err := requireUpdated(result); err != nil {
@@ -296,7 +310,7 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 				binding = resolved
 			}
 			existing.Binding = binding
-			result := tx.Model(&table.MemoryOperation{}).
+			result := table.TenantQuery(ctx, tx.Model(&table.MemoryOperation{})).
 				Where("id = ? AND status = ?", existing.ID, string(memory.OperationPending)).
 				Update("binding", mustMarshal(binding))
 			if err := requireUpdated(result); err != nil {
@@ -307,7 +321,7 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 		if existing.Type != memory.OperationCreate {
 			if target.Binding == nil {
 				result := privateEntries(tx.Model(&table.MemoryEntry{}), existing.OwnerID).
-					Where("id = ? AND binding IS NULL", existing.EntryID).
+					Where("tenant_id = ? AND id = ? AND binding IS NULL", existing.TenantID, existing.EntryID).
 					Update("binding", mustMarshal(existing.Binding))
 				if err := requireUpdated(result); err != nil {
 					return err
@@ -353,9 +367,9 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 	}
 	claim := durable.NewID()
 	var row table.MemoryOperation
-	result := s.db.WithContext(ctx).Model(&row).Clauses(clause.Returning{}).
-		Where("id = ? AND status = ? AND (archive_until IS NULL OR archive_until <= clock_timestamp())",
-			op.ID, string(memory.OperationPending)).
+	result := table.TenantQuery(ctx, s.db).Model(&row).Clauses(clause.Returning{}).
+		Where("id = ? AND tenant_id = ? AND status = ? AND (archive_until IS NULL OR archive_until <= clock_timestamp())",
+			op.ID, op.TenantID, string(memory.OperationPending)).
 		Updates(map[string]any{
 			"archive_claim": claim,
 			"archive_until": gorm.Expr("clock_timestamp() + interval '2 minutes'"),
@@ -369,7 +383,7 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		release := s.db.WithContext(releaseCtx).Model(&table.MemoryOperation{}).
-			Where("id = ? AND archive_claim = ?", op.ID, claim).
+			Where("id = ? AND tenant_id = ? AND archive_claim = ?", op.ID, op.TenantID, claim).
 			Updates(map[string]any{
 				"archive_claim": "",
 				"archive_until": nil,
@@ -383,6 +397,9 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 	if err != nil {
 		return false, err
 	}
+	if doc.Scope.Tenant != op.TenantID {
+		return false, memory.ErrConflict
+	}
 	if op.Binding.ArtifactID == "" {
 		artifactID, err := s.archive.EnsureCollection(
 			archiveCtx,
@@ -393,7 +410,7 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 		if err != nil {
 			return false, err
 		}
-		err = s.persistArchiveResult(ctx, op.ID, claim, map[string]any{
+		err = s.persistArchiveResult(ctx, op, claim, map[string]any{
 			"binding": mustMarshal(&memory.ArtifactBinding{
 				StoreID:    op.Binding.StoreID,
 				TenantID:   op.Binding.TenantID,
@@ -414,7 +431,7 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 	if err != nil {
 		var unavailable *memory.VersionUnavailableError
 		if errors.As(err, &unavailable) {
-			if saveErr := s.persistArchiveResult(ctx, op.ID, claim, map[string]any{
+			if saveErr := s.persistArchiveResult(ctx, op, claim, map[string]any{
 				"version_ref":  mustMarshal(&unavailable.Ref),
 				"status":       string(memory.OperationRejected),
 				"error_reason": memoryVersionUnavailableReason,
@@ -427,7 +444,7 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 		}
 		return false, err
 	}
-	if err := s.persistArchiveResult(ctx, op.ID, claim, map[string]any{
+	if err := s.persistArchiveResult(ctx, op, claim, map[string]any{
 		"version_ref": mustMarshal(ref),
 	}); err != nil {
 		return false, err
@@ -436,12 +453,12 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 	return true, nil
 }
 
-func (s *Service) persistArchiveResult(ctx context.Context, operationID, claim string, values map[string]any) error {
+func (s *Service) persistArchiveResult(ctx context.Context, op *memory.Operation, claim string, values map[string]any) error {
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	result := s.db.WithContext(saveCtx).Model(&table.MemoryOperation{}).
-		Where("id = ? AND status = ? AND archive_claim = ? AND archive_until > clock_timestamp()",
-			operationID, string(memory.OperationPending), claim).
+		Where("id = ? AND tenant_id = ? AND status = ? AND archive_claim = ? AND archive_until > clock_timestamp()",
+			op.ID, op.TenantID, string(memory.OperationPending), claim).
 		Updates(values)
 	return requireUpdated(result)
 }
@@ -459,10 +476,9 @@ func (s *Service) activate(
 	callbackSucceeded := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var opRow table.MemoryOperation
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ?", op.ID).
-			Take(&opRow).
-			Error; err != nil {
+		if err := table.TenantQuery(ctx, tx.Clauses(clause.Locking{Strength: "UPDATE"})).
+			Where("id = ? AND tenant_id = ?", op.ID, op.TenantID).
+			Take(&opRow).Error; err != nil {
 			return err
 		}
 		current := opRow.ToDomain()
@@ -483,6 +499,9 @@ func (s *Service) activate(
 		}
 		if current.Status != memory.OperationPending || current.VersionRef == nil && s.archive != nil {
 			return memory.ErrPending
+		}
+		if doc.Scope.Tenant != current.TenantID {
+			return memory.ErrConflict
 		}
 		ref := current.VersionRef
 		now := time.Now().Unix()
@@ -507,7 +526,7 @@ func (s *Service) activate(
 		case memory.OperationUpdate, memory.OperationRestore:
 			var row table.MemoryEntry
 			if err := privateEntries(tx.Clauses(clause.Locking{Strength: "UPDATE"}), current.OwnerID).
-				Where("id = ?", current.EntryID).
+				Where("tenant_id = ? AND id = ?", current.TenantID, current.EntryID).
 				Take(&row).Error; err != nil {
 				return mapError(err)
 			}
@@ -532,7 +551,7 @@ func (s *Service) activate(
 			}
 			projected := table.MemoryEntryFromDomain(entry)
 			result := tx.Model(&table.MemoryEntry{}).
-				Where("id = ? AND revision = ?", row.ID, current.ExpectedRevision).
+				Where("tenant_id = ? AND id = ? AND revision = ?", current.TenantID, row.ID, current.ExpectedRevision).
 				Updates(map[string]any{
 					"summary":            projected.Summary,
 					"body":               projected.Body,
@@ -558,7 +577,7 @@ func (s *Service) activate(
 			"applied_at":       now,
 		}
 		if err := requireUpdated(tx.Model(&table.MemoryOperation{}).
-			Where("id = ? AND status = ?", current.ID, string(memory.OperationPending)).
+			Where("id = ? AND tenant_id = ? AND status = ?", current.ID, current.TenantID, string(memory.OperationPending)).
 			Updates(updates)); err != nil {
 			return err
 		}
@@ -591,7 +610,7 @@ func (s *Service) resolveCommittedOperation(
 	defer cancel()
 	var row table.MemoryOperation
 	if err := s.db.WithContext(readCtx).
-		Where("owner_id = ? AND request_key = ?", op.OwnerID, op.RequestKey).
+		Where("tenant_id = ? AND owner_id = ? AND request_key = ?", op.TenantID, op.OwnerID, op.RequestKey).
 		Take(&row).Error; err != nil {
 		return nil, errors.Join(memory.ErrOperationOutcomeUnknown, commitErr, err)
 	}
@@ -628,7 +647,7 @@ func markRejected(tx *gorm.DB, op *memory.Operation, reason string) error {
 		"error_reason": reason,
 	}
 	return requireUpdated(tx.Model(&table.MemoryOperation{}).
-		Where("id = ? AND status = ?", op.ID, string(memory.OperationPending)).
+		Where("id = ? AND tenant_id = ? AND status = ?", op.ID, op.TenantID, string(memory.OperationPending)).
 		Updates(updates))
 }
 
@@ -638,11 +657,15 @@ func (s *Service) Retire(
 	owner, actor, requestKey, entryID string,
 	expectedRevision int64,
 ) (*memory.Entry, error) {
+	scope, err := requireScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if owner == "" || actor == "" || requestKey == "" || entryID == "" || expectedRevision < 1 {
 		return nil, memory.ErrInvalid
 	}
 	op := &memory.Operation{
-		ID: newOperationID(), OwnerID: owner, RequestKey: requestKey,
+		ID: newOperationID(), TenantID: scope.TenantID, OwnerID: owner, RequestKey: requestKey,
 		IntentDigest: digestIntent(memory.OperationRetire, entryID, expectedRevision, nil),
 		Type:         memory.OperationRetire, EntryID: entryID, ExpectedRevision: expectedRevision,
 		ActorID: actor, Status: memory.OperationPending,
@@ -650,13 +673,13 @@ func (s *Service) Retire(
 	var entry *memory.Entry
 	var rejected bool
 	callbackSucceeded := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).
 			Create(table.MemoryOperationFromDomain(op)).Error; err != nil {
 			return err
 		}
 		var receipt table.MemoryOperation
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := table.TenantQuery(ctx, tx.Clauses(clause.Locking{Strength: "UPDATE"})).
 			Where("owner_id = ? AND request_key = ?", owner, requestKey).Take(&receipt).Error; err != nil {
 			return err
 		}
@@ -675,7 +698,7 @@ func (s *Service) Retire(
 			return memory.ErrConflict
 		}
 		var row table.MemoryEntry
-		if err := privateEntries(tx.Clauses(clause.Locking{Strength: "UPDATE"}), owner).
+		if err := privateEntries(table.TenantQuery(ctx, tx.Clauses(clause.Locking{Strength: "UPDATE"})), owner).
 			Where("id = ?", entryID).Take(&row).Error; err != nil {
 			return mapError(err)
 		}
@@ -699,7 +722,7 @@ func (s *Service) Retire(
 		now := time.Now().Unix()
 		entry.RetiredAt = &now
 		entry.Revision++
-		if err := requireUpdated(tx.Model(&table.MemoryEntry{}).
+		if err := requireUpdated(table.TenantQuery(ctx, tx.Model(&table.MemoryEntry{})).
 			Where("id = ? AND revision = ? AND retired_at IS NULL", row.ID, expectedRevision).
 			Updates(map[string]any{
 				"retired_at": now,
@@ -709,7 +732,7 @@ func (s *Service) Retire(
 			return err
 		}
 		doc := documentFromEntry(entry)
-		if err := requireUpdated(tx.Model(&table.MemoryOperation{}).
+		if err := requireUpdated(table.TenantQuery(ctx, tx.Model(&table.MemoryOperation{})).
 			Where("id = ? AND status = ?", op.ID, string(memory.OperationPending)).
 			Updates(map[string]any{
 				"status": string(memory.OperationApplied), "applied_revision": entry.Revision,
@@ -746,7 +769,7 @@ func (s *Service) RecallTx(
 		return nil, memory.ErrInvalid
 	}
 	var rows []table.MemoryEntry
-	q := tx.WithContext(ctx).Where(
+	q := table.TenantQuery(ctx, tx).Where(
 		"owner_id = ? AND scope_kind = ? AND tenant_id = ? AND project_id = ? AND actor_id = ? AND retired_at IS NULL",
 		scope.Owner, string(scope.Kind), scope.Tenant, scope.Project, scope.Actor,
 	)
@@ -809,6 +832,26 @@ func selectEntries(entries []memory.Entry, query string, filter memory.RecallFil
 	return selected
 }
 
+func requireScope(ctx context.Context) (access.Scope, error) {
+	scope, ok := access.FromContext(ctx)
+	if !ok || scope.TenantID == "" || strings.TrimSpace(scope.TenantID) != scope.TenantID {
+		return access.Scope{}, memory.ErrForbidden
+	}
+	return scope, nil
+}
+
+func authorizeDocument(ctx context.Context, owner string, doc *memory.Document) error {
+	scope, err := requireScope(ctx)
+	if err != nil {
+		return err
+	}
+	if doc.Scope.Tenant != scope.TenantID || doc.Scope.Project != scope.ProjectID {
+		return memory.ErrForbidden
+	}
+	doc.Scope.Owner = owner
+	return nil
+}
+
 func validateDocument(doc *memory.Document) error {
 	if doc.Kind != memory.KindFact && doc.Kind != memory.KindPreference && doc.Kind != memory.KindProcedure {
 		return memory.ErrInvalid
@@ -838,18 +881,14 @@ func validateDocument(doc *memory.Document) error {
 }
 
 func validateWriteScope(scope memory.Scope, owner string) error {
-	if scope.Kind != memory.ScopeOwnerPrivate || scope.Owner != owner ||
-		scope.Tenant != "" || scope.Project != "" || scope.Actor != "" {
+	if scope.Kind != memory.ScopeOwnerPrivate || scope.Owner != owner || scope.Actor != "" {
 		return memory.ErrInvalid
 	}
 	return nil
 }
 
 func privateEntries(tx *gorm.DB, owner string) *gorm.DB {
-	return tx.Where(
-		"owner_id = ? AND scope_kind = ? AND tenant_id = '' AND project_id = '' AND actor_id = ''",
-		owner, string(memory.ScopeOwnerPrivate),
-	)
+	return tx.Where("owner_id = ? AND scope_kind = ? AND actor_id = ''", owner, string(memory.ScopeOwnerPrivate))
 }
 
 func revisionConflict(entry *memory.Entry, op *memory.Operation, doc *memory.Document) string {
@@ -907,9 +946,11 @@ func documentFromEntry(entry *memory.Entry) *memory.Document {
 }
 
 func entryFromDocument(doc *memory.Document, owner string) *memory.Entry {
+	scope := doc.Scope
+	scope.Owner = owner
 	return &memory.Entry{
 		ID:               doc.EntryID,
-		Scope:            doc.Scope,
+		Scope:            scope,
 		AgentID:          doc.AgentID,
 		Kind:             doc.Kind,
 		SubjectKey:       doc.SubjectKey,
@@ -935,6 +976,7 @@ func operationFromDocument(
 	}
 	return &memory.Operation{
 		ID:               newOperationID(),
+		TenantID:         doc.Scope.Tenant,
 		OwnerID:          owner,
 		RequestKey:       requestKey,
 		IntentDigest:     digestIntent(opType, digestEntryID, expectedRevision, doc),

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -14,13 +15,17 @@ import (
 )
 
 type Service struct {
-	AppName    string
-	AppCode    int
-	RunMode    string
-	HTTPServer conf.HTTPServerConfig
-	DB         db.Config
-	Redis      frameworkredis.Config
-	Artifact   Artifact
+	AppName       string
+	AppCode       int
+	RunMode       string
+	HTTPServer    conf.HTTPServerConfig
+	DB            db.Config
+	Redis         frameworkredis.Config
+	Sandbox       SandboxConfig
+	Callback      CallbackConfig
+	Artifact      Artifact
+	AgentArtifact ArtifactConfig
+	Tenant        TenantConfig
 }
 
 // Artifact configures the Memory archive adapter. An empty Endpoint disables
@@ -32,6 +37,41 @@ type Artifact struct {
 	BearerToken     string
 	TimeoutSeconds  int
 	MaxPayloadBytes int64
+}
+
+type TenantConfig struct {
+	Endpoint                   string
+	ServiceAPIKey              string
+	Timeout                    int
+	AllowedPropagationServices []string
+}
+
+// ArtifactConfig locates the artifact-go service that stores published Agent
+// configuration. Timeout is in milliseconds; zero keeps the SDK default.
+type ArtifactConfig struct {
+	Endpoint string
+	Timeout  int
+}
+
+// CallbackConfig wires service authentication and the external-callback HMAC gate.
+type CallbackConfig struct {
+	Enabled         bool
+	SigningSecret   string
+	AllowedSources  []string
+	AllowedServices []string
+}
+
+// SandboxConfig wires the phase-2 sandbox control plane. An empty
+// K8sContext disables the runtime provider: metadata routes stay available
+// and provisioning reports NotReady.
+type SandboxConfig struct {
+	AllowedServices         []string
+	K8sContext              string
+	K8sNamespace            string
+	GuardImage              string
+	RuntimeClassName        string
+	CheckpointImage         string
+	CheckpointStoreHostPath string
 }
 
 // Load decodes the framework snapshot used by the server.
@@ -65,9 +105,26 @@ func (cfg Service) ValidateDatabase() error {
 	return nil
 }
 
-// ValidateAPI checks the standalone API settings.
+func validateAgentArtifact(cfg ArtifactConfig) error {
+	uri, err := url.Parse(cfg.Endpoint)
+	if err != nil || uri.Host == "" || (uri.Scheme != "http" && uri.Scheme != "https") ||
+		uri.User != nil || uri.RawQuery != "" || uri.ForceQuery || uri.Fragment != "" {
+		return errors.New(
+			"AgentArtifact.Endpoint must be an absolute HTTP(S) URL without userinfo, query or fragment",
+		)
+	}
+	if cfg.Timeout < 0 {
+		return errors.New("AgentArtifact.Timeout must not be negative")
+	}
+	return nil
+}
+
+// ValidateAPI checks the standalone HTTP and notification settings.
 func (cfg Service) ValidateAPI() error {
 	if err := cfg.ValidateDatabase(); err != nil {
+		return err
+	}
+	if err := validateAgentArtifact(cfg.AgentArtifact); err != nil {
 		return err
 	}
 	if cfg.HTTPServer.APIBasePath != "" || cfg.HTTPServer.WriteTimeout >= 0 {
@@ -88,28 +145,82 @@ func (cfg Service) ValidateAPI() error {
 			return errors.New("Redis.Addrs must not contain empty addresses")
 		}
 	}
-	if cfg.Artifact.Endpoint == "" {
+	if err := cfg.ValidateTenant(); err != nil {
+		return err
+	}
+	if cfg.Callback.Enabled && (strings.TrimSpace(cfg.Callback.SigningSecret) == "" ||
+		len(cfg.Callback.AllowedSources) == 0 || len(cfg.Callback.AllowedServices) == 0) {
+		return errors.New("enabled Callback requires SigningSecret, AllowedSources and AllowedServices")
+	}
+	if len(cfg.Callback.AllowedSources) > 0 && strings.TrimSpace(cfg.Callback.SigningSecret) == "" {
+		return errors.New("Callback.SigningSecret is required with AllowedSources")
+	}
+	if cfg.Sandbox.CheckpointImage != "" || cfg.Sandbox.CheckpointStoreHostPath != "" {
+		if cfg.Sandbox.K8sContext == "" || cfg.Sandbox.CheckpointImage == "" ||
+			!filepath.IsAbs(cfg.Sandbox.CheckpointStoreHostPath) {
+			return errors.New(
+				"Sandbox checkpoints require K8sContext, CheckpointImage and an absolute CheckpointStoreHostPath",
+			)
+		}
+	}
+	for _, list := range []struct {
+		name   string
+		values []string
+	}{
+		{"Callback.AllowedSources", cfg.Callback.AllowedSources},
+		{"Callback.AllowedServices", cfg.Callback.AllowedServices},
+		{"Sandbox.AllowedServices", cfg.Sandbox.AllowedServices},
+		{"Tenant.AllowedPropagationServices", cfg.Tenant.AllowedPropagationServices},
+	} {
+		for _, value := range list.values {
+			if value == "" || strings.TrimSpace(value) != value {
+				return errors.New(list.name + " must contain nonempty trimmed names")
+			}
+		}
+	}
+	return cfg.Artifact.validate()
+}
+
+func (cfg Artifact) validate() error {
+	if cfg.Endpoint == "" {
 		return nil
 	}
-	endpoint, err := url.Parse(cfg.Artifact.Endpoint)
+	endpoint, err := url.Parse(cfg.Endpoint)
 	if err != nil || !endpoint.IsAbs() ||
 		(endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" {
 		return errors.New("Artifact.Endpoint must be an absolute http(s) URL")
 	}
-	if strings.TrimSpace(cfg.Artifact.StoreID) == "" {
+	if strings.TrimSpace(cfg.StoreID) == "" {
 		return errors.New("Artifact.StoreID is required")
 	}
-	if strings.TrimSpace(cfg.Artifact.TenantID) == "" {
+	if strings.TrimSpace(cfg.TenantID) == "" {
 		return errors.New("Artifact.TenantID is required")
 	}
-	if strings.TrimSpace(cfg.Artifact.BearerToken) == "" {
+	if strings.TrimSpace(cfg.BearerToken) == "" {
 		return errors.New("Artifact.BearerToken is required when Endpoint is set")
 	}
-	if cfg.Artifact.TimeoutSeconds <= 0 || cfg.Artifact.TimeoutSeconds > 60 {
+	if cfg.TimeoutSeconds <= 0 || cfg.TimeoutSeconds > 60 {
 		return errors.New("Artifact.TimeoutSeconds must be between 1 and 60")
 	}
-	if cfg.Artifact.MaxPayloadBytes <= 0 || cfg.Artifact.MaxPayloadBytes > 256*1024 {
+	if cfg.MaxPayloadBytes <= 0 || cfg.MaxPayloadBytes > 256*1024 {
 		return errors.New("Artifact.MaxPayloadBytes must be between 1 and 262144")
+	}
+	return nil
+}
+
+func (cfg Service) ValidateTenant() error {
+	uri, err := url.Parse(cfg.Tenant.Endpoint)
+	if err != nil || uri.Host == "" || uri.User != nil || uri.RawQuery != "" ||
+		uri.ForceQuery || uri.Fragment != "" ||
+		(uri.Scheme != "https" && (uri.Scheme != "http" ||
+			(uri.Hostname() != "localhost" && !net.ParseIP(uri.Hostname()).IsLoopback()))) {
+		return errors.New("Tenant.Endpoint must be HTTPS, or HTTP on loopback, without userinfo, query or fragment")
+	}
+	if len(cfg.Tenant.ServiceAPIKey) < 32 || strings.ContainsAny(cfg.Tenant.ServiceAPIKey, "\r\n") {
+		return errors.New("Tenant.ServiceAPIKey must contain at least 32 characters and no line breaks")
+	}
+	if cfg.Tenant.Timeout < 0 {
+		return errors.New("Tenant.Timeout must not be negative")
 	}
 	return nil
 }

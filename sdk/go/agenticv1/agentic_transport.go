@@ -97,8 +97,15 @@ func doJSON[T any](
 	return nil, status, fmt.Errorf("unexpected HTTP status %d", status)
 }
 
-func jsonResult[T any](ctx context.Context, t *transport, method, path string, body any, status int) (*T, error) {
-	result, _, err := doJSON[T](ctx, t, method, path, body, nil, status)
+func jsonResult[T any](
+	ctx context.Context,
+	t *transport,
+	method, path string,
+	body any,
+	headers http.Header,
+	status int,
+) (*T, error) {
+	result, _, err := doJSON[T](ctx, t, method, path, body, headers, status)
 	return result, err
 }
 

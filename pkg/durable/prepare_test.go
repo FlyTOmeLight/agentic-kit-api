@@ -91,10 +91,20 @@ func TestSubmitBudgetFailureLeavesNoRunOrMessages(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	maxTokens := 100
-	session := testConversation(t, store, execution.Spec{
+	session, cfg := testConversation(t, store, execution.Spec{
 		Model: agent.ModelSpec{ContextWindow: 1000, MaxTokens: &maxTokens},
 	})
-	_, _, err := store.Submit(ctx, "owner", session.ID, "budget-key", strings.Repeat("large", 300), time.Hour, 3)
+	_, _, err := submitFixture(
+		t,
+		store,
+		"owner",
+		session.ID,
+		"budget-key",
+		strings.Repeat("large", 300),
+		time.Hour,
+		3,
+		cfg,
+	)
 	if !errors.Is(err, contextbuilder.ErrBudgetExceeded) {
 		t.Fatalf("submit: %v", err)
 	}
@@ -108,14 +118,8 @@ func TestSubmitBudgetFailureLeavesNoRunOrMessages(t *testing.T) {
 	if err != nil || stored.MessageSeq != 0 {
 		t.Fatalf("session changed: %+v, %v", stored, err)
 	}
-	if _, created, err := store.Submit(
-		ctx,
-		"owner",
-		session.ID,
-		"budget-key",
-		"small",
-		time.Hour,
-		3,
+	if _, created, err := submitFixture(
+		t, store, "owner", session.ID, "budget-key", "small", time.Hour, 3, cfg,
 	); err != nil ||
 		!created {
 		t.Fatalf("budget rejection consumed idempotency key: created=%v error=%v", created, err)

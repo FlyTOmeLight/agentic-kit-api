@@ -193,6 +193,7 @@ const (
 // Operation is a durable receipt for one memory write intent.
 type Operation struct {
 	ID               string           `json:"id"`
+	TenantID         string           `json:"tenantID"`
 	OwnerID          string           `json:"ownerID"`
 	RequestKey       string           `json:"requestKey"`
 	IntentDigest     string           `json:"intentDigest"`

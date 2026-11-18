@@ -14,6 +14,8 @@ import (
 	"github.com/FlyTOmeLight/server-go/swagger"
 	"github.com/gin-gonic/gin"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/sandboxcenter"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 )
 
@@ -49,7 +51,30 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := gin.New()
-	newRoutes(&durable.Store{}, nil, nil).register(router.Group(""))
+	// Route enumeration needs no live cluster; the provider only validates its
+	// configuration at construction.
+	provider, err := sandboxcenter.NewProvider(sandboxcenter.K8sConfig{
+		Context: "contract-test", Namespace: "sandbox-center", GuardImage: "unused",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactServer, _ := newFakeArtifact(t)
+	newRoutes(
+		&durable.Store{},
+		nil,
+		newArtifactClient(t, artifactServer),
+		nil,
+		sandboxcenter.NewStore(nil),
+		provider,
+		config.CallbackConfig{Enabled: true},
+		Authentication{
+			User:        []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
+			Service:     []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
+			Propagation: []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
+			Callback:    []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
+		},
+	).register(router.Group(""))
 	colon := regexp.MustCompile(`:([A-Za-z0-9_]+)`)
 	documented := map[string]bool{}
 	for _, route := range router.Routes() {

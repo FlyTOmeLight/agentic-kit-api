@@ -20,11 +20,47 @@ import (
 // Config describes the standalone application configuration.
 type Config = config.Service
 
+// artifactModule adapts the artifact client to the runtime lifecycle.
+type artifactModule struct{ client client.ArtifactStore }
+
+func (m *artifactModule) Initialize(context.Context) error { return nil }
+
+func (m *artifactModule) Close(_ context.Context) error { return m.client.Close() }
+
+type tenantModule struct{ client *client.Tenant }
+
+func (m *tenantModule) Initialize(context.Context) error { return nil }
+
+func (m *tenantModule) Close(context.Context) error { return m.client.Close() }
+
 // Build owns standalone connections; combined applications inject their own
 // shared connections through New instead.
 func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if err := cfg.ValidateAPI(); err != nil {
 		return err
+	}
+	tenant, err := client.NewTenant(cfg.Tenant.Endpoint, cfg.Tenant.ServiceAPIKey,
+		time.Duration(cfg.Tenant.Timeout)*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	if err = runtime.Initialize(ctx, &tenantModule{client: tenant}); err != nil {
+		return err
+	}
+	authentication := Authentication{User: tenant.User()}
+	authentication.Propagation, err = tenant.Propagation(cfg.Tenant.AllowedPropagationServices)
+	if err != nil {
+		return err
+	}
+	authentication.Service, err = tenant.Service(cfg.Sandbox.AllowedServices)
+	if err != nil {
+		return err
+	}
+	if cfg.Callback.Enabled {
+		authentication.Callback, err = tenant.Service(cfg.Callback.AllowedServices)
+		if err != nil {
+			return err
+		}
 	}
 	runtime.Config.Subscribe(prepareHTTPConfig)
 	database := &frameworkdb.Module{Config: &cfg.DB}
@@ -39,6 +75,15 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if err = store.InitSchema(ctx); err != nil {
 		return err
 	}
+	artifact, err := client.NewArtifact(cfg.AgentArtifact.Endpoint, cfg.Tenant.ServiceAPIKey,
+		time.Duration(cfg.AgentArtifact.Timeout)*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	if err = runtime.Initialize(ctx, &artifactModule{client: artifact}); err != nil {
+		artifact.Close()
+		return err
+	}
 	archive, err := buildArchiver(cfg)
 	if err != nil {
 		return err
@@ -47,7 +92,7 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if archive != nil {
 		archiver = archive
 	}
-	api, err := New(*cfg, runtime.Log, store, cache.client, archiver)
+	api, err := NewWithSandbox(*cfg, runtime.Log, store, cache.client, artifact, archiver, database.DB, authentication)
 	if err != nil {
 		if archive != nil {
 			err = errors.Join(err, archive.Close())
@@ -67,11 +112,11 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 // buildArchiver constructs the Memory archive adapter when an artifact
 // endpoint is configured. Without one the deployment keeps Memory writes
 // local; recall and Off continue to work.
-func buildArchiver(cfg *Config) (*client.ArtifactStore, error) {
+func buildArchiver(cfg *Config) (*client.MemoryArchive, error) {
 	if cfg.Artifact.Endpoint == "" {
 		return nil, nil
 	}
-	store, err := client.NewArtifactStore(client.ArtifactConfig{
+	store, err := client.NewMemoryArchive(client.ArtifactConfig{
 		Endpoint:        cfg.Artifact.Endpoint,
 		StoreID:         cfg.Artifact.StoreID,
 		TenantID:        cfg.Artifact.TenantID,

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenSandbox 实测｜能替代什么，还缺什么</title>
+<style>
+:root{color-scheme:light;--ink:#142e32;--muted:#52696b;--line:#cad7d3;--paper:#f5f6f0;--green:#176a52;--red:#a33627}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.75 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}main{max-width:1120px;margin:auto;padding:56px 28px 40px}header{border-top:5px solid var(--ink);padding-top:24px}.meta{font-size:13px;letter-spacing:.05em;color:var(--muted)}h1{font-size:clamp(30px,4.5vw,52px);line-height:1.25;margin:18px 0;max-width:900px;letter-spacing:-.03em}.lead{font-size:20px;max-width:900px;margin:0 0 30px}h2{font-size:25px;margin:0 0 18px}h3{font-size:18px;margin:0 0 8px}p{margin:0 0 14px}section{margin-top:38px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.metric{padding:22px;background:#fff;border:1px solid var(--line)}.metric strong{display:block;font-size:33px;font-weight:700;line-height:1.3}.metric span{display:block;color:var(--muted);font-size:14px;margin-top:8px}.good{color:var(--green)}.bad{color:var(--red)}.table-wrap{overflow:auto;border:1px solid var(--line);background:#fff}table{width:100%;border-collapse:collapse;min-width:660px;text-align:left}th,td{padding:15px 18px;vertical-align:top;border-bottom:1px solid var(--line)}th{background:#e7ede5;font-size:14px}tr:last-child td{border-bottom:0}td:first-child{width:27%;font-weight:650}td:last-child{width:23%}.result{font-weight:700;white-space:nowrap}code{font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}.step{padding:20px;background:#fff}.step small{display:block;font-size:12px;color:var(--muted);margin-bottom:8px}.step p{font-size:15px;margin:0}.decision{padding:26px;background:#173a3d;color:#fff}.decision p{max-width:900px}.decision ol{padding-left:22px;margin-bottom:0}.decision li{margin-top:10px}.notes{display:grid;grid-template-columns:1fr 1fr;gap:24px}.note{border-top:2px solid var(--line);padding-top:18px;font-size:15px;color:var(--muted)}a{color:#14604f;text-underline-offset:4px}a:focus-visible{outline:3px solid #e5a543;outline-offset:4px}footer{margin-top:38px;padding-top:18px;border-top:1px solid var(--line);font-size:14px;color:var(--muted)}footer nav{display:flex;flex-wrap:wrap;gap:18px;margin-bottom:12px}@media(max-width:700px){main{padding:28px 18px}.metrics,.notes{grid-template-columns:1fr}.flow{grid-template-columns:1fr 1fr}.metric{padding:16px}.metric strong{font-size:28px}.lead{font-size:18px}}@media print{body{background:white}main{padding:0}section{break-inside:avoid}.decision{background:#fff;color:var(--ink);border:2px solid var(--ink)}a{color:inherit}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<div class="meta">2026-10-22 · 固定 release-1.1.1 发布镜像 · Docker / arm64 实测</div>
+<h1>换成 OpenSandbox，<br>仍需补齐执行保护与恢复。</h1>
+<p class="lead">它可以在管理服务正常时销毁到期环境、保留工作区。但管理服务退出后不会在本次测试的截止时间停写；命令重启查询和调用方去重也没有满足接管要求。</p>
+</header>
+<div class="metrics" aria-label="关键实验数据">
+<div class="metric"><strong class="good">+353 ms</strong><span>管理服务正常：截止后观察到环境删除，独立卷保留。</span></div>
+<div class="metric"><strong class="bad">HTTP 200</strong><span>管理服务退出：超过截止，仍接受新的执行请求。</span></div>
+<div class="metric"><strong class="bad">2 次副作用</strong><span>丢失首次响应后，用相同请求与键重发。</span></div>
+</div>
+<section aria-labelledby="evidence">
+<h2 id="evidence">真实请求与文件变化给出的结果</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">故障场景</th><th scope="col">实际观察</th><th scope="col">对接管的影响</th></tr></thead>
+<tbody>
+<tr><td>kill / timeout 普通子进程</td><td>命令终态后，1.2 秒观察窗口内心跳不增长。</td><td><span class="result good">本用例通过</span></td></tr>
+<tr><td>kill / timeout 脱离进程组的子进程</td><td>状态已结束，心跳仍增长。完整运行分别为 19→79、154→219 字节。</td><td><span class="result bad">仍可写入</span><br>与 AIO 有同类缺口。</td></tr>
+<tr><td>环境 TTL 到期</td><td>60 秒期限后约 0.35 秒删除容器；脱离进程停止，工作区卷仍可读。</td><td><span class="result good">正常回收可用</span><br>前提是管理服务在线。</td></tr>
+<tr><td>管理服务被 SIGKILL</td><td>超过截止，心跳 3004→3074 字节；新命令 HTTP 200。管理服务恢复后才补回收。</td><td><span class="result bad">不满足本地截止</span></td></tr>
+<tr><td>完成后重启容器 / execd</td><td>卷内回执仍在；原执行 ID 状态 404、日志 400，均报 command not found。</td><td><span class="result bad">执行查询未恢复</span></td></tr>
+<tr><td>接受请求后丢失响应</td><td>文件已写入后取消 HTTP；按调用方键查不到结果，重复提交又执行一次。</td><td><span class="result bad">缺少所需去重</span><br>上游未承诺支持此键。</td></tr>
+</tbody>
+</table></div>
+</section>
+<section aria-labelledby="timeline">
+<h2 id="timeline">最关键的故障链</h2>
+<div class="flow">
+<div class="step"><small>01 · 创建</small><h3>60 秒环境期限</h3><p>启动脱离进程组的 writer，持续写独立卷。</p></div>
+<div class="step"><small>02 · 注入故障</small><h3>杀死管理服务</h3><p>确认管理容器退出码 137，执行容器继续存活。</p></div>
+<div class="step"><small>03 · 超过期限</small><h3 class="bad">继续写、继续执行</h3><p>文件仍增长，直连 execd 也能提交新命令。</p></div>
+<div class="step"><small>04 · 恢复</small><h3>管理服务补回收</h3><p>环境最终删除、文件保留；过期执行窗口已经发生。</p></div>
+</div>
+</section>
+<section class="decision" aria-labelledby="next">
+<h2 id="next">建议：继续复用后端，把接管边界补完整</h2>
+<p>本轮不足以支持全面替换 AIO。execd 仍适合作为命令与文件场景的候选；需要浏览器和组合工具时，AIO 仍有价值。二者都不能仅凭现有接口直接声明满足本项目的接管协议。</p>
+<ol>
+<li>本地执行保护：控制面失联后，受保护组件仍按期限停止用户进程和写入入口，并保留工作区。</li>
+<li>持久执行回执：派发前确定稳定操作 ID，响应丢失先查询；不能确认是否执行时保留 Unknown，不自动重发。</li>
+<li>下一步将已有 supervisor 原型与一个实际数据面组合，在目标 Kubernetes 环境验证命令、文件和所有写入入口。原型通过不等于正式接入完成。</li>
+</ol>
+</section>
+<section class="notes" aria-label="实验边界">
+<div class="note"><h3>本轮覆盖</h3><p>真实 Docker backend + execd，固定发布镜像 digest，独立卷与本地回环端口。完整测试主体耗时 151.62 秒；失败断言原样保留，代表尚未满足项目要求。</p><p>镜像内部包版本显示 0.1.0.dev0，因此以发布清单及 digest 标识实验对象。流解析、TTL 下限和动态端口问题已从探针中修正。</p></div>
+<div class="note"><h3>没有验证的部分</h3><p>OpenSandbox Kubernetes / FastSandbox、gVisor / Kata、续租和 epoch、文件 API / PTY / 浏览器入口、节点故障；也没有实测 E2B 或 Daytona。</p><p>本结果不代表所有 OpenSandbox 配置都同样失败。没有修改业务 API/worker，也没有部署或提交代码。</p></div>
+</section>
+<footer>
+<nav aria-label="证据和复现"><a href="opensandbox-runtime-verification.md">完整验证记录</a><a href="probes/opensandbox/README.md">复现步骤</a><a href="probes/opensandbox/runtime_test.go">Go 探针</a><a href="aio-runtime-verification.md">AIO 对照</a><a href="supervisor-verification.md">Supervisor 原型边界</a></nav>
+<p>结论依据本轮固定镜像实验。选型建议与已验证能力分别表述；HTML 是阅读摘要，具体环境、契约与证据以完整记录为准。</p>
+</footer>
+</main>
+</body>
+</html>

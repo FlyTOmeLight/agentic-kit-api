@@ -8,7 +8,9 @@ import (
 
 type Session struct {
 	ID         string    `gorm:"type:text;primaryKey;not null"`
-	OwnerID    string    `gorm:"type:text;not null;index:session_owner,priority:1"`
+	TenantID   string    `gorm:"type:text;not null;index:session_owner,priority:1"`
+	ProjectID  string    `gorm:"type:text;not null"`
+	OwnerID    string    `gorm:"type:text;not null;index:session_owner,priority:2"`
 	AgentID    string    `gorm:"type:text;not null;index"`
 	Title      string    `gorm:"type:text;not null"`
 	MessageSeq int64     `gorm:"not null;default:0"`

@@ -16,6 +16,12 @@ handler 测试可以覆盖绑定和响应，但无法完整验证 app.Run 装配
 
 证据：[框架生命周期测试](../../service/api_test.go)、[HTTP 与 SSE 契约测试](../../service/router_test.go)、[OpenAPI 路由测试](../../service/openapi_test.go)。
 
+## Forge 假服务需要保留可空的项目字段
+
+租户范围请求不带项目时，不要发送值为空的 `X-Forge-Project-ID`。Forge scope resolve 假服务响应必须包含 `project_id: null`；省略字段不满足当前 SDK 的响应契约，会使生命周期测试在业务路由执行前返回 503。
+
+修复测试 transport 的空项目 Header 和假服务响应后，`TestAPIFrameworkLifecycle` 及全仓 race 测试通过。证据：[生命周期测试](../../service/api_test.go)、[共享请求 transport](../../service/router_test.go)；本次结果见[验证记录](../verification.md#2026-11-16-forge-鉴权与租户隔离)。
+
 ## 恢复承诺需要跨进程故障验证
 
 恢复行为涉及独立 API、数据库、worker 执行权和已提交工具结果。只重建内存对象，无法证明进程退出后这些信息还能被新执行者正确使用。
