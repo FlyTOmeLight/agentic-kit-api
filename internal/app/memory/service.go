@@ -453,7 +453,12 @@ func (s *Service) Archive(ctx context.Context, op *memory.Operation) (archived b
 	return true, nil
 }
 
-func (s *Service) persistArchiveResult(ctx context.Context, op *memory.Operation, claim string, values map[string]any) error {
+func (s *Service) persistArchiveResult(
+	ctx context.Context,
+	op *memory.Operation,
+	claim string,
+	values map[string]any,
+) error {
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	result := s.db.WithContext(saveCtx).Model(&table.MemoryOperation{}).

@@ -57,7 +57,8 @@ Version = "${env:PRICING_VERSION:}"
 				}
 				return
 			}
-			if snapshot.Version != "prices-2026" || snapshot.InputPerMillion != 2.5 || snapshot.OutputPerMillion != 8 {
+			if snapshot.Version != "prices-2026" || snapshot.InputPerMillion != 2.5 ||
+				snapshot.OutputPerMillion != 8 {
 				t.Fatalf("decoded prices=%+v", snapshot)
 			}
 			if (snapshot.CachedInputPerMillion == nil) != (test.cached == nil) ||

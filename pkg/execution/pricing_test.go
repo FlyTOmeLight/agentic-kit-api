@@ -18,14 +18,18 @@ func TestPricingCatalogFreeze(t *testing.T) {
 	cached := 0.0
 	catalog := PricingCatalog{
 		Version: "release-1",
-		Models:  []ModelPrice{{Name: model.Name, InputPerMillion: 2, CachedInputPerMillion: &cached, OutputPerMillion: 8}},
+		Models: []ModelPrice{
+			{Name: model.Name, InputPerMillion: 2, CachedInputPerMillion: &cached, OutputPerMillion: 8},
+		},
 	}
 	snapshot, err = catalog.Freeze(model)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &PricingSnapshot{Version: "release-1", Model: model.Name, BaseURL: model.BaseURL,
-		InputPerMillion: 2, CachedInputPerMillion: &cached, OutputPerMillion: 8}
+	want := &PricingSnapshot{
+		Version: "release-1", Model: model.Name, BaseURL: model.BaseURL,
+		InputPerMillion: 2, CachedInputPerMillion: &cached, OutputPerMillion: 8,
+	}
 	if !reflect.DeepEqual(snapshot, want) {
 		t.Fatalf("snapshot=%+v want=%+v", snapshot, want)
 	}
@@ -75,17 +79,17 @@ func TestPricingCatalogRejectsInvalidConfiguration(t *testing.T) {
 		name    string
 		catalog PricingCatalog
 	}{
-		{"empty name", PricingCatalog{Models: []ModelPrice{{}}}},
-		{"untrimmed name", PricingCatalog{Models: []ModelPrice{{Name: " model"}}}},
-		{"duplicate", PricingCatalog{Models: []ModelPrice{{Name: "model"}, {Name: "model"}}}},
-		{"negative input", PricingCatalog{Models: []ModelPrice{{Name: "model", InputPerMillion: -1}}}},
-		{"nan output", PricingCatalog{Models: []ModelPrice{{Name: "model", OutputPerMillion: math.NaN()}}}},
-		{"infinite input", PricingCatalog{Models: []ModelPrice{{Name: "model", InputPerMillion: math.Inf(-1)}}}},
-		{"negative cached", PricingCatalog{Models: []ModelPrice{{Name: "model", CachedInputPerMillion: &negative}}}},
-		{"nan cached", PricingCatalog{Models: []ModelPrice{{Name: "model", CachedInputPerMillion: &nan}}}},
-		{"infinite cached", PricingCatalog{Models: []ModelPrice{{Name: "model", CachedInputPerMillion: &infinite}}}},
-		{"newline version", PricingCatalog{Version: "version\n"}},
-		{"carriage return version", PricingCatalog{Version: "version\r"}},
+		{name: "empty name", catalog: PricingCatalog{Models: []ModelPrice{{}}}},
+		{name: "untrimmed name", catalog: PricingCatalog{Models: []ModelPrice{{Name: " model"}}}},
+		{name: "duplicate", catalog: PricingCatalog{Models: []ModelPrice{{Name: "model"}, {Name: "model"}}}},
+		{name: "negative input", catalog: PricingCatalog{Models: []ModelPrice{{Name: "model", InputPerMillion: -1}}}},
+		{name: "nan output", catalog: PricingCatalog{Models: []ModelPrice{{Name: "model", OutputPerMillion: math.NaN()}}}},
+		{name: "infinite input", catalog: PricingCatalog{Models: []ModelPrice{{Name: "model", InputPerMillion: math.Inf(-1)}}}},
+		{name: "negative cached", catalog: PricingCatalog{Models: []ModelPrice{{Name: "model", CachedInputPerMillion: &negative}}}},
+		{name: "nan cached", catalog: PricingCatalog{Models: []ModelPrice{{Name: "model", CachedInputPerMillion: &nan}}}},
+		{name: "infinite cached", catalog: PricingCatalog{Models: []ModelPrice{{Name: "model", CachedInputPerMillion: &infinite}}}},
+		{name: "newline version", catalog: PricingCatalog{Version: "version\n"}},
+		{name: "carriage return version", catalog: PricingCatalog{Version: "version\r"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if test.catalog.Validate() == nil {

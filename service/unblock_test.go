@@ -54,7 +54,12 @@ func TestSDKUnblockRun(t *testing.T) {
 		{name: "query cannot supply reason", body: `{"epoch":1}`, token: testToken, status: 400, code: "InvalidParameter", query: "?Reason=accept"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assertError(t, request(router, http.MethodPost, path+test.query, test.body, test.token, ""), test.status, test.code)
+			assertError(
+				t,
+				request(router, http.MethodPost, path+test.query, test.body, test.token, ""),
+				test.status,
+				test.code,
+			)
 			got, getErr := store.Get(ctx, "owner", run.ID)
 			if getErr != nil || got.Status != durable.Blocked || got.Epoch != claim.Epoch {
 				t.Fatalf("rejected request changed run: %+v, err=%v", got, getErr)

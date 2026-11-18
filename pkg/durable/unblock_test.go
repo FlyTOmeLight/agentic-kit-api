@@ -55,7 +55,8 @@ func TestUnblockResumesAndAudits(t *testing.T) {
 		t.Fatalf("checkpoint changed: %s", got.State)
 	}
 	updatedGoal, err := store.GetGoal(ctx, "owner", goal.ID)
-	if err != nil || updatedGoal.Status != GoalActive || updatedGoal.TokensUsed != 12 || updatedGoal.CostUSD != 0.25 {
+	if err != nil || updatedGoal.Status != GoalActive || updatedGoal.TokensUsed != 12 ||
+		updatedGoal.CostUSD != 0.25 {
 		t.Fatalf("goal=%+v err=%v", updatedGoal, err)
 	}
 	events, err := store.Events(ctx, "owner", run.ID, 0)
@@ -124,28 +125,46 @@ func TestUnblockRejectsWithoutMutation(t *testing.T) {
 		{name: "completed", change: map[string]any{"status": Completed}, want: ErrConflict},
 		{name: "running", change: map[string]any{"status": Running}, want: ErrConflict},
 		{name: "no marker", change: map[string]any{"state": `{"version":3}`}, want: ErrConflict},
-		{name: "unknown version", change: map[string]any{"state": `{"version":4,"inflightModel":{"kind":"model","sequence":0}}`}, want: ErrConflict},
+		{
+			name:   "unknown version",
+			change: map[string]any{"state": `{"version":4,"inflightModel":{"kind":"model","sequence":0}}`},
+			want:   ErrConflict,
+		},
 		{name: "token budget", goal: map[string]any{"tokens_used": 100}, want: ErrConflict},
 		{name: "cost budget", goal: map[string]any{"cost_usd": 10}, want: ErrConflict},
 		{name: "stalled", goal: map[string]any{"stall_count": 3}, want: ErrConflict},
 		{name: "goal paused", goal: map[string]any{"status": GoalPaused}, want: ErrConflict},
 		{name: "goal complete", goal: map[string]any{"status": GoalComplete}, want: ErrConflict},
-		{name: "goal expired", goal: map[string]any{"created_at": time.Now().Add(-2 * time.Hour)}, want: ErrConflict},
+		{
+			name: "goal expired",
+			goal: map[string]any{"created_at": time.Now().Add(-2 * time.Hour)},
+			want: ErrConflict,
+		},
 		{name: "goal changed run", goal: map[string]any{"active_run_id": "other"}, want: ErrConflict},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := testStore(t)
 			ctx := context.Background()
-			run, goal := claimedRunWithGoal(t, store, BudgetSpec{MaxTokens: 100, MaxCostUSD: 10, MaxWallClockSeconds: 3600})
+			run, goal := claimedRunWithGoal(
+				t,
+				store,
+				BudgetSpec{MaxTokens: 100, MaxCostUSD: 10, MaxWallClockSeconds: 3600},
+			)
 			parkDispatch(t, store, run)
 			if len(test.change) > 0 {
-				if err := store.db.Model(&table.Run{}).Where("id = ?", run.ID).Updates(test.change).Error; err != nil {
+				if err := store.db.Model(&table.Run{}).
+					Where("id = ?", run.ID).
+					Updates(test.change).
+					Error; err != nil {
 					t.Fatal(err)
 				}
 			}
 			if len(test.goal) > 0 {
-				if err := store.db.Model(&table.Goal{}).Where("id = ?", goal.ID).Updates(test.goal).Error; err != nil {
+				if err := store.db.Model(&table.Goal{}).
+					Where("id = ?", goal.ID).
+					Updates(test.goal).
+					Error; err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -196,12 +215,17 @@ func TestUnblockBusySessionAndRollback(t *testing.T) {
 			case "locked session":
 				tx := store.db.Begin()
 				defer tx.Rollback()
-				if err := tx.Exec("SELECT id FROM agent_session WHERE id = ? FOR UPDATE", run.SessionID).Error; err != nil {
+				if err := tx.Exec(
+					"SELECT id FROM agent_session WHERE id = ? FOR UPDATE",
+					run.SessionID,
+				).Error; err != nil {
 					t.Fatal(err)
 				}
 			case "event failure":
 				want = nil
-				if err := store.db.Exec(`ALTER TABLE durable_event ADD CONSTRAINT reject_unblock CHECK (kind <> 'RunUnblocked')`).Error; err != nil {
+				if err := store.db.Exec(
+					`ALTER TABLE durable_event ADD CONSTRAINT reject_unblock CHECK (kind <> 'RunUnblocked')`,
+				).Error; err != nil {
 					t.Fatal(err)
 				}
 			}

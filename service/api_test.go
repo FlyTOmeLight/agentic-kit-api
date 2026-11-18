@@ -65,7 +65,7 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	t.Setenv("SERVER_CONFIG_PATH", "../conf/server/config.toml")
 	artifactServer, _ := newFakeArtifact(t)
-	t.Setenv("ARTIFACT_ENDPOINT", artifactServer.URL)
+	t.Setenv("AGENT_ARTIFACT_ENDPOINT", artifactServer.URL)
 	token := "framework-lifecycle-test-token-32chars"
 	serviceKey := strings.Repeat("k", 32)
 	tenantServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {

@@ -148,7 +148,8 @@ func TestTenantServiceAndPropagation(t *testing.T) {
 			router.Group("", middleware...).GET("/", func(c *core.Context) {
 				scope, ok := access.FromContext(c.Request.Context())
 				if test.propagation {
-					if !ok || scope != (access.Scope{TenantID: test.tenant, ProjectID: test.project}) ||
+					if !ok ||
+						scope != (access.Scope{TenantID: test.tenant, ProjectID: test.project}) ||
 						auth.UserID(c) != test.user {
 						t.Errorf("unexpected propagated scope: %+v", scope)
 					}

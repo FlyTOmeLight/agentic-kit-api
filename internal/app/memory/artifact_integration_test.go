@@ -169,7 +169,12 @@ func TestArtifactIntegrationPendingRecoveryAndHistory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	ctx = access.WithScope(ctx, access.Scope{TenantID: binding.TenantID})
-	doc := factDocument(memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner", Tenant: binding.TenantID}, "editor", "first", "tabs")
+	doc := factDocument(
+		memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner", Tenant: binding.TenantID},
+		"editor",
+		"first",
+		"tabs",
+	)
 	entry, err := svc.Create(ctx, "owner", "editor", "create", doc)
 	if err != nil {
 		t.Fatal(err)

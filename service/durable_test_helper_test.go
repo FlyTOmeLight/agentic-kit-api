@@ -58,7 +58,14 @@ func createDurableRun(t *testing.T, s *durable.Store) *durable.Run {
 		Model:    durable.ModelSpec{Name: "test", BaseURL: "http://localhost:11434/v1"},
 		MaxTurns: 5,
 	}
-	agentRow := table.Agent{ID: durable.NewID(), TenantID: "tenant", OwnerID: "owner", Name: "test", Draft: cfg, Revision: 1}
+	agentRow := table.Agent{
+		ID:       durable.NewID(),
+		TenantID: "tenant",
+		OwnerID:  "owner",
+		Name:     "test",
+		Draft:    cfg,
+		Revision: 1,
+	}
 	if err := s.DB().Create(&agentRow).Error; err != nil {
 		t.Fatal(err)
 	}

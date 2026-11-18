@@ -93,7 +93,12 @@ func TestMemoryAPIRequiresTrustedScope(t *testing.T) {
 		{name: "untrimmed tenant", ctx: access.WithScope(context.Background(), access.Scope{TenantID: " tenant-a"})},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			doc := factDocument(memory.Scope{Kind: memory.ScopeOwnerPrivate, Tenant: "tenant-a"}, "editor", "editor", "tabs")
+			doc := factDocument(
+				memory.Scope{Kind: memory.ScopeOwnerPrivate, Tenant: "tenant-a"},
+				"editor",
+				"editor",
+				"tabs",
+			)
 			for name, call := range map[string]func() error{
 				"Create": func() error {
 					_, err := svc.Create(test.ctx, "owner", "actor", "key", doc)
@@ -145,7 +150,10 @@ func TestMemoryDocumentMustMatchTrustedScope(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			doc := factDocument(memory.Scope{
-				Kind: memory.ScopeOwnerPrivate, Owner: "forged", Tenant: test.tenant, Project: test.project,
+				Kind:    memory.ScopeOwnerPrivate,
+				Owner:   "forged",
+				Tenant:  test.tenant,
+				Project: test.project,
 			}, "editor", "editor", "tabs")
 			for name, call := range map[string]func() error{
 				"Create": func() error {
@@ -292,8 +300,18 @@ func TestMemorySameOwnerTenantIsolation(t *testing.T) {
 	svc, store := testService(t)
 	ctxA := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-a", ProjectID: "project-a"})
 	ctxB := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-b", ProjectID: "project-b"})
-	scopeA := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "forged-owner", Tenant: "tenant-a", Project: "project-a"}
-	scopeB := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "forged-owner", Tenant: "tenant-b", Project: "project-b"}
+	scopeA := memory.Scope{
+		Kind:    memory.ScopeOwnerPrivate,
+		Owner:   "forged-owner",
+		Tenant:  "tenant-a",
+		Project: "project-a",
+	}
+	scopeB := memory.Scope{
+		Kind:    memory.ScopeOwnerPrivate,
+		Owner:   "forged-owner",
+		Tenant:  "tenant-b",
+		Project: "project-b",
+	}
 	docA := factDocument(scopeA, "editor", "editor A", "tabs")
 	docB := factDocument(scopeB, "editor", "editor B", "spaces")
 	entryA, err := svc.Create(ctxA, "owner", "actor", "shared-key", docA)
@@ -308,7 +326,11 @@ func TestMemorySameOwnerTenantIsolation(t *testing.T) {
 		t.Fatal("document owner was trusted")
 	}
 	var receipts []table.MemoryOperation
-	if err = store.DB().Where("owner_id = ? AND request_key = ?", "owner", "shared-key").Order("tenant_id").Find(&receipts).Error; err != nil {
+	if err = store.DB().
+		Where("owner_id = ? AND request_key = ?", "owner", "shared-key").
+		Order("tenant_id").
+		Find(&receipts).
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	if len(receipts) != 2 || receipts[0].TenantID != "tenant-a" || receipts[1].TenantID != "tenant-b" {
@@ -336,13 +358,45 @@ func TestMemorySameOwnerTenantIsolation(t *testing.T) {
 			if _, err = svc.Get(test.ctx, "owner", test.other.ID); !errors.Is(err, memory.ErrNotFound) {
 				t.Fatalf("cross-tenant Get = %v", err)
 			}
-			if _, err = svc.Update(test.ctx, "owner", "actor", "cross-update", test.other.ID, 1, test.doc); !errors.Is(err, memory.ErrNotFound) {
+			if _, err = svc.Update(
+				test.ctx,
+				"owner",
+				"actor",
+				"cross-update",
+				test.other.ID,
+				1,
+				test.doc,
+			); !errors.Is(
+				err,
+				memory.ErrNotFound,
+			) {
 				t.Fatalf("cross-tenant Update = %v", err)
 			}
-			if _, err = svc.Retire(test.ctx, "owner", "actor", "cross-retire", test.other.ID, 1); !errors.Is(err, memory.ErrNotFound) {
+			if _, err = svc.Retire(
+				test.ctx,
+				"owner",
+				"actor",
+				"cross-retire",
+				test.other.ID,
+				1,
+			); !errors.Is(
+				err,
+				memory.ErrNotFound,
+			) {
 				t.Fatalf("cross-tenant Retire = %v", err)
 			}
-			if _, err = svc.Restore(test.ctx, "owner", "actor", "cross-restore", test.other.ID, 1, test.doc); !errors.Is(err, memory.ErrNotFound) {
+			if _, err = svc.Restore(
+				test.ctx,
+				"owner",
+				"actor",
+				"cross-restore",
+				test.other.ID,
+				1,
+				test.doc,
+			); !errors.Is(
+				err,
+				memory.ErrNotFound,
+			) {
 				t.Fatalf("cross-tenant Restore = %v", err)
 			}
 		})
@@ -392,12 +446,26 @@ func TestResumePendingUsesReceiptTenantAndFixedBinding(t *testing.T) {
 		doc := factDocument(memory.Scope{
 			Kind: memory.ScopeOwnerPrivate, Tenant: tenant, Project: "project",
 		}, "editor", "editor", "tabs")
-		if _, err := svc.Create(ctx, "owner", "actor", "same-key", doc); !errors.Is(err, memory.ErrUnavailable) {
+		if _, err := svc.Create(
+			ctx,
+			"owner",
+			"actor",
+			"same-key",
+			doc,
+		); !errors.Is(
+			err,
+			memory.ErrUnavailable,
+		) {
 			t.Fatalf("Create in %s = %v, want ErrUnavailable", tenant, err)
 		}
 	}
 
-	legacyDoc := factDocument(memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}, "editor", "editor", "tabs")
+	legacyDoc := factDocument(
+		memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"},
+		"editor",
+		"editor",
+		"tabs",
+	)
 	legacyDoc.SchemaVersion = schemaVersion
 	legacyDoc.EntryID = newEntryID()
 	legacyOp := operationFromDocument(&legacyDoc, "owner", "actor", "same-key", memory.OperationCreate, 0)

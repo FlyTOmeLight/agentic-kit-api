@@ -466,7 +466,14 @@ func TestSignedCallbackResumesRunWithoutQueryOverride(t *testing.T) {
 func TestCallbackBodyLimitsAndJSONBinding(t *testing.T) {
 	path := "/internal/v1/executions/run/callback"
 	for _, secret := range []string{"", "test-secret"} {
-		router := newRouterWithCallback(t, nil, nil, nil, config.CallbackConfig{Enabled: true, SigningSecret: secret}, nil)
+		router := newRouterWithCallback(
+			t,
+			nil,
+			nil,
+			nil,
+			config.CallbackConfig{Enabled: true, SigningSecret: secret},
+			nil,
+		)
 		for _, test := range []struct {
 			name, body, contentType, query string
 			status                         int

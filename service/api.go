@@ -119,7 +119,17 @@ func NewWithSandbox(
 			log,
 		)
 	}
-	a.routes = newRoutes(store, cache, artifact, archive, sandboxStore, provider, cfg.Callback, a.routes.authentication, cfg.Pricing)
+	a.routes = newRoutes(
+		store,
+		cache,
+		artifact,
+		archive,
+		sandboxStore,
+		provider,
+		cfg.Callback,
+		a.routes.authentication,
+		cfg.Pricing,
+	)
 	if provider != nil && cfg.Sandbox.CheckpointImage != "" {
 		checkpoints := sandboxcenter.NewService(sandboxStore, provider).
 			WithCheckpoints(sandboxcenter.CheckpointConfig{

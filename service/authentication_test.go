@@ -56,20 +56,27 @@ func TestRouteAuthenticationBoundaries(t *testing.T) {
 			test.authentication.User = gate("user")
 			artifactServer, _ := newFakeArtifact(t)
 			routes := newRoutes(
-				&durable.Store{}, nil, newArtifactClient(t, artifactServer),
+				&durable.Store{},
 				nil,
-				sandboxcenter.NewStore(nil), nil,
-				config.CallbackConfig{Enabled: test.callbackEnabled}, test.authentication, execution.PricingCatalog{},
+				newArtifactClient(t, artifactServer),
+				nil,
+				sandboxcenter.NewStore(nil),
+				nil,
+				config.CallbackConfig{
+					Enabled: test.callbackEnabled,
+				},
+				test.authentication,
+				execution.PricingCatalog{},
 			)
 			router := gin.New()
 			routes.register(router.Group(""))
 			for _, route := range []struct{ method, path, auth string }{
-				{"GET", "/v1/agents", "user"},
-				{"POST", "/internal/v1/executions", test.propagation},
-				{"GET", "/internal/v1/executions/run/lease", test.propagation},
-				{"POST", "/internal/v1/goals", test.propagation},
-				{"POST", "/internal/v1/executions/run/callback", test.callback},
-				{"GET", "/v1/sandboxes/sandbox", test.sandbox},
+				{method: "GET", path: "/v1/agents", auth: "user"},
+				{method: "POST", path: "/internal/v1/executions", auth: test.propagation},
+				{method: "GET", path: "/internal/v1/executions/run/lease", auth: test.propagation},
+				{method: "POST", path: "/internal/v1/goals", auth: test.propagation},
+				{method: "POST", path: "/internal/v1/executions/run/callback", auth: test.callback},
+				{method: "GET", path: "/v1/sandboxes/sandbox", auth: test.sandbox},
 			} {
 				response := httptest.NewRecorder()
 				router.ServeHTTP(response, httptest.NewRequest(route.method, route.path, nil))
@@ -77,7 +84,8 @@ func TestRouteAuthenticationBoundaries(t *testing.T) {
 				if route.auth == "" {
 					want = http.StatusNotFound
 				}
-				if response.Code != want || response.Header().Get("X-Test-Authentication") != route.auth {
+				if response.Code != want ||
+					response.Header().Get("X-Test-Authentication") != route.auth {
 					t.Errorf("%s %s: status=%d authentication=%q want=%d/%q",
 						route.method, route.path, response.Code,
 						response.Header().Get("X-Test-Authentication"), want, route.auth)
@@ -102,7 +110,9 @@ func TestHTTPRoutesRequireTenantScope(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			identity := func(c *core.Context) {
 				if test.scope != nil {
-					c.Request = c.Request.WithContext(access.WithScope(c.Request.Context(), *test.scope))
+					c.Request = c.Request.WithContext(
+						access.WithScope(c.Request.Context(), *test.scope),
+					)
 				}
 				c.Next()
 			}
@@ -119,17 +129,23 @@ func TestHTTPRoutesRequireTenantScope(t *testing.T) {
 			router := gin.New()
 			routes.register(router.Group(""))
 			for _, route := range []struct{ method, path string }{
-				{"GET", "/v1/agents"},
-				{"GET", "/v1/sessions"},
-				{"GET", "/v1/runs/run"},
-				{"POST", "/internal/v1/executions"},
-				{"GET", "/internal/v1/executions/run/lease"},
-				{"POST", "/internal/v1/goals"},
+				{method: "GET", path: "/v1/agents"},
+				{method: "GET", path: "/v1/sessions"},
+				{method: "GET", path: "/v1/runs/run"},
+				{method: "POST", path: "/internal/v1/executions"},
+				{method: "GET", path: "/internal/v1/executions/run/lease"},
+				{method: "POST", path: "/internal/v1/goals"},
 			} {
 				response := httptest.NewRecorder()
 				router.ServeHTTP(response, httptest.NewRequest(route.method, route.path, nil))
 				if response.Code != http.StatusForbidden {
-					t.Errorf("%s %s: status=%d body=%s", route.method, route.path, response.Code, response.Body)
+					t.Errorf(
+						"%s %s: status=%d body=%s",
+						route.method,
+						route.path,
+						response.Code,
+						response.Body,
+					)
 				}
 			}
 		})

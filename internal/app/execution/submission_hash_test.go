@@ -43,7 +43,13 @@ func TestSubmissionRequestHash(t *testing.T) {
 					{Terms: []string{}, Tags: []string{}},
 				} {
 					if got := path.hash(selection, filter); got != legacyHash {
-						t.Fatalf("selection %q filter %+v: hash = %s, want legacy %s", selection, filter, got, legacyHash)
+						t.Fatalf(
+							"selection %q filter %+v: hash = %s, want legacy %s",
+							selection,
+							filter,
+							got,
+							legacyHash,
+						)
 					}
 				}
 			}

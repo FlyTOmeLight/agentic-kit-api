@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
-	"gorm.io/gorm"
 )
 
 func setRunTenant(t *testing.T, store *Store, run *Run, tenant, project string) {
@@ -69,7 +70,13 @@ func TestTenantRunAndGoalIsolation(t *testing.T) {
 			if _, err := store.Trace(ctx, "owner", runA.ID, 0); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("Trace: %v", err)
 			}
-			if _, _, err := store.CreateGoal(ctx, newTestGoal(runA.SessionID, "denied", "goal")); !errors.Is(err, ErrNotFound) {
+			if _, _, err := store.CreateGoal(
+				ctx,
+				newTestGoal(runA.SessionID, "denied", "goal"),
+			); !errors.Is(
+				err,
+				ErrNotFound,
+			) {
 				t.Fatalf("CreateGoal: %v", err)
 			}
 		})
@@ -121,23 +128,43 @@ func TestTenantSupplyResultIsolation(t *testing.T) {
 				if err := store.db.Where("id = ?", run.ID).Take(&state.Run).Error; err != nil {
 					t.Fatal(err)
 				}
-				if err := store.db.Where("id = ?", run.SessionID).Take(&state.Session).Error; err != nil {
+				if err := store.db.Where("id = ?", run.SessionID).
+					Take(&state.Session).
+					Error; err != nil {
 					t.Fatal(err)
 				}
-				if err := store.db.Where("run_id = ? AND step_id = ?", run.ID, "answer").Take(&state.Step).Error; err != nil {
+				if err := store.db.Where("run_id = ? AND step_id = ?", run.ID, "answer").
+					Take(&state.Step).
+					Error; err != nil {
 					t.Fatal(err)
 				}
-				if err := store.db.Model(&table.Message{}).Where("run_id = ?", run.ID).Count(&state.Messages).Error; err != nil {
+				if err := store.db.Model(&table.Message{}).
+					Where("run_id = ?", run.ID).
+					Count(&state.Messages).
+					Error; err != nil {
 					t.Fatal(err)
 				}
-				if err := store.db.Model(&table.Event{}).Where("run_id = ?", run.ID).Count(&state.Events).Error; err != nil {
+				if err := store.db.Model(&table.Event{}).
+					Where("run_id = ?", run.ID).
+					Count(&state.Events).
+					Error; err != nil {
 					t.Fatal(err)
 				}
 				return state
 			}
 			before := snapshot()
 			for _, ctx := range []context.Context{ctxB, access.WithScope(context.Background(), access.Scope{})} {
-				if err := store.SupplyResult(ctx, "owner", run.ID, "answer", "accepted", kind); !errors.Is(err, ErrNotFound) {
+				if err := store.SupplyResult(
+					ctx,
+					"owner",
+					run.ID,
+					"answer",
+					"accepted",
+					kind,
+				); !errors.Is(
+					err,
+					ErrNotFound,
+				) {
 					t.Fatalf("cross-tenant answer: %v", err)
 				}
 				if !reflect.DeepEqual(before, snapshot()) {
@@ -152,14 +179,26 @@ func TestTenantSupplyResultIsolation(t *testing.T) {
 				t.Fatalf("same-tenant resume: %+v, %v", resumed, err)
 			}
 			var step table.Step
-			if err = store.db.Where("run_id = ? AND step_id = ?", run.ID, "answer").Take(&step).Error; err != nil {
+			if err = store.db.Where("run_id = ? AND step_id = ?", run.ID, "answer").
+				Take(&step).
+				Error; err != nil {
 				t.Fatal(err)
 			}
 			if step.Status != "Completed" || step.Result != "accepted" {
 				t.Fatalf("answer not committed: %+v", step)
 			}
 			done := snapshot()
-			if err = store.SupplyResult(ctxB, "owner", run.ID, "answer", "accepted", kind); !errors.Is(err, ErrNotFound) {
+			if err = store.SupplyResult(
+				ctxB,
+				"owner",
+				run.ID,
+				"answer",
+				"accepted",
+				kind,
+			); !errors.Is(
+				err,
+				ErrNotFound,
+			) {
 				t.Fatalf("cross-tenant completed replay: %v", err)
 			}
 			if err = store.SupplyResult(ctxA, "owner", run.ID, "answer", "accepted", kind); err != nil {
@@ -204,20 +243,38 @@ func TestTenantSupplyExternalResultIsolation(t *testing.T) {
 		if err := store.db.Where("id = ?", run.SessionID).Take(&state.Session).Error; err != nil {
 			t.Fatal(err)
 		}
-		if err := store.db.Where("run_id = ? AND step_id = ?", run.ID, intent.ID).Take(&state.Step).Error; err != nil {
+		if err := store.db.Where("run_id = ? AND step_id = ?", run.ID, intent.ID).
+			Take(&state.Step).
+			Error; err != nil {
 			t.Fatal(err)
 		}
-		if err := store.db.Model(&table.Message{}).Where("run_id = ?", run.ID).Count(&state.Messages).Error; err != nil {
+		if err := store.db.Model(&table.Message{}).
+			Where("run_id = ?", run.ID).
+			Count(&state.Messages).
+			Error; err != nil {
 			t.Fatal(err)
 		}
-		if err := store.db.Model(&table.Event{}).Where("run_id = ?", run.ID).Count(&state.Events).Error; err != nil {
+		if err := store.db.Model(&table.Event{}).
+			Where("run_id = ?", run.ID).
+			Count(&state.Events).
+			Error; err != nil {
 			t.Fatal(err)
 		}
 		return state
 	}
 	before := snapshot()
 	for _, ctx := range []context.Context{ctxB, access.WithScope(context.Background(), access.Scope{})} {
-		if err := store.SupplyExternalResult(ctx, "owner", run.ID, intent.ID, intent.ExternalRef, "ok"); !errors.Is(err, ErrNotFound) {
+		if err := store.SupplyExternalResult(
+			ctx,
+			"owner",
+			run.ID,
+			intent.ID,
+			intent.ExternalRef,
+			"ok",
+		); !errors.Is(
+			err,
+			ErrNotFound,
+		) {
 			t.Fatalf("cross-tenant external result: %v", err)
 		}
 		if !reflect.DeepEqual(before, snapshot()) {
@@ -232,7 +289,17 @@ func TestTenantSupplyExternalResultIsolation(t *testing.T) {
 		t.Fatalf("same-tenant external result: %+v, %v", resumed, err)
 	}
 	done := snapshot()
-	if err = store.SupplyExternalResult(ctxB, "owner", run.ID, intent.ID, intent.ExternalRef, "ok"); !errors.Is(err, ErrNotFound) {
+	if err = store.SupplyExternalResult(
+		ctxB,
+		"owner",
+		run.ID,
+		intent.ID,
+		intent.ExternalRef,
+		"ok",
+	); !errors.Is(
+		err,
+		ErrNotFound,
+	) {
 		t.Fatalf("cross-tenant completed replay: %v", err)
 	}
 	if err = store.SupplyExternalResult(ctxA, "owner", run.ID, intent.ID, intent.ExternalRef, "ok"); err != nil {
@@ -282,9 +349,10 @@ func TestTenantGoalIterationInheritance(t *testing.T) {
 		goal    *Goal
 		tenant  string
 		project string
-	}{{goalA, "tenant-a", "project-a"}, {goalB, "tenant-b", "project-b"}} {
+	}{{goal: goalA, tenant: "tenant-a", project: "project-a"}, {goal: goalB, tenant: "tenant-b", project: "project-b"}} {
 		if err := store.db.Model(&table.Goal{}).Where("id = ?", item.goal.ID).
-			Updates(map[string]any{"tenant_id": item.tenant, "project_id": item.project}).Error; err != nil {
+			Updates(map[string]any{"tenant_id": item.tenant, "project_id": item.project}).
+			Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -292,7 +360,12 @@ func TestTenantGoalIterationInheritance(t *testing.T) {
 		Update("updated_at", gorm.Expr("clock_timestamp()-interval '1 minute'")).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.QueueGoalIteration(access.WithScope(context.Background(), access.Scope{})); !errors.Is(err, ErrNoWork) {
+	if _, err := store.QueueGoalIteration(
+		access.WithScope(context.Background(), access.Scope{}),
+	); !errors.Is(
+		err,
+		ErrNoWork,
+	) {
 		t.Fatalf("invalid scope: %v", err)
 	}
 	for _, item := range []struct {
@@ -301,8 +374,8 @@ func TestTenantGoalIterationInheritance(t *testing.T) {
 		tenant  string
 		project string
 	}{
-		{access.WithScope(context.Background(), access.Scope{TenantID: "tenant-b"}), goalB, "tenant-b", "project-b"},
-		{context.Background(), goalA, "tenant-a", "project-a"},
+		{ctx: access.WithScope(context.Background(), access.Scope{TenantID: "tenant-b"}), goal: goalB, tenant: "tenant-b", project: "project-b"},
+		{ctx: context.Background(), goal: goalA, tenant: "tenant-a", project: "project-a"},
 	} {
 		next, err := store.QueueGoalIteration(item.ctx)
 		if err != nil || next == nil || next.GoalID != item.goal.ID {

@@ -3,9 +3,10 @@ package table
 import (
 	"context"
 
-	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 )
 
 func TenantQuery(ctx context.Context, db *gorm.DB) *gorm.DB {

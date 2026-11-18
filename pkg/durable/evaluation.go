@@ -62,7 +62,10 @@ func (s *Store) recordEvaluation(
 	}
 	defer tx.Rollback()
 	var goal table.Goal
-	if err := table.TenantQuery(ctx, tx).Where("owner_id = ? AND id = ?", owner, goalID).Take(&goal).Error; err != nil {
+	if err := table.TenantQuery(ctx, tx).
+		Where("owner_id = ? AND id = ?", owner, goalID).
+		Take(&goal).
+		Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}

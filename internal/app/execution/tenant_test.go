@@ -26,25 +26,46 @@ func TestSubmitApplicationRejectsMismatchedTenantScope(t *testing.T) {
 		spec    *workspace.Scope
 	}{
 		{name: "missing spec scope", request: access.Scope{TenantID: "tenant-a"}},
-		{name: "different tenant", request: access.Scope{TenantID: "tenant-a"},
-			spec: &workspace.Scope{TenantID: "tenant-b"}},
-		{name: "different project", request: access.Scope{TenantID: "tenant-a", ProjectID: "project-a"},
-			spec: &workspace.Scope{TenantID: "tenant-a", ProjectID: "project-b"}},
-		{name: "missing spec project", request: access.Scope{TenantID: "tenant-a", ProjectID: "project-a"},
-			spec: &workspace.Scope{TenantID: "tenant-a"}},
-		{name: "unexpected spec project", request: access.Scope{TenantID: "tenant-a"},
-			spec: &workspace.Scope{TenantID: "tenant-a", ProjectID: "project-b"}},
-		{name: "empty request tenant", request: access.Scope{},
-			spec: &workspace.Scope{TenantID: "tenant-a"}},
+		{
+			name: "different tenant", request: access.Scope{TenantID: "tenant-a"},
+			spec: &workspace.Scope{TenantID: "tenant-b"},
+		},
+		{
+			name: "different project", request: access.Scope{TenantID: "tenant-a", ProjectID: "project-a"},
+			spec: &workspace.Scope{TenantID: "tenant-a", ProjectID: "project-b"},
+		},
+		{
+			name:    "missing spec project",
+			request: access.Scope{TenantID: "tenant-a", ProjectID: "project-a"},
+			spec:    &workspace.Scope{TenantID: "tenant-a"},
+		},
+		{
+			name: "unexpected spec project", request: access.Scope{TenantID: "tenant-a"},
+			spec: &workspace.Scope{TenantID: "tenant-a", ProjectID: "project-b"},
+		},
+		{
+			name: "empty request tenant", request: access.Scope{},
+			spec: &workspace.Scope{TenantID: "tenant-a"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := access.WithScope(context.Background(), test.request)
 			service := NewService(nil, nil)
 			run, created, err := service.SubmitApplication(
-				ctx, client.Identity{TenantID: "tenant-a"}, "owner", "key",
-				execpkg.ExecutionSpec{AgentID: "agent", AgentVersion: 1, Query: "query", Scope: test.spec},
-				time.Minute, memory.SelectionOff, memory.RecallFilter{},
+				ctx,
+				client.Identity{TenantID: "tenant-a"},
+				"owner",
+				"key",
+				execpkg.ExecutionSpec{
+					AgentID:      "agent",
+					AgentVersion: 1,
+					Query:        "query",
+					Scope:        test.spec,
+				},
+				time.Minute,
+				memory.SelectionOff,
+				memory.RecallFilter{},
 			)
 			if !errors.Is(err, agent.ErrInvalid) || run != nil || created {
 				t.Fatalf("scope mismatch: run=%+v created=%v err=%v", run, created, err)
@@ -96,11 +117,21 @@ type tenantArtifactStore struct {
 	payload []byte
 }
 
-func (store *tenantArtifactStore) EnsureCollection(_ context.Context, _ client.Identity, agentID string) (string, error) {
+func (store *tenantArtifactStore) EnsureCollection(
+	_ context.Context,
+	_ client.Identity,
+	agentID string,
+) (string, error) {
 	return agentID, nil
 }
 
-func (store *tenantArtifactStore) PublishVersion(context.Context, client.Identity, string, string, []byte) (client.VersionRef, error) {
+func (store *tenantArtifactStore) PublishVersion(
+	context.Context,
+	client.Identity,
+	string,
+	string,
+	[]byte,
+) (client.VersionRef, error) {
 	return client.VersionRef{}, agent.ErrUnavailable
 }
 
@@ -127,17 +158,29 @@ func TestSubmissionTenantRequestKeyIsolation(t *testing.T) {
 			runs := make(map[string]*execpkg.Run)
 			submissions := make(map[string]func() (*execpkg.Run, bool, error))
 			for _, tenant := range []string{"tenant-a", "tenant-b"} {
-				ctx := access.WithScope(context.Background(), access.Scope{TenantID: tenant, ProjectID: "project"})
+				ctx := access.WithScope(
+					context.Background(),
+					access.Scope{TenantID: tenant, ProjectID: "project"},
+				)
 				row := table.Agent{
-					ID: durable.NewID(), TenantID: tenant, ProjectID: "project", OwnerID: owner,
-					Name: "agent", Draft: config, Revision: 1, PublishedRevision: 1, PublishedVersion: 1,
+					ID:                durable.NewID(),
+					TenantID:          tenant,
+					ProjectID:         "project",
+					OwnerID:           owner,
+					Name:              "agent",
+					Draft:             config,
+					Revision:          1,
+					PublishedRevision: 1,
+					PublishedVersion:  1,
 				}
 				if err := store.DB().Create(&row).Error; err != nil {
 					t.Fatal(err)
 				}
 				version := table.AgentVersion{
-					AgentID: row.ID, Number: 1,
-					ArtifactVersionID: "version-" + row.ID, ArtifactVersionURI: "artifact://fixture/" + row.ID,
+					AgentID:            row.ID,
+					Number:             1,
+					ArtifactVersionID:  "version-" + row.ID,
+					ArtifactVersionURI: "artifact://fixture/" + row.ID,
 				}
 				if err := store.DB().Create(&version).Error; err != nil {
 					t.Fatal(err)
@@ -146,11 +189,24 @@ func TestSubmissionTenantRequestKeyIsolation(t *testing.T) {
 				spec := execpkg.ExecutionSpec{
 					AgentID: row.ID, AgentVersion: 1, Query: "query",
 					Scope: &workspace.Scope{
-						TenantID: tenant, ProjectID: "project", ActorID: owner, TaskID: "task", RoundID: "round",
+						TenantID:  tenant,
+						ProjectID: "project",
+						ActorID:   owner,
+						TaskID:    "task",
+						RoundID:   "round",
 					},
 				}
 				submit := func() (*execpkg.Run, bool, error) {
-					return service.SubmitApplication(ctx, identity, owner, key, spec, time.Minute, memory.SelectionOff, memory.RecallFilter{})
+					return service.SubmitApplication(
+						ctx,
+						identity,
+						owner,
+						key,
+						spec,
+						time.Minute,
+						memory.SelectionOff,
+						memory.RecallFilter{},
+					)
 				}
 				if kind == "chat" {
 					session, err := store.CreateSession(ctx, owner, row.ID, "")
@@ -158,12 +214,29 @@ func TestSubmissionTenantRequestKeyIsolation(t *testing.T) {
 						t.Fatal(err)
 					}
 					submit = func() (*execpkg.Run, bool, error) {
-						return service.SubmitChat(ctx, identity, owner, session.ID, key, "query", time.Minute, 3, memory.SelectionOff, memory.RecallFilter{})
+						return service.SubmitChat(
+							ctx,
+							identity,
+							owner,
+							session.ID,
+							key,
+							"query",
+							time.Minute,
+							3,
+							memory.SelectionOff,
+							memory.RecallFilter{},
+						)
 					}
 				}
 				run, created, err := submit()
 				if err != nil || !created || run == nil {
-					t.Fatalf("%s initial submit: run=%+v created=%v err=%v", tenant, run, created, err)
+					t.Fatalf(
+						"%s initial submit: run=%+v created=%v err=%v",
+						tenant,
+						run,
+						created,
+						err,
+					)
 				}
 				if run.OwnerID != owner || run.AgentID != row.ID {
 					t.Fatalf("%s returned another tenant's run: %+v", tenant, run)
@@ -173,13 +246,23 @@ func TestSubmissionTenantRequestKeyIsolation(t *testing.T) {
 				}
 				if tenant == "tenant-a" {
 					var persisted table.Run
-					if err := store.DB().Where("id = ?", run.ID).Take(&persisted).Error; err != nil {
+					if err := store.DB().
+						Where("id = ?", run.ID).
+						Take(&persisted).
+						Error; err != nil {
 						t.Fatal(err)
 					}
-					otherCtx := access.WithScope(context.Background(), access.Scope{TenantID: "tenant-b", ProjectID: "project"})
+					otherCtx := access.WithScope(
+						context.Background(),
+						access.Scope{TenantID: "tenant-b", ProjectID: "project"},
+					)
 					foreign, err := service.replay(otherCtx, owner, key, persisted.RequestHash)
 					if err != nil || foreign != nil {
-						t.Fatalf("matching hash replayed another tenant's run: run=%+v err=%v", foreign, err)
+						t.Fatalf(
+							"matching hash replayed another tenant's run: run=%+v err=%v",
+							foreign,
+							err,
+						)
 					}
 				}
 				runs[tenant], submissions[tenant] = run, submit
@@ -198,7 +281,12 @@ func TestSubmissionTenantRequestKeyIsolation(t *testing.T) {
 					t.Fatal(err)
 				}
 				if persisted.TenantID != tenant || persisted.ProjectID != "project" {
-					t.Fatalf("%s persisted identity: tenant=%q project=%q", tenant, persisted.TenantID, persisted.ProjectID)
+					t.Fatalf(
+						"%s persisted identity: tenant=%q project=%q",
+						tenant,
+						persisted.TenantID,
+						persisted.ProjectID,
+					)
 				}
 			}
 		})

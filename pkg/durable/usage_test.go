@@ -569,7 +569,10 @@ func TestRecordUsageRechecksGoalBinding(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			run, original := claimedRunWithGoal(t, s, BudgetSpec{MaxTokens: 100})
-			replacement, _, err := s.CreateGoal(ctx, newTestGoal(run.SessionID, "binding-"+NewID(), "binding change"))
+			replacement, _, err := s.CreateGoal(
+				ctx,
+				newTestGoal(run.SessionID, "binding-"+NewID(), "binding change"),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -578,7 +581,11 @@ func TestRecordUsageRechecksGoalBinding(t *testing.T) {
 				nextGoalID = ""
 			}
 			if change == "attach" {
-				if err = s.db.WithContext(ctx).Model(&table.Run{}).Where("id = ?", run.ID).Update("goal_id", "").Error; err != nil {
+				if err = s.db.WithContext(ctx).
+					Model(&table.Run{}).
+					Where("id = ?", run.ID).
+					Update("goal_id", "").
+					Error; err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -608,7 +615,10 @@ func TestRecordUsageRechecksGoalBinding(t *testing.T) {
 				recorded <- s.RecordUsageWithCost(ctx, run.Lease(), 1, "binding-change", 4, 0.25, json.RawMessage(`{"binding":"changed"}`))
 			}()
 			waitUsageBlockedBy(t, ctx, s, blockerPID)
-			if err = tx.Model(&table.Run{}).Where("id = ?", run.ID).Update("goal_id", nextGoalID).Error; err != nil {
+			if err = tx.Model(&table.Run{}).
+				Where("id = ?", run.ID).
+				Update("goal_id", nextGoalID).
+				Error; err != nil {
 				t.Fatal(err)
 			}
 			if err = tx.Commit().Error; err != nil {
@@ -626,8 +636,17 @@ func TestRecordUsageRechecksGoalBinding(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if gotRun.GoalID != nextGoalID || gotRun.TokensUsed != 0 || gotRun.CostUSD != 0 || gotRun.EventSeq != before.EventSeq {
-				t.Fatalf("run after binding conflict: goal=%q tokens=%d cost=%g eventSeq=%d, want %q/0/0/%d", gotRun.GoalID, gotRun.TokensUsed, gotRun.CostUSD, gotRun.EventSeq, nextGoalID, before.EventSeq)
+			if gotRun.GoalID != nextGoalID || gotRun.TokensUsed != 0 || gotRun.CostUSD != 0 ||
+				gotRun.EventSeq != before.EventSeq {
+				t.Fatalf(
+					"run after binding conflict: goal=%q tokens=%d cost=%g eventSeq=%d, want %q/0/0/%d",
+					gotRun.GoalID,
+					gotRun.TokensUsed,
+					gotRun.CostUSD,
+					gotRun.EventSeq,
+					nextGoalID,
+					before.EventSeq,
+				)
 			}
 			assertJSONEqual(t, gotRun.State, string(before.State))
 			for _, goalID := range []string{original.ID, replacement.ID} {
@@ -640,7 +659,11 @@ func TestRecordUsageRechecksGoalBinding(t *testing.T) {
 				}
 			}
 			var count int64
-			if err = s.db.WithContext(ctx).Model(&table.Usage{}).Where("run_id = ?", run.ID).Count(&count).Error; err != nil {
+			if err = s.db.WithContext(ctx).
+				Model(&table.Usage{}).
+				Where("run_id = ?", run.ID).
+				Count(&count).
+				Error; err != nil {
 				t.Fatal(err)
 			}
 			if count != 0 || len(usageEvents(t, s, run.ID)) != 0 {

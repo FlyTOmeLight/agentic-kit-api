@@ -70,7 +70,10 @@ func (tx *Tx) Submit(
 			return err
 		}
 		var existing table.Run
-		err := table.TenantQuery(ctx, tx.db).Where("owner_id = ? AND request_key = ?", cmd.Owner, cmd.RequestKey).Take(&existing).Error
+		err := table.TenantQuery(ctx, tx.db).
+			Where("owner_id = ? AND request_key = ?", cmd.Owner, cmd.RequestKey).
+			Take(&existing).
+			Error
 		if err == nil {
 			if existing.RequestHash != cmd.RequestHash {
 				return ErrConflict
@@ -119,7 +122,8 @@ func (tx *Tx) Submit(
 		}
 		if cmd.GoalID != "" {
 			var goalRow table.Goal
-			if err = table.TenantQuery(ctx, tx.db).Where("owner_id = ? AND id = ? AND session_id = ? AND status = ?", cmd.Owner, cmd.GoalID, sessionID, GoalActive).
+			if err = table.TenantQuery(ctx, tx.db).
+				Where("owner_id = ? AND id = ? AND session_id = ? AND status = ?", cmd.Owner, cmd.GoalID, sessionID, GoalActive).
 				Take(&goalRow).
 				Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {

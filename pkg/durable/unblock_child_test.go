@@ -31,7 +31,13 @@ func TestUnblockChildRequiresGoalResume(t *testing.T) {
 		t.Fatalf("claimed %s, want child %s", childClaim.ID, child.ID)
 	}
 	parkDispatch(t, store, childClaim)
-	if err = store.Unblock(ctx, "owner", child.ID, childClaim.Epoch, "accept child unknown consumption"); err != nil {
+	if err = store.Unblock(
+		ctx,
+		"owner",
+		child.ID,
+		childClaim.Epoch,
+		"accept child unknown consumption",
+	); err != nil {
 		t.Fatal(err)
 	}
 	if status := getGoalStatus(t, store, goal.ID); status != GoalBlocked {

@@ -45,13 +45,18 @@ func (s *Store) Unblock(ctx context.Context, owner, id string, epoch int64, reas
 		var session table.Session
 		if err = table.TenantQuery(ctx, tx).
 			Where("tenant_id = ? AND id = ? AND owner_id = ?", binding.TenantID, run.SessionID, owner).
-			Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Take(&session).Error; err != nil {
+			Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Take(&session).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrConflict
 			}
 			return recordError(err)
 		}
-		if err = ensureNoActiveRun(table.TenantQuery(ctx, tx).Where("tenant_id = ?", binding.TenantID), owner, run.SessionID); err != nil {
+		if err = ensureNoActiveRun(
+			table.TenantQuery(ctx, tx).Where("tenant_id = ?", binding.TenantID),
+			owner,
+			run.SessionID,
+		); err != nil {
 			return err
 		}
 		var now time.Time
@@ -95,7 +100,8 @@ func (s *Store) Unblock(ctx context.Context, owner, id string, epoch int64, reas
 			}
 			if otherBlocked == 0 {
 				if err = table.TenantQuery(ctx, tx.Model(&table.Goal{})).Where("id = ?", run.GoalID).
-					Updates(map[string]any{"status": GoalActive, "updated_at": gorm.Expr("clock_timestamp()")}).Error; err != nil {
+					Updates(map[string]any{"status": GoalActive, "updated_at": gorm.Expr("clock_timestamp()")}).
+					Error; err != nil {
 					return err
 				}
 				resumedGoal = true

@@ -92,7 +92,16 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if archive != nil {
 		archiver = archive
 	}
-	api, err := NewWithSandbox(*cfg, runtime.Log, store, cache.client, artifact, archiver, database.DB, authentication)
+	api, err := NewWithSandbox(
+		*cfg,
+		runtime.Log,
+		store,
+		cache.client,
+		artifact,
+		archiver,
+		database.DB,
+		authentication,
+	)
 	if err != nil {
 		if archive != nil {
 			err = errors.Join(err, archive.Close())

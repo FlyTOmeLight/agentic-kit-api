@@ -9,7 +9,9 @@ import (
 func TestReleaseInflightModel(t *testing.T) {
 	for _, kind := range []string{"model", "summary"} {
 		t.Run(kind, func(t *testing.T) {
-			state := json.RawMessage(`{"version":3,"turn":5,"checkpoint":"YWJj","future":{"number":9007199254740993},"inflightModel":{"kind":"` + kind + `","sequence":5,"providerRef":"keep"}}`)
+			state := json.RawMessage(
+				`{"version":3,"turn":5,"checkpoint":"YWJj","future":{"number":9007199254740993},"inflightModel":{"kind":"` + kind + `","sequence":5,"providerRef":"keep"}}`,
+			)
 			next, marker, err := ReleaseInflightModel(state)
 			if err != nil {
 				t.Fatal(err)

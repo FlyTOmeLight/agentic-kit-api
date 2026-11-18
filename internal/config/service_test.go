@@ -234,7 +234,10 @@ ServiceAPIKey = "test-service-key-at-least-32-characters"
 		CheckpointStoreHostPath: "/checkpoints",
 	}
 	cfg.Callback = CallbackConfig{
-		Enabled: true, SigningSecret: "test", AllowedSources: []string{"approval"}, AllowedServices: []string{"approval"},
+		Enabled:         true,
+		SigningSecret:   "test",
+		AllowedSources:  []string{"approval"},
+		AllowedServices: []string{"approval"},
 	}
 	cfg.Tenant.Endpoint = "http://127.0.0.1:8080"
 	if err := cfg.ValidateAPI(); err != nil {

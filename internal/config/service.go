@@ -173,10 +173,10 @@ func (cfg Service) ValidateAPI() error {
 		name   string
 		values []string
 	}{
-		{"Callback.AllowedSources", cfg.Callback.AllowedSources},
-		{"Callback.AllowedServices", cfg.Callback.AllowedServices},
-		{"Sandbox.AllowedServices", cfg.Sandbox.AllowedServices},
-		{"Tenant.AllowedPropagationServices", cfg.Tenant.AllowedPropagationServices},
+		{name: "Callback.AllowedSources", values: cfg.Callback.AllowedSources},
+		{name: "Callback.AllowedServices", values: cfg.Callback.AllowedServices},
+		{name: "Sandbox.AllowedServices", values: cfg.Sandbox.AllowedServices},
+		{name: "Tenant.AllowedPropagationServices", values: cfg.Tenant.AllowedPropagationServices},
 	} {
 		for _, value := range list.values {
 			if value == "" || strings.TrimSpace(value) != value {
@@ -220,7 +220,9 @@ func (cfg Service) ValidateTenant() error {
 		uri.ForceQuery || uri.Fragment != "" ||
 		(uri.Scheme != "https" && (uri.Scheme != "http" ||
 			(uri.Hostname() != "localhost" && !net.ParseIP(uri.Hostname()).IsLoopback()))) {
-		return errors.New("Tenant.Endpoint must be HTTPS, or HTTP on loopback, without userinfo, query or fragment")
+		return errors.New(
+			"Tenant.Endpoint must be HTTPS, or HTTP on loopback, without userinfo, query or fragment",
+		)
 	}
 	if len(cfg.Tenant.ServiceAPIKey) < 32 || strings.ContainsAny(cfg.Tenant.ServiceAPIKey, "\r\n") {
 		return errors.New("Tenant.ServiceAPIKey must contain at least 32 characters and no line breaks")

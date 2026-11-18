@@ -27,14 +27,23 @@ func TestAgentTenantIsolation(t *testing.T) {
 		if row.TenantID != tenant || row.ProjectID != "project" || row.OwnerID != owner {
 			t.Fatalf("created agent identity: %+v", row)
 		}
-		if _, err := service.PublishAgent(ctx, client.Identity{TenantID: tenant}, owner, created.ID, created.Revision); err != nil {
+		if _, err := service.PublishAgent(
+			ctx,
+			client.Identity{TenantID: tenant},
+			owner,
+			created.ID,
+			created.Revision,
+		); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	for _, tenant := range []string{"tenant-a", "tenant-b"} {
 		t.Run(tenant, func(t *testing.T) {
-			ctx := access.WithScope(context.Background(), access.Scope{TenantID: tenant, ProjectID: "project"})
+			ctx := access.WithScope(
+				context.Background(),
+				access.Scope{TenantID: tenant, ProjectID: "project"},
+			)
 			listed, err := service.Agents(ctx, owner, "", 100)
 			if err != nil || len(listed) != 1 {
 				t.Fatalf("tenant list: agents=%+v err=%v", listed, err)
@@ -47,7 +56,14 @@ func TestAgentTenantIsolation(t *testing.T) {
 				t.Fatalf("own read: %v", err)
 			}
 			identity := client.Identity{TenantID: tenant}
-			if _, err := service.UpdateAgent(ctx, owner, own.ID, "updated", own.Revision, testConfig("updated")); err != nil {
+			if _, err := service.UpdateAgent(
+				ctx,
+				owner,
+				own.ID,
+				"updated",
+				own.Revision,
+				testConfig("updated"),
+			); err != nil {
 				t.Fatalf("own update: %v", err)
 			}
 			version, err := service.AgentVersion(ctx, identity, owner, own.ID, 1)
@@ -69,11 +85,24 @@ func TestAgentTenantIsolation(t *testing.T) {
 					return err
 				}},
 				{name: "update", call: func() error {
-					_, err := service.UpdateAgent(ctx, owner, foreign.ID, "intrusion", foreign.Revision, testConfig("intrusion"))
+					_, err := service.UpdateAgent(
+						ctx,
+						owner,
+						foreign.ID,
+						"intrusion",
+						foreign.Revision,
+						testConfig("intrusion"),
+					)
 					return err
 				}},
 				{name: "publish", call: func() error {
-					_, err := service.PublishAgent(ctx, identity, owner, foreign.ID, foreign.Revision)
+					_, err := service.PublishAgent(
+						ctx,
+						identity,
+						owner,
+						foreign.ID,
+						foreign.Revision,
+					)
 					return err
 				}},
 				{name: "version", call: func() error {
@@ -95,7 +124,11 @@ func TestAgentTenantIsolation(t *testing.T) {
 			if unchanged.Revision != foreign.Revision || unchanged.Name != foreign.Name ||
 				unchanged.Draft.SystemPrompt != foreign.Draft.SystemPrompt ||
 				unchanged.PublishedVersion != foreign.PublishedVersion {
-				t.Fatalf("cross-tenant operation mutated agent: before=%+v after=%+v", foreign, unchanged)
+				t.Fatalf(
+					"cross-tenant operation mutated agent: before=%+v after=%+v",
+					foreign,
+					unchanged,
+				)
 			}
 			if artifact.ensures != ensures || artifact.publishes != publishes {
 				t.Fatal("cross-tenant operation reached artifact publication")
@@ -104,7 +137,15 @@ func TestAgentTenantIsolation(t *testing.T) {
 	}
 
 	ctx := access.WithScope(context.Background(), access.Scope{})
-	if _, err := service.CreateAgent(ctx, owner, "missing-tenant", testConfig("invalid")); !errors.Is(err, agent.ErrInvalid) {
+	if _, err := service.CreateAgent(
+		ctx,
+		owner,
+		"missing-tenant",
+		testConfig("invalid"),
+	); !errors.Is(
+		err,
+		agent.ErrInvalid,
+	) {
 		t.Fatalf("empty tenant creation: want invalid, got %v", err)
 	}
 }

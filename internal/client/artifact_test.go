@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FlyTOmeLight/artifact-go/sdk/go/artifactv1"
 	"github.com/FlyTOmeLight/server-go/constants"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
-	"github.com/FlyTOmeLight/artifact-go/sdk/go/artifactv1"
 )
 
 const testArtifactServiceKey = "api-service-key-for-artifact-tests"

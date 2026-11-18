@@ -55,7 +55,10 @@ func chargeGoalUsage(ctx context.Context, tx *gorm.DB, run *Run, tokens int64, c
 	if blocked {
 		updates["status"] = GoalBlocked
 	}
-	if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).Where("id = ?", goalRow.ID).Updates(updates).Error; err != nil {
+	if err := table.TenantQuery(ctx, tx.Model(&table.Goal{})).
+		Where("id = ?", goalRow.ID).
+		Updates(updates).
+		Error; err != nil {
 		return false, err
 	}
 	return blocked, nil

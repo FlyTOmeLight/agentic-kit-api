@@ -189,7 +189,12 @@ func chatRequestHash(session, query string, selection memory.Selection, filter m
 	return durable.Hash(input)
 }
 
-func applicationRequestHash(spec execpkg.ExecutionSpec, ttl time.Duration, selection memory.Selection, filter memory.RecallFilter) string {
+func applicationRequestHash(
+	spec execpkg.ExecutionSpec,
+	ttl time.Duration,
+	selection memory.Selection,
+	filter memory.RecallFilter,
+) string {
 	selection = normalizeMemorySelection(selection)
 	if selection == memory.SelectionOff && emptyRecallFilter(filter) {
 		input, _ := json.Marshal(struct {

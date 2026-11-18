@@ -25,7 +25,11 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 		),
 	)
 	defer server.Close()
-	server.Client().Transport = scopeTransport{base: server.Client().Transport, tenant: "tenant", project: "project"}
+	server.Client().Transport = scopeTransport{
+		base:    server.Client().Transport,
+		tenant:  "tenant",
+		project: "project",
+	}
 	client, e := sdk.NewClient(server.URL, testToken, server.Client())
 	if e != nil {
 		t.Fatal(e)

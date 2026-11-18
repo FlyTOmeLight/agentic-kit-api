@@ -93,7 +93,10 @@ func (s *MemoryArchive) ResolveBinding(scope memory.Scope, actor string) (*memor
 		binding.ProjectID = scope.Project
 		if binding.TenantID == "" {
 			if scope.Project != "" {
-				return nil, fmt.Errorf("%w: OwnerPrivate with a project requires a tenant", memory.ErrInvalid)
+				return nil, fmt.Errorf(
+					"%w: OwnerPrivate with a project requires a tenant",
+					memory.ErrInvalid,
+				)
 			}
 			binding.TenantID = s.cfg.TenantID
 		}

@@ -144,7 +144,17 @@ func TestSupplyExternalResultByRunIDUsesStoredOwner(t *testing.T) {
 	}
 
 	result := `{"status":"success"}`
-	if err = s.SupplyExternalResult(ctx, "callback-service", r.ID, intent.ID, intent.ExternalRef, result); !errors.Is(err, ErrNotFound) {
+	if err = s.SupplyExternalResult(
+		ctx,
+		"callback-service",
+		r.ID,
+		intent.ID,
+		intent.ExternalRef,
+		result,
+	); !errors.Is(
+		err,
+		ErrNotFound,
+	) {
 		t.Fatalf("owner API accepted service identity: %v", err)
 	}
 	for _, test := range []struct {
@@ -160,7 +170,16 @@ func TestSupplyExternalResultByRunIDUsesStoredOwner(t *testing.T) {
 		{name: "empty ref", id: r.ID, step: intent.ID, want: ErrInvalid},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if err := s.SupplyExternalResultByRunID(ctx, test.id, test.step, test.ref, result); !errors.Is(err, test.want) {
+			if err := s.SupplyExternalResultByRunID(
+				ctx,
+				test.id,
+				test.step,
+				test.ref,
+				result,
+			); !errors.Is(
+				err,
+				test.want,
+			) {
 				t.Fatalf("callback error = %v, want %v", err, test.want)
 			}
 		})
@@ -183,7 +202,16 @@ func TestSupplyExternalResultByRunIDUsesStoredOwner(t *testing.T) {
 		{name: "changed result", ref: intent.ExternalRef, result: "different", want: ErrConflict},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if err := s.SupplyExternalResultByRunID(ctx, r.ID, intent.ID, test.ref, test.result); !errors.Is(err, test.want) {
+			if err := s.SupplyExternalResultByRunID(
+				ctx,
+				r.ID,
+				intent.ID,
+				test.ref,
+				test.result,
+			); !errors.Is(
+				err,
+				test.want,
+			) {
 				t.Fatalf("replay error = %v, want %v", err, test.want)
 			}
 		})
