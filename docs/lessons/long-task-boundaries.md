@@ -177,3 +177,14 @@ API 控制面启用 `internal/client/tenant.go` 的真实租户中间件后，Wo
 修复方式是让测试替身同时满足三层契约：数据库夹具写入非空 `tenant_id`；进程配置指向 `newFakeTenantServer`；所有 API 请求携带 Bearer 凭证与租户选择头。fake 服务只需覆盖 `/internal/v1/scope/resolve` 与 `/internal/v1/service/self`，但 scope 响应必须让 `principal.id == user_id`，并按请求回显 `tenant_id` / `project_id`。
 
 证据：修复后 `TestProcessKillResumesWithoutRepeatingTool`、`TestProcessShutdownCancelsInFlightHTTPTool` 及 Worker 全量 `make integration` 通过。该结论只证明测试夹具与当前中间件契约兼容，不证明 Forge 生产配置已验收。
+
+## 提交与续跑的四类一致性边界
+
+2026-11-18 审查发现并修复四类问题，均已合入 main（API PR #20、Worker PR #7）：
+
+- **Goal 绑定竞态**：提交事务内 `active_run_id` 更新必须检查 `RowsAffected`；并发 `TransitionGoal(Paused)` 赢得竞态时整个提交回滚，不留 goal_id 已写入但 Goal 未绑定的孤儿 Run。`TestSubmitRejectsPausedGoalBind` 覆盖。
+- **续跑上下文快照**：`QueueGoalIteration` 与聊天提交同样用 `freezeContextWithoutRecall` 冻结并校验快照，写入 `context_snapshot` 列；反馈查询需在冻结前拼入。`TestGoalIterationConcurrentAndFrozen` 断言快照合法且含历史材料。
+- **已计费摘要落盘**：Worker 摘要 usage 提交后，`CompactRun` 用 `context.WithoutCancel` 独立上下文继续执行，父 ctx 取消不再丢弃已计费结果，接管侧不重跑摘要、不重复计费。`TestBilledSummaryPersistsAfterParentCancel` 覆盖。
+- **决策写入失败保留响应**：`RecordDecision` 失败时内存 `PendingModel` 保留以便重试，但持久化 checkpoint 仍不含 PendingModel，恢复时上下文重建不受影响。注意两个方向都要成立：只清内存丢响应，只留持久化会让恢复失败。`TestRecordDecisionFailureKeepsBilledResponse` 与 `TestEinoCheckpointPrecedesToolAndUncertainOutcomeNeedsReview` 共同覆盖。
+
+双仓全量 `make integration`（含 `-race`）通过。边界不变：本地测试通过不代表生产部署完成，仓库仍无 CI workflow，摘要与决策恢复只覆盖单 Worker 视角，多 Worker 并发接管同一 Run 仍依赖租约互斥。
