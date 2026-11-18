@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
 func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
@@ -145,17 +146,28 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 	if err = tx.Where("goal_id = ? AND run_id = ?", goal.ID, previous.ID).Take(&receipt).Error; err != nil {
 		return nil, err
 	}
-	spec.History = nil
 	history, err := loadConversationHistory(tx, goal.OwnerID, goal.SessionID)
 	if err != nil {
 		return nil, err
 	}
-	spec.History = legacyHistory(history)
 	spec.Query = fmt.Sprintf(
 		"Continue working toward this goal:\n%s\n\nThe previous run failed acceptance. Address this feedback before completing:\n%s",
 		goal.Objective,
 		receipt.Output,
 	)
+	spec.History = nil
+	snapshot, err := freezeContextWithoutRecall(spec, history, memory.SelectionOff)
+	if err != nil {
+		return nil, err
+	}
+	if err = validateContextSnapshot(snapshot); err != nil {
+		return nil, err
+	}
+	snapshotData, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	spec.History = legacyHistory(history)
 	data, err := json.Marshal(spec)
 	if err != nil {
 		return nil, err
@@ -166,7 +178,8 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 		"tenant_id": goal.TenantID, "project_id": goal.ProjectID,
 		"request_key":  "goal-iteration:" + goal.ID + ":" + previous.ID,
 		"request_hash": Hash(data), "spec": string(data), "status": Queued,
-		"deadline": deadline, "max_attempts": previous.MaxAttempts, "goal_id": goal.ID,
+		"context_snapshot": string(snapshotData),
+		"deadline":         deadline, "max_attempts": previous.MaxAttempts, "goal_id": goal.ID,
 	}).Error; err != nil {
 		return nil, recordError(err)
 	}

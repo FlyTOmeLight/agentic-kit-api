@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 func newTestGoal(sessionID, key, objective string) Goal {
@@ -50,6 +53,59 @@ func TestCreateGoalIdempotent(t *testing.T) {
 	other := newTestGoal(session.ID, "goal-key-2", "second goal")
 	if _, _, err = s.CreateGoal(ctx, other); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSubmitRejectsPausedGoalBind(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	session, cfg := testConversation(t, s, Spec{MaxTurns: 5})
+	goal := newTestGoal(session.ID, NewID(), "deploy the service")
+	created, _, err := s.CreateGoal(ctx, goal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.TransitionGoal(ctx, "owner", created.ID, GoalPaused); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := json.Marshal(struct{ Session, Query string }{Session: session.ID, Query: "late request"})
+	agentID, version := sessionPublishedFixture(t, s, session.ID)
+	cmd := execution.SubmitCommand{
+		Owner:       "owner",
+		RequestKey:  NewID(),
+		RequestHash: Hash(input),
+		TTL:         time.Hour,
+		MaxAttempts: 3,
+		Kind:        execution.SubmitChat,
+		SessionID:   session.ID,
+		Query:       "late request",
+		GoalID:      created.ID,
+	}
+	if _, _, err = s.Accept(
+		ctx,
+		cmd,
+		PrepareChatSubmission(cfg, agentID, version, nil),
+	); !errors.Is(
+		err,
+		ErrNotFound,
+	) {
+		t.Fatalf("expected ErrNotFound for paused goal, got %v", err)
+	}
+	var goalRow struct{ ActiveRunID string }
+	if err = s.DB().Table("durable_goal").Select("active_run_id").
+		Where("id = ?", created.ID).Take(&goalRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if goalRow.ActiveRunID != "" {
+		t.Fatalf("paused goal must not gain a run: %s", goalRow.ActiveRunID)
+	}
+	var orphanCount int64
+	if err = s.DB().Table("durable_run").Where("goal_id = ?", created.ID).
+		Count(&orphanCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if orphanCount != 0 {
+		t.Fatalf("rejected bind must not leave a run: %d", orphanCount)
 	}
 }
 

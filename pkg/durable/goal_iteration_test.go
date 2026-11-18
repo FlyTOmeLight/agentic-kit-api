@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 func failedGoalIteration(t *testing.T, store *Store) (*Goal, *Run) {
@@ -108,6 +109,13 @@ func TestGoalIterationConcurrentAndFrozen(t *testing.T) {
 	if len(next.Spec.History) != 2 || next.Spec.History[0].Content != "original request" ||
 		next.Spec.History[1].Content != "previous answer" {
 		t.Fatalf("missing prior conversation: %+v", next.Spec.History)
+	}
+	snapshot := execution.ContextSnapshot(next.ContextSnapshot)
+	if err := validateContextSnapshot(snapshot); err != nil {
+		t.Fatalf("invalid iteration snapshot: %v", err)
+	}
+	if !strings.Contains(string(snapshot.Payload), "original request") {
+		t.Fatalf("snapshot missing prior conversation: %s", snapshot.Payload)
 	}
 	current, err := store.GetGoal(ctx, "owner", goal.ID)
 	if err != nil || current.ActiveRunID != next.ID || current.TokensUsed != 7 || current.CostUSD != 0.25 ||
