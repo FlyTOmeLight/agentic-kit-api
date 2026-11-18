@@ -45,4 +45,4 @@ Memory 的主题部分唯一索引为 `memory_entry_subject_identity`，约束�
 
 临时 workspace 只用于联合开发；交付验证关闭 workspace 并使用 go.mod 中的正式依赖。共享包修改后按实际受影响契约验证 worker，不能把本地 workspace 测试当作公开依赖已经交付。
 
-当前 archive 适配使用 artifact-go `v0.5.0`，框架依赖 server-go `v0.13.0`。artifact SDK 仅允许 `internal/client` 引用；`pkg/memory`、durable、contextbuilder、worker 和公开 SDK 不暴露其类型。真实 artifact 部署与跨服务联合验收尚未验证。
+当前 archive 适配使用 artifact-go `v0.5.0`，框架依赖 server-go `v0.13.0`。artifact SDK 仅允许 `internal/client` 引用；`pkg/memory`、durable、contextbuilder、worker 和公开 SDK 不暴露其类型。Memory 集成测试通过 artifact 的 `service` 与 `tests/fixture` 启动真实 HTTP 服务及隔离数据库；这些导入只用于测试。本地联合验证已覆盖认证、隔离与发布结果未知后的恢复，外部部署验收尚未完成，范围见[验证记录](verification.md#memory-真实-artifact-联合验证)。

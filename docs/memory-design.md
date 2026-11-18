@@ -1,6 +1,6 @@
 # Agentic Kit 通用 Agent Memory 技术设计
 
-状态：部分实施，2026-11-17 按当前工作树更新。本地 OwnerPrivate 人工 CRUD（删除语义为 Retire）、显式 Restore、生效投影、操作回执和生效版本历史 API 已实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。配置归档时，API 后台已能继续未完成的 Create/Update/Restore。自动提炼、语义检索及版本删除/回收未实现，真实 artifact 部署尚未联合验证。
+状态：部分实施，2026-11-17 按当前工作树更新。本地 OwnerPrivate 人工 CRUD（删除语义为 Retire）、显式 Restore、生效投影、操作回执和生效版本历史 API 已实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。配置归档时，API 后台已能继续未完成的 Create/Update/Restore。本地真实 artifact HTTP 服务与 PostgreSQL 联调已通过，覆盖服务凭据、固定版本、幂等、作用域隔离及代理故障下的 Pending 恢复，见[验证记录](verification.md#memory-真实-artifact-联合验证)。自动提炼、语义检索及版本删除/回收未实现，外部部署验收尚未完成。
 
 本文同时保留目标契约：多主体共享授权及真实部署故障验收尚未完成。当前 HTTP 人工维护只开放 OwnerPrivate，身份读取沿用现有入口，完整认证 middleware 尚未接入。本文替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 的范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
 
@@ -52,7 +52,7 @@ flowchart LR
 
 ### 2.3 数据隔离与接入约束
 
-artifact `v0.5.0` 提供 `(tenant_id, project_id, user_id)` 三元数据隔离与集合幂等创建契约，project 为空表示该租户内该用户的非项目数据。适配层通过 `WithRequestIdentity` 传递 tenant、精确 project 和 ResourceUserID，并随 Entry/Operation 固定绑定；各入口在真实部署中的隔离行为仍需联合验收。
+artifact `v0.5.0` 提供 `(tenant_id, project_id, user_id)` 三元数据隔离与集合幂等创建契约，project 为空表示该租户内该用户的非项目数据。适配层通过 `WithRequestIdentity` 传递 tenant、精确 project 和 ResourceUserID，并随 Entry/Operation 固定绑定；启用 Endpoint 时要求配置服务 BearerToken，集合创建、版本发布与固定版本读取都携带该凭据。artifact 身份解析器必须核验凭据对应的作用域授权，不能仅信任请求头。本地联调使用测试授权表验证三元组隔离，实际部署的凭据签发、身份解析器和业务授权仍需验收。
 
 Memory核验业务访问权后，由适配层提供可信的存储归属上下文。存储user_id与真实维护者可以不同：它随ArtifactBinding固定，真实维护者保存在Memory操作回执和payload中。接入只要求能够传递已核验的三元组；账号、凭据治理及部署身份形式不在本设计范围。
 

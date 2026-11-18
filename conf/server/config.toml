@@ -25,5 +25,6 @@ DB = 0
 Endpoint = "${env:ARTIFACT_ENDPOINT:}"
 StoreID = "${env:ARTIFACT_STORE_ID:artifact}"
 TenantID = "${env:ARTIFACT_TENANT_ID:}"
+BearerToken = "${env:ARTIFACT_BEARER_TOKEN:}"
 TimeoutSeconds = "${env:ARTIFACT_TIMEOUT_SECONDS:30}"
 MaxPayloadBytes = "${env:ARTIFACT_MAX_PAYLOAD_BYTES:262144}"

@@ -597,6 +597,7 @@ func artifactTestServer(t *testing.T, handler http.HandlerFunc) *ArtifactStore {
 		Endpoint:        server.URL,
 		StoreID:         "archive",
 		TenantID:        "storage-tenant",
+		BearerToken:     "test-service-token",
 		Timeout:         time.Second,
 		MaxPayloadBytes: 4096,
 	})
@@ -658,6 +659,7 @@ func assertArtifactIdentity(t *testing.T, request *http.Request, binding *memory
 		t.Errorf("method = %s, want POST", request.Method)
 	}
 	for header, want := range map[string]string{
+		"Authorization":      "Bearer test-service-token",
 		"x-forge-tenant-id":  binding.TenantID,
 		"x-forge-project-id": binding.ProjectID,
 		"X-Resource-User-ID": binding.UserID,

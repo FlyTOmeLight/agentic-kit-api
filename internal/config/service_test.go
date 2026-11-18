@@ -216,6 +216,8 @@ Addrs = ["localhost:6379"]
 		{name: "blank store", change: func(artifact *Artifact) { artifact.StoreID = " \t" }, wantErr: "Artifact.StoreID"},
 		{name: "missing tenant", change: func(artifact *Artifact) { artifact.TenantID = "" }, wantErr: "Artifact.TenantID"},
 		{name: "blank tenant", change: func(artifact *Artifact) { artifact.TenantID = " \t" }, wantErr: "Artifact.TenantID"},
+		{name: "missing bearer token", change: func(artifact *Artifact) { artifact.BearerToken = "" }, wantErr: "Artifact.BearerToken"},
+		{name: "blank bearer token", change: func(artifact *Artifact) { artifact.BearerToken = " \t" }, wantErr: "Artifact.BearerToken"},
 		{name: "zero timeout", change: func(artifact *Artifact) { artifact.TimeoutSeconds = 0 }, wantErr: "Artifact.TimeoutSeconds"},
 		{name: "negative timeout", change: func(artifact *Artifact) { artifact.TimeoutSeconds = -1 }, wantErr: "Artifact.TimeoutSeconds"},
 		{name: "excessive timeout", change: func(artifact *Artifact) { artifact.TimeoutSeconds = 61 }, wantErr: "Artifact.TimeoutSeconds"},
@@ -232,6 +234,7 @@ Addrs = ["localhost:6379"]
 				Endpoint:        "https://artifact.example.com/api",
 				StoreID:         "artifact",
 				TenantID:        "tenant-owner",
+				BearerToken:     "service-token",
 				TimeoutSeconds:  30,
 				MaxPayloadBytes: 262144,
 			}
@@ -252,7 +255,7 @@ Addrs = ["localhost:6379"]
 
 func TestArtifactConfigurationDefaultsAndEnv(t *testing.T) {
 	clearEnv(t, "ARTIFACT_ENDPOINT", "ARTIFACT_STORE_ID", "ARTIFACT_TENANT_ID",
-		"ARTIFACT_TIMEOUT_SECONDS", "ARTIFACT_MAX_PAYLOAD_BYTES")
+		"ARTIFACT_BEARER_TOKEN", "ARTIFACT_TIMEOUT_SECONDS", "ARTIFACT_MAX_PAYLOAD_BYTES")
 	path := filepath.Join("..", "..", "conf", "server", "config.toml")
 	cfg, err := Load(path)
 	if err != nil {
@@ -265,6 +268,7 @@ func TestArtifactConfigurationDefaultsAndEnv(t *testing.T) {
 	t.Setenv("ARTIFACT_ENDPOINT", "https://artifact.example.com")
 	t.Setenv("ARTIFACT_STORE_ID", "archive-store")
 	t.Setenv("ARTIFACT_TENANT_ID", "owner-tenant")
+	t.Setenv("ARTIFACT_BEARER_TOKEN", "service-token")
 	t.Setenv("ARTIFACT_TIMEOUT_SECONDS", "45")
 	t.Setenv("ARTIFACT_MAX_PAYLOAD_BYTES", "65536")
 	cfg, err = Load(path)
@@ -275,6 +279,7 @@ func TestArtifactConfigurationDefaultsAndEnv(t *testing.T) {
 		Endpoint:        "https://artifact.example.com",
 		StoreID:         "archive-store",
 		TenantID:        "owner-tenant",
+		BearerToken:     "service-token",
 		TimeoutSeconds:  45,
 		MaxPayloadBytes: 65536,
 	}
