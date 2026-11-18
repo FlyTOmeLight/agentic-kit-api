@@ -531,6 +531,10 @@ func TestCompletedEvaluationRejectsExpiredRenewalDeadline(t *testing.T) {
 		evaluation_worker_id = ?, evaluation_deadline = clock_timestamp() + interval '2 minutes'`, lease.WorkerID).Error; err != nil {
 		t.Fatal(err)
 	}
+	before, err := store.GetLease(ctx, lease.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := store.Renew(
 		ctx,
 		lease.ID,
@@ -545,7 +549,10 @@ func TestCompletedEvaluationRejectsExpiredRenewalDeadline(t *testing.T) {
 		t.Fatalf("expired renewal deadline: %v", err)
 	}
 	current, err := store.GetLease(ctx, lease.ID)
-	if err != nil || current.Revision != lease.Revision || !current.HardExpiresAt.Equal(lease.HardExpiresAt) {
-		t.Fatalf("rejected renewal changed lease: lease=%+v err=%v", current, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Revision != before.Revision || !current.HardExpiresAt.Equal(before.HardExpiresAt) {
+		t.Fatalf("rejected renewal changed lease: before=%+v after=%+v", before, current)
 	}
 }
