@@ -332,3 +332,12 @@ worker 在隔离工作树通过本地 replace 指向 API 改动，`GOWORK=off ma
 测试 fixture 引入 13 个间接模块依赖，其中 AWS SDK/S3/STS 链来自 artifact 服务的 storage 装配，`creasty/defaults` 来自 server-go binder。新增 artifact service/fixture 导入仅在测试文件，正式构建已通过；artifact-go 与 server-go 仍分别固定 `v0.5.0`、`v0.13.0`。
 
 未验证：外部实际部署、真实凭据签发和身份解析器、独立进程强杀、真实网络超时与恢复节奏、线上性能容量。本次代理故障注入证明同键恢复与本地激活行为，不等同于上述外部故障演练。自动提炼与语义检索不在本次范围。
+
+## 租户级 ActorPrivate 维护与召回
+
+2026-11-18 在本地 PostgreSQL、Redis 和真实 artifact HTTP 测试服务上运行 `GOWORK=off make integration`，已启用 `ARTIFACT_TEST_PG_DSN`。全仓 race 测试与 `go vet` 通过。
+
+- `TestArtifactIntegrationActorPrivate` 验证归档绑定固定到租户和本人、跨用户和跨租户隔离、项目请求无法读取条目或重放停用回执，并检查恢复后的版本列表及原版本正文。
+- `TestApplicationActorPrivateRecall` 经应用执行服务提交 Run，验证本人能召回、其他用户召回为空、替换 actor 被拒绝。更新记忆后，新的独立任务读取新正文，重新加载原 Run 仍得到原快照。
+
+artifact 测试使用本地身份解析器。Forge 凭据签发、项目成员授权和外部部署仍需单独验收。

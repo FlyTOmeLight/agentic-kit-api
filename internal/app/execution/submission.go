@@ -125,6 +125,10 @@ func (s *Service) SubmitApplication(
 			return nil, false, agent.ErrInvalid
 		}
 	}
+	if memorySelection == memory.SelectionRecall && spec.Scope != nil &&
+		spec.Scope.ProjectID == "" && spec.Scope.ActorID != owner {
+		return nil, false, memory.ErrForbidden
+	}
 	hash := applicationRequestHash(spec, ttl, memorySelection, filter)
 	if run, err := s.replay(ctx, owner, key, hash); err != nil || run != nil {
 		return run, false, err

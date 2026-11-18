@@ -269,6 +269,117 @@ func TestArtifactIntegrationPendingRecoveryAndHistory(t *testing.T) {
 	}
 }
 
+func TestArtifactIntegrationActorPrivate(t *testing.T) {
+	const tenant, owner, other = "tenant", "owner", "other"
+	server := realArtifactServer(t, map[string]memory.ArtifactBinding{
+		"authorized": {TenantID: tenant, UserID: owner},
+	})
+	svc, _ := testServiceWithArchive(t, realArtifactStore(t, server.URL, "authorized"))
+	ctx := access.WithScope(context.Background(), access.Scope{TenantID: tenant})
+	project := access.WithScope(ctx, access.Scope{TenantID: tenant, ProjectID: "project"})
+	doc := factDocument(memory.Scope{Kind: memory.ScopeActorPrivate, Tenant: tenant}, "editor", "first", "tabs")
+
+	wrongActor := doc
+	wrongActor.Scope.Actor = other
+	if _, err := svc.Create(ctx, owner, owner, "bad-actor", wrongActor); !errors.Is(err, memory.ErrForbidden) {
+		t.Fatalf("foreign actor: %v", err)
+	}
+	projectOutput := doc
+	projectOutput.OutputVisibility = memory.OutputProject
+	if _, err := svc.Create(ctx, owner, owner, "bad-output", projectOutput); !errors.Is(err, memory.ErrInvalid) {
+		t.Fatalf("project output: %v", err)
+	}
+	entry, err := svc.Create(ctx, owner, owner, "create", doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Scope.Owner != owner || entry.Scope.Actor != owner || entry.Binding == nil ||
+		entry.Binding.TenantID != tenant || entry.Binding.ProjectID != "" || entry.Binding.UserID != owner {
+		t.Fatalf("private scope or archive binding: %+v", entry)
+	}
+
+	for _, test := range []struct {
+		name string
+		ctx  context.Context
+		user string
+	}{
+		{name: "other user", ctx: ctx, user: other},
+		{name: "project scope", ctx: project, user: owner},
+		{name: "other tenant", ctx: access.WithScope(ctx, access.Scope{TenantID: "other-tenant"}), user: owner},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if entries, err := svc.List(test.ctx, test.user, "", 50); err != nil || len(entries) != 0 {
+				t.Fatalf("list: %+v, %v", entries, err)
+			}
+			if _, err := svc.Get(test.ctx, test.user, entry.ID); !errors.Is(err, memory.ErrNotFound) {
+				t.Fatalf("get: %v", err)
+			}
+			if _, err := svc.ListVersions(
+				test.ctx,
+				test.user,
+				entry.ID,
+				0,
+				50,
+			); !errors.Is(
+				err,
+				memory.ErrNotFound,
+			) {
+				t.Fatalf("history: %v", err)
+			}
+			if _, err := svc.GetVersion(
+				test.ctx,
+				test.user,
+				entry.ID,
+				entry.ActiveVersionRef.VersionID,
+			); !errors.Is(
+				err,
+				memory.ErrNotFound,
+			) {
+				t.Fatalf("get version: %v", err)
+			}
+		})
+	}
+
+	doc.Summary = "second"
+	if _, err := svc.Update(
+		ctx,
+		other,
+		other,
+		"foreign-update",
+		entry.ID,
+		1,
+		doc,
+	); !errors.Is(
+		err,
+		memory.ErrNotFound,
+	) {
+		t.Fatalf("foreign update: %v", err)
+	}
+	updated, err := svc.Update(ctx, owner, owner, "update", entry.ID, 1, doc)
+	if err != nil || updated.Binding == nil || *updated.Binding != *entry.Binding {
+		t.Fatalf("update changed binding: %+v, %v", updated, err)
+	}
+	retired, err := svc.Retire(ctx, owner, owner, "retire", entry.ID, 2)
+	if err != nil || retired.RetiredAt == nil {
+		t.Fatalf("retire: %+v, %v", retired, err)
+	}
+	if _, err := svc.Retire(project, owner, owner, "retire", entry.ID, 2); !errors.Is(err, memory.ErrNotFound) {
+		t.Fatalf("project scope retirement replay: %v", err)
+	}
+	restored, err := svc.Restore(ctx, owner, owner, "restore", entry.ID, 3, doc)
+	if err != nil || restored.RetiredAt != nil || restored.Revision != 4 {
+		t.Fatalf("restore: %+v, %v", restored, err)
+	}
+	page, err := svc.ListVersions(ctx, owner, entry.ID, 0, 50)
+	if err != nil || len(page.Items) != 3 || page.Items[0].VersionRef != *restored.ActiveVersionRef {
+		t.Fatalf("history: %+v, %v", page, err)
+	}
+	version, err := svc.GetVersion(ctx, owner, entry.ID, entry.ActiveVersionRef.VersionID)
+	if err != nil || version.Document.Scope != entry.Scope || version.Document.Summary != "first" {
+		t.Fatalf("fixed version: %+v, %v", version, err)
+	}
+}
+
 func realArtifactServer(t *testing.T, grants map[string]memory.ArtifactBinding) *httptest.Server {
 	t.Helper()
 	database := fixture.Open(t, db.DriverPostgreSQL)

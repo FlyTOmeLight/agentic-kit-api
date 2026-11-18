@@ -1,8 +1,8 @@
 # Agentic Kit 通用 Agent Memory 技术设计
 
-状态：部分实施，2026-11-17 按当前工作树更新。本地 OwnerPrivate 人工 CRUD（删除语义为 Retire）、显式 Restore、生效投影、操作回执和生效版本历史 API 已实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。配置归档时，API 后台已能继续未完成的 Create/Update/Restore。本地真实 artifact HTTP 服务与 PostgreSQL 联调已通过，覆盖服务凭据、固定版本、幂等、作用域隔离及代理故障下的 Pending 恢复，见[验证记录](verification.md#memory-真实-artifact-联合验证)。自动提炼、语义检索及版本删除/回收未实现，外部部署验收尚未完成。
+状态：本地 OwnerPrivate 和租户级 ActorPrivate 的人工维护、显式 Restore、生效投影、操作回执和生效版本历史 API 已实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。配置归档时，API 后台已能继续未完成的 Create/Update/Restore。本地真实 artifact HTTP 服务与 PostgreSQL 联调覆盖服务凭据、固定版本、幂等、作用域隔离及代理故障下的 Pending 恢复，见[验证记录](verification.md#memory-真实-artifact-联合验证)。ActorProject、ProjectShared、自动提炼、语义检索及版本删除/回收待实施，外部部署验收尚未完成。
 
-当前 HTTP 人工维护只开放 OwnerPrivate，使用 Forge 校验后的租户、项目和用户身份。多主体共享授权及真实部署故障验收尚未完成。本文替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 的范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
+本文替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 的范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
 
 ## 1. 设计结论
 
@@ -173,6 +173,8 @@ MemoryOperation 既是跨服务恢复记录，也是幂等成功回执和生效�
 
 ## 6. 人工创建与纠正
 
+ActorPrivate 维护使用 Forge 核验的租户和当前用户。请求与文档的 project 皆为空，服务将 owner 和 actor 都绑定到当前用户，输出可见性固定为 `Private`。读取、版本历史、更新、停用、恢复及停用回执重放均受该范围约束。启用归档时，存储绑定使用核验后的 tenant 和 actor，project 为空。
+
 ### 6.1 本地准备 → 远端发布 → 本地生效
 
 1. **准备短事务。** 核验当前用户写权限，按规范化请求命名空间和 requestKey 查回执。同键异意图返回 Conflict；Applied 返回原结果，Rejected 返回原拒绝。同键 Pending 继续原操作。新操作核对 expectedRevision、条目状态和文档，按§5的唯一约束保存稳定 operationID、EntryID、完整意图及远端参数；并发输家加载赢家回执，不能另起操作。Update要求条目启用；显式Restore要求条目停用。事务提交后才允许远端调用。
@@ -224,7 +226,7 @@ Agent 版本不因本设计增加自动开启学习的开关。服务端政策�
 
 将选中条目的完整正文、条件、来源、固定版本引用及顺序映射为 ContextBlock；与策略和预算一起编码到 ContextSnapshot，并与 Session/Run/用户消息/事件原子提交。无匹配保存 Recall/Empty，Off 保存明确关闭；本地读取或投影校验失败使接受事务回滚，不能静默降为 Empty。投影正常时 artifact 暂时离线不影响 Recall，这来自已完成的本地生效契约。
 
-普通聊天使用 OwnerPrivate，按 Forge 验证的租户、项目和当前 owner 查询。应用执行按已核验的 workspace scope 派生，tenant 与 actor 齐备时选 ActorPrivate，包含 project 时选 ActorProject，组件缺失时使用当前请求的 OwnerPrivate。应用执行和聊天均接受 `memory`（Off/Recall）与 `memoryFilter`（同 §7.2），Off 携带 filter 报 400 Invalid。
+普通聊天使用 OwnerPrivate，按 Forge 验证的租户、项目和当前 owner 查询。租户级应用执行使用 ActorPrivate，提交在幂等回放前核验 `spec.scope.actorID` 等于当前用户，并按租户及 `Private` 输出可见性查询。带 project 的应用执行已派生 ActorProject 范围，该范围的维护授权留待后续开放。应用执行和聊天均接受 `memory`（Off/Recall）与 `memoryFilter`（同 §7.2），Off 携带 filter 报 400 Invalid。
 
 同键已成功提交直接读取原 Run；后续记忆更新、策略变化或 artifact 故障均不触发重新召回。未成功接受的请求可在重试时重新选择，以最终接受的快照为准。
 
@@ -254,7 +256,7 @@ API 本库与 artifact 库分别备份。跨库恢复后先核对 Pending 操作
 
 ## 9. API、模块与装配
 
-当前 HTTP/SDK 提供 OwnerPrivate 人工创建、读取、更新、Retire、显式 Restore 和版本历史查询，执行提交支持 Off/Recall。维护入口根据 Forge 验证的用户确定 owner，文档的租户和项目必须与验证结果一致。请求和响应见 [HTTP 契约](api.md)。
+当前 HTTP/SDK 提供 OwnerPrivate 和租户级 ActorPrivate 的人工创建、读取、更新、Retire、显式 Restore 和版本历史查询，执行提交支持 Off/Recall。维护入口根据 Forge 验证的用户确定 owner，文档的租户和项目必须与验证结果一致。请求和响应见 [HTTP 契约](api.md)。
 
 | 操作 | 必需输入与结果 |
 | --- | --- |
@@ -272,7 +274,7 @@ API 本库与 artifact 库分别备份。跨库恢复后先核对 Pending 操作
 | 当前实现位置 | 责任 |
 | --- | --- |
 | `pkg/memory/types.go` | MemoryScope、MemorySelection、Entry/VersionRef/Document 等纯领域值 |
-| `internal/app/memory/service.go` | OwnerPrivate 维护、持久操作准备、claim、远端发布编排、本地 CAS 生效、停用及恢复 |
+| `internal/app/memory/service.go` | 私人记忆维护、持久操作准备、claim、远端发布编排、本地 CAS 生效、停用及恢复 |
 | `internal/app/memory/recall.go` | RecallTx、范围和输出受众、稳定排序 |
 | `internal/table/memory.go` | Entry 投影、Operation、索引及领域值转换；查询与 CAS 位于 Memory service |
 | `internal/client/artifact.go` | SDK、可信三元存储上下文、固定绑定、错误与幂等集合创建协议转换 |
@@ -286,7 +288,7 @@ Memory.Service 在消费处定义只含实际 artifact 行为的小接口，由 
 
 ## 10. 实施顺序与验收
 
-当前 OwnerPrivate 维护、版本历史查询、artifact 适配、持久 claim 和 RecallTx 冻结链路已实现；配置包测试与 Helm 默认值、覆盖值渲染已通过。持久化、发布故障、资源生命周期及全仓验证结果以[验证记录](verification.md)为准。以下仍是完整目标的验收清单，包含尚未开放的共享范围，不表示各项已通过。
+当前 OwnerPrivate 与 ActorPrivate 维护、版本历史查询、artifact 适配、持久 claim 和 RecallTx 冻结链路已实现；配置包测试与 Helm 默认值、覆盖值渲染已通过。持久化、发布故障、资源生命周期及全仓验证结果以[验证记录](verification.md)为准。以下仍是完整目标的验收清单，包含尚未开放的共享范围，不表示各项已通过。
 
 1. **接入条件。** 先完成§2.4列出的artifact三元数据隔离、集合幂等创建及正式SDK兼容验证。分别改变tenant/project/user验证所有入口；验证Memory适配能使用固定绑定，ProjectShared编辑者变化不改变远端归属。
 2. **人工维护闭环。** 两类本地记录、集合绑定、发布、纠正、停用/恢复及仅生效历史的API/SDK；验证中断与并发下的原键恢复。成功标准是 artifact 存档和本地生效可分别观察、未生效版本不被使用。
