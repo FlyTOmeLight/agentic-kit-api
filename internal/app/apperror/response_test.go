@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/contextbuilder"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
@@ -22,6 +23,10 @@ func TestRespondDomainErrors(t *testing.T) {
 		status int
 		code   string
 	}{
+		{name: "agent invalid", err: agent.ErrInvalid, status: 400, code: "InvalidParameter"},
+		{name: "agent not found", err: agent.ErrNotFound, status: 404, code: "NotFound"},
+		{name: "agent conflict", err: agent.ErrConflict, status: 409, code: "Conflict"},
+		{name: "agent unavailable", err: agent.ErrUnavailable, status: 503, code: "DependencyUnavailable"},
 		{name: "memory invalid", err: memory.ErrInvalid, status: 400, code: "InvalidParameter"},
 		{name: "memory not found", err: memory.ErrNotFound, status: 404, code: "NotFound"},
 		{name: "memory conflict", err: memory.ErrConflict, status: 409, code: "Conflict"},

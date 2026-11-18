@@ -17,7 +17,15 @@ type runClient struct{ transport *transport }
 var _ RunAPI = (*runClient)(nil)
 
 func (c *runClient) Get(ctx context.Context, req *GetRunRequest) (*Run, error) {
-	return jsonResult[Run](ctx, c.transport, http.MethodGet, "/v1/runs/"+url.PathEscape(req.ID), nil, http.StatusOK)
+	return jsonResult[Run](
+		ctx,
+		c.transport,
+		http.MethodGet,
+		"/v1/runs/"+url.PathEscape(req.ID),
+		nil,
+		nil,
+		http.StatusOK,
+	)
 }
 
 func (c *runClient) Trace(ctx context.Context, req *GetRunTraceRequest) (*RunTrace, error) {
@@ -26,6 +34,7 @@ func (c *runClient) Trace(ctx context.Context, req *GetRunTraceRequest) (*RunTra
 		c.transport,
 		http.MethodGet,
 		fmt.Sprintf("/v1/runs/%s/trace?after=%d", url.PathEscape(req.ID), req.After),
+		nil,
 		nil,
 		http.StatusOK,
 	)
@@ -37,6 +46,20 @@ func (c *runClient) Cancel(ctx context.Context, req *CancelRunRequest) error {
 		c.transport,
 		http.MethodPost,
 		"/v1/runs/"+url.PathEscape(req.ID)+"/cancel",
+		nil,
+		nil,
+		http.StatusNoContent,
+	)
+	return err
+}
+
+func (c *runClient) Unblock(ctx context.Context, req *UnblockRunRequest) error {
+	_, err := jsonResult[struct{}](
+		ctx,
+		c.transport,
+		http.MethodPost,
+		"/v1/runs/"+url.PathEscape(req.ID)+"/unblock",
+		req,
 		nil,
 		http.StatusNoContent,
 	)
@@ -50,6 +73,7 @@ func (c *runClient) Answer(ctx context.Context, req *AnswerRunRequest) error {
 		http.MethodPost,
 		"/v1/runs/"+url.PathEscape(req.ID)+"/answer",
 		req,
+		nil,
 		http.StatusNoContent,
 	)
 	return err
@@ -62,6 +86,7 @@ func (c *runClient) Resolve(ctx context.Context, req *ResolveRunRequest) error {
 		http.MethodPost,
 		"/v1/runs/"+url.PathEscape(req.ID)+"/resolve",
 		req,
+		nil,
 		http.StatusNoContent,
 	)
 	return err

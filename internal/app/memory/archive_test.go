@@ -181,14 +181,14 @@ func TestArchivePersistsRemoteResultAfterCancellation(t *testing.T) {
 		{name: "tombstone", step: "publish", tombstone: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(archiveTestContext())
 			defer cancel()
 			archive := &cancelAfterArchiveResult{
 				step: scenario.step, cancel: cancel, tombstone: scenario.tombstone,
 			}
 			svc, store := testServiceWithArchive(t, archive)
 			doc := factDocument(
-				memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"},
+				archiveTestScope("owner"),
 				"",
 				"preference",
 				"tabs",
@@ -234,7 +234,7 @@ func TestArchivePersistsRemoteResultAfterCancellation(t *testing.T) {
 				t.Fatalf("canceled operation activated %d entries", entries)
 			}
 			svc.archive = &archive.fakeArchiver
-			entry, err := svc.Create(context.Background(), "owner", "actor", "canceled", doc)
+			entry, err := svc.Create(archiveTestContext(), "owner", "actor", "canceled", doc)
 			if scenario.tombstone {
 				var unavailable *memory.VersionUnavailableError
 				if !errors.As(err, &unavailable) ||
@@ -255,9 +255,9 @@ func TestArchivePersistsRemoteResultAfterCancellation(t *testing.T) {
 func TestArchiveConcurrentReplayClaimsOnce(t *testing.T) {
 	archive := &fakeArchiver{publishStarted: make(chan struct{}, 2), publishRelease: make(chan struct{})}
 	svc, store := testServiceWithArchive(t, archive)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(archiveTestContext(), 10*time.Second)
 	defer cancel()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+	scope := archiveTestScope("owner")
 	doc := factDocument(scope, "", "preference", "tabs")
 	finished := make(chan error, 1)
 	go func() {
@@ -300,9 +300,9 @@ func TestArchiveConcurrentReplayClaimsOnce(t *testing.T) {
 func TestArchiveClaimExpiresAndCanResume(t *testing.T) {
 	archive := &fakeArchiver{failCollection: memory.ErrUnavailable}
 	svc, store := testServiceWithArchive(t, archive)
-	ctx := context.Background()
+	ctx := archiveTestContext()
 	doc := factDocument(
-		memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"},
+		archiveTestScope("owner"),
 		"editor",
 		"preference",
 		"tabs",
@@ -336,9 +336,9 @@ func TestArchiveClaimExpiresAndCanResume(t *testing.T) {
 func TestArchiveRevisionLoserRetainsPublishedReference(t *testing.T) {
 	archive := &fakeArchiver{}
 	svc, store := testServiceWithArchive(t, archive)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(archiveTestContext(), 10*time.Second)
 	defer cancel()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+	scope := archiveTestScope("owner")
 	entry, err := svc.Create(ctx, "owner", "actor", "create", factDocument(scope, "editor", "original", "tabs"))
 	if err != nil {
 		t.Fatal(err)
@@ -397,9 +397,9 @@ func TestArchiveRevisionLoserRetainsPublishedReference(t *testing.T) {
 func TestFirstArchiveLosesRevisionThenRestores(t *testing.T) {
 	archive := &uniqueCollectionArchiver{}
 	local, store := testServiceWithArchive(t, nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(archiveTestContext(), 10*time.Second)
 	defer cancel()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+	scope := archiveTestScope("owner")
 	doc := factDocument(scope, "editor", "original", "tabs")
 	entry, err := local.Create(ctx, "owner", "actor-a", "create-local", doc)
 	if err != nil {
@@ -440,8 +440,8 @@ func TestFirstArchiveLosesRevisionThenRestores(t *testing.T) {
 func TestArchiveReplayConfirmsPublishedVersionAfterRevisionChanges(t *testing.T) {
 	archive := &fakeArchiver{}
 	svc, store := testServiceWithArchive(t, archive)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+	ctx := archiveTestContext()
+	scope := archiveTestScope("owner")
 	original := factDocument(scope, "editor", "original", "tabs")
 	entry, err := svc.Create(ctx, "owner", "actor", "create", original)
 	if err != nil {
@@ -510,9 +510,9 @@ func TestArchiveReplayConfirmsPublishedVersionAfterRevisionChanges(t *testing.T)
 
 func TestArchivedEntryCannotFallBackToLocalWrites(t *testing.T) {
 	svc, store := testServiceWithArchive(t, &fakeArchiver{})
-	ctx := context.Background()
+	ctx := archiveTestContext()
 	doc := factDocument(
-		memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"},
+		archiveTestScope("owner"),
 		"editor",
 		"preference",
 		"tabs",
@@ -541,8 +541,8 @@ func TestArchivedEntryCannotFallBackToLocalWrites(t *testing.T) {
 func TestArchiveCreatePublishesAndActivates(t *testing.T) {
 	archive := &fakeArchiver{}
 	svc, _ := testServiceWithArchive(t, archive)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := archiveTestContext()
+	scope := archiveTestScope("owner-a")
 
 	entry, err := svc.Create(ctx, "owner-a", "actor-a", "key-1",
 		factDocument(scope, "editor", "editor preference", "use tabs"))
@@ -579,8 +579,8 @@ func TestArchiveDeletedVersionRetainsReceiptWithoutActivation(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			archive := &fakeArchiver{}
 			svc, store := testServiceWithArchive(t, archive)
-			ctx := context.Background()
-			scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+			ctx := archiveTestContext()
+			scope := archiveTestScope("owner")
 			doc := factDocument(scope, "editor", "preference", "tabs")
 			var original *memory.Entry
 			if operation == "update" {
@@ -670,8 +670,8 @@ func TestArchiveDeletedVersionRetainsReceiptWithoutActivation(t *testing.T) {
 func TestArchivePublishFailureKeepsPendingAndRecovers(t *testing.T) {
 	archive := &fakeArchiver{failPublish: memory.ErrUnavailable}
 	svc, _ := testServiceWithArchive(t, archive)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := archiveTestContext()
+	scope := archiveTestScope("owner-a")
 	doc := factDocument(scope, "editor", "editor preference", "use tabs")
 
 	if _, err := svc.Create(ctx, "owner-a", "actor-a", "key-1", doc); !errors.Is(err, memory.ErrUnavailable) {
@@ -698,8 +698,8 @@ func TestArchivePublishFailureKeepsPendingAndRecovers(t *testing.T) {
 func TestArchiveCollectionFailureKeepsPending(t *testing.T) {
 	archive := &fakeArchiver{failCollection: memory.ErrUnavailable}
 	svc, _ := testServiceWithArchive(t, archive)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := archiveTestContext()
+	scope := archiveTestScope("owner-a")
 	doc := factDocument(scope, "editor", "editor preference", "use tabs")
 
 	if _, err := svc.Create(ctx, "owner-a", "actor-a", "key-1", doc); !errors.Is(err, memory.ErrUnavailable) {
@@ -722,8 +722,8 @@ func TestArchiveCollectionFailureKeepsPending(t *testing.T) {
 func TestArchiveUpdatePublishesNewVersion(t *testing.T) {
 	archive := &fakeArchiver{}
 	svc, _ := testServiceWithArchive(t, archive)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := archiveTestContext()
+	scope := archiveTestScope("owner-a")
 
 	entry, err := svc.Create(ctx, "owner-a", "actor-a", "key-1",
 		factDocument(scope, "editor", "v1", "use tabs"))
@@ -749,8 +749,8 @@ func TestArchiveUpdatePublishesNewVersion(t *testing.T) {
 
 func TestLocalOnlyCreateHasNoVersionRef(t *testing.T) {
 	svc, _ := testServiceWithArchive(t, nil)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := archiveTestContext()
+	scope := archiveTestScope("owner-a")
 
 	entry, err := svc.Create(ctx, "owner-a", "actor-a", "key-1",
 		factDocument(scope, "editor", "editor preference", "use tabs"))

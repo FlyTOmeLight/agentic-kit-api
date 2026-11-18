@@ -17,6 +17,7 @@ func CompileRunSpec(
 	filesystem *FilesystemBinding,
 ) Spec {
 	return Spec{
+		PricingFrozen: true,
 		AgentID:       agentID,
 		ConfigVersion: strconv.FormatInt(version, 10),
 		Query:         query,

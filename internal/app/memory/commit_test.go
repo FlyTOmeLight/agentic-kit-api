@@ -146,8 +146,8 @@ func TestCommitCreateActivateApplied(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			archive := &fakeArchiver{}
 			svc, store := testServiceWithArchive(t, archive)
-			ctx := context.Background()
-			scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+			ctx := archiveTestContext()
+			scope := archiveTestScope("owner")
 			doc := factDocument(scope, "editor", "preference", "tabs")
 
 			db, pool := commitFaultDB(t, store, tc.mode, 2)
@@ -217,8 +217,8 @@ func TestCommitUpdateActivateRejected(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			archive := &fakeArchiver{}
 			svc, store := testServiceWithArchive(t, archive)
-			ctx := context.Background()
-			scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+			ctx := archiveTestContext()
+			scope := archiveTestScope("owner")
 			original := factDocument(scope, "editor", "original", "tabs")
 			entry, err := svc.Create(ctx, "owner", "actor", "create", original)
 			if err != nil {
@@ -297,8 +297,8 @@ func TestCommitRetireApplied(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			archive := &fakeArchiver{}
 			svc, store := testServiceWithArchive(t, archive)
-			ctx := context.Background()
-			scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+			ctx := archiveTestContext()
+			scope := archiveTestScope("owner")
 			doc := factDocument(scope, "editor", "preference", "tabs")
 			entry, err := svc.Create(ctx, "owner", "actor", "create", doc)
 			if err != nil {
@@ -364,8 +364,8 @@ func TestCommitRetireRejected(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			archive := &fakeArchiver{}
 			svc, store := testServiceWithArchive(t, archive)
-			ctx := context.Background()
-			scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+			ctx := archiveTestContext()
+			scope := archiveTestScope("owner")
 			doc := factDocument(scope, "editor", "preference", "tabs")
 			entry, err := svc.Create(ctx, "owner", "actor", "create", doc)
 			if err != nil {
@@ -425,8 +425,8 @@ func TestCommitPrepareRejected(t *testing.T) {
 	for _, tc := range commitFailureModes {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, store := testServiceWithArchive(t, nil)
-			ctx := context.Background()
-			scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+			ctx := archiveTestContext()
+			scope := archiveTestScope("owner")
 			doc := factDocument(scope, "editor", "preference", "tabs")
 			entry, err := svc.Create(ctx, "owner", "actor", "create", doc)
 			if err != nil {

@@ -26,6 +26,11 @@ func TestRunTracePublicReplayAndOwnerIsolation(t *testing.T) {
 		),
 	)
 	defer server.Close()
+	server.Client().Transport = scopeTransport{
+		base:    server.Client().Transport,
+		tenant:  "tenant",
+		project: "project",
+	}
 	client, err := sdk.NewClient(server.URL, testToken, server.Client())
 	if err != nil {
 		t.Fatal(err)

@@ -127,6 +127,8 @@ func TestModelDatabaseDefaults(t *testing.T) {
 	// A map leaves omitted fields to PostgreSQL instead of GORM's struct defaults.
 	err := s.db.Model(&table.Run{}).Create(map[string]any{
 		"id":           id,
+		"tenant_id":    "tenant",
+		"project_id":   "project",
 		"owner_id":     "owner",
 		"session_id":   "session",
 		"request_key":  "request",

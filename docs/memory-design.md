@@ -2,7 +2,7 @@
 
 状态：部分实施，2026-11-17 按当前工作树更新。本地 OwnerPrivate 人工 CRUD（删除语义为 Retire）、显式 Restore、生效投影、操作回执和生效版本历史 API 已实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。配置归档时，API 后台已能继续未完成的 Create/Update/Restore。本地真实 artifact HTTP 服务与 PostgreSQL 联调已通过，覆盖服务凭据、固定版本、幂等、作用域隔离及代理故障下的 Pending 恢复，见[验证记录](verification.md#memory-真实-artifact-联合验证)。自动提炼、语义检索及版本删除/回收未实现，外部部署验收尚未完成。
 
-本文同时保留目标契约：多主体共享授权及真实部署故障验收尚未完成。当前 HTTP 人工维护只开放 OwnerPrivate，身份读取沿用现有入口，完整认证 middleware 尚未接入。本文替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 的范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
+当前 HTTP 人工维护只开放 OwnerPrivate，使用 Forge 校验后的租户、项目和用户身份。多主体共享授权及真实部署故障验收尚未完成。本文替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 的范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
 
 ## 1. 设计结论
 
@@ -153,7 +153,7 @@ EvidenceRef 引用已授权 Run/message/step/event 及必要摘要，保存时�
 
 首版增加两类记录；Run 快照复用框架现有目标模型。
 
-当前表为 `memory_entry`、`memory_operation`，仅支持空库或空 schema 初始化，无历史迁移或回填。主题部分唯一索引 `memory_entry_subject_identity` 覆盖完整 scope、agent、kind 和非空 subjectKey；回执复合唯一索引 `memory_operation_owner_request` 覆盖 `(owner_id, request_key)`。更丰富的 Principal/CallerID 命名空间及历史索引属于目标契约，不能视为当前 schema 已具备。
+当前表为 `memory_entry`、`memory_operation`。主题部分唯一索引 `memory_entry_subject_identity` 覆盖完整 scope、agent、kind 和非空 subjectKey。回执复合唯一索引 `memory_operation_tenant_owner_key` 覆盖 `(tenant_id, owner_id, request_key)`。旧库上线前需核实历史归属，回填已确认的租户并用新索引替换旧索引 `memory_operation_owner_request`。初始化适用于空库或空 schema。尚无租户归属的历史待处理回执仍按已持久化的归档绑定恢复。
 
 | 记录 | 字段与约束 |
 | --- | --- |
@@ -224,7 +224,7 @@ Agent 版本不因本设计增加自动开启学习的开关。服务端政策�
 
 将选中条目的完整正文、条件、来源、固定版本引用及顺序映射为 ContextBlock；与策略和预算一起编码到 ContextSnapshot，并与 Session/Run/用户消息/事件原子提交。无匹配保存 Recall/Empty，Off 保存明确关闭；本地读取或投影校验失败使接受事务回滚，不能静默降为 Empty。投影正常时 artifact 暂时离线不影响 Recall，这来自已完成的本地生效契约。
 
-已实现 scope 构造口径：普通聊天无业务 tenant/project 上下文，固定 OwnerPrivate。应用执行从接受时已核验的 workspace scope 派生（`pkg/durable/prepare.go` 的 `memoryScopeFromFacts`）：tenant+actor 且 project 为空为 ActorPrivate；tenant+project+actor 为 ActorProject；组件缺失时回退 OwnerPrivate，绝不扩宽为 ProjectShared。应用执行与聊天共用同一请求字段：`SubmitExecutionRequest` 携带 `memory`（Off/Recall）与 `memoryFilter`（同 §7.2 的 RecallFilter），Off 携带 filter 报 400 Invalid。
+普通聊天使用 OwnerPrivate，按 Forge 验证的租户、项目和当前 owner 查询。应用执行按已核验的 workspace scope 派生，tenant 与 actor 齐备时选 ActorPrivate，包含 project 时选 ActorProject，组件缺失时使用当前请求的 OwnerPrivate。应用执行和聊天均接受 `memory`（Off/Recall）与 `memoryFilter`（同 §7.2），Off 携带 filter 报 400 Invalid。
 
 同键已成功提交直接读取原 Run；后续记忆更新、策略变化或 artifact 故障均不触发重新召回。未成功接受的请求可在重试时重新选择，以最终接受的快照为准。
 
@@ -254,7 +254,7 @@ API 本库与 artifact 库分别备份。跨库恢复后先核对 Pending 操作
 
 ## 9. API、模块与装配
 
-当前 HTTP/SDK 已提供 OwnerPrivate 人工创建、读取、更新、Retire、显式 Restore 和版本历史查询，执行提交已支持 Off/Recall。维护入口使用现有 `auth.UserID` 作为 owner，完整认证与多主体授权仍待接入。当前请求和响应以 [HTTP 契约](api.md)为准。
+当前 HTTP/SDK 提供 OwnerPrivate 人工创建、读取、更新、Retire、显式 Restore 和版本历史查询，执行提交支持 Off/Recall。维护入口根据 Forge 验证的用户确定 owner，文档的租户和项目必须与验证结果一致。请求和响应见 [HTTP 契约](api.md)。
 
 | 操作 | 必需输入与结果 |
 | --- | --- |

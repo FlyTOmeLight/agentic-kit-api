@@ -42,20 +42,14 @@ func TestToolExecutionDoesNotRequireProject(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := testStore(t)
-			ctx := context.Background()
-			agent, err := s.CreateAgent(ctx, "app", "Assistant", AgentConfig{
+			cfg := AgentConfig{
 				Model:    ModelSpec{Name: "test", BaseURL: "http://model.test/v1"},
 				MaxTurns: 3,
 				Tools:    tc.tools,
 				Toolsets: tc.toolsets,
-			})
-			if err != nil {
-				t.Fatal(err)
 			}
-			version, err := s.PublishAgent(ctx, "app", agent.ID, agent.Revision)
-			if err != nil {
-				t.Fatal(err)
-			}
+			agent := createAgentFixture(t, s, "app", "Assistant", cfg)
+			version := publishAgentFixture(t, s, "app", agent.ID, agent.Revision)
 			spec := sdk.ExecutionSpec{
 				AgentID:      agent.ID,
 				AgentVersion: version.Number,
@@ -63,7 +57,7 @@ func TestToolExecutionDoesNotRequireProject(t *testing.T) {
 				Scope:        &Scope{TenantID: "t", ActorID: "u", TaskID: "task", RoundID: "round"},
 				Filesystem:   tc.filesystem,
 			}
-			run, created, err := s.SubmitExecution(ctx, "app", "no-project", spec, time.Minute)
+			run, created, err := submitExecutionFixture(t, s, "app", "no-project", spec, time.Minute, cfg)
 			if err != nil || !created {
 				t.Fatalf("projectless tool execution: created=%t err=%v", created, err)
 			}
@@ -71,12 +65,28 @@ func TestToolExecutionDoesNotRequireProject(t *testing.T) {
 				len(run.Spec.Toolsets) != len(tc.toolsets) {
 				t.Fatalf("execution snapshot changed: %+v", run.Spec)
 			}
-			replayed, created, err := s.SubmitExecution(ctx, "app", "no-project", spec, time.Minute)
+			replayed, created, err := submitExecutionFixture(
+				t,
+				s,
+				"app",
+				"no-project",
+				spec,
+				time.Minute,
+				cfg,
+			)
 			if err != nil || created || replayed.ID != run.ID {
 				t.Fatalf("replay: created=%t err=%v", created, err)
 			}
 			spec.Scope.ProjectID = "p"
-			projectRun, created, err := s.SubmitExecution(ctx, "app", "with-project", spec, time.Minute)
+			projectRun, created, err := submitExecutionFixture(
+				t,
+				s,
+				"app",
+				"with-project",
+				spec,
+				time.Minute,
+				cfg,
+			)
 			if err != nil || !created || projectRun.SessionID == run.SessionID {
 				t.Fatalf("project scope isolation: created=%t err=%v", created, err)
 			}
@@ -87,39 +97,40 @@ func TestToolExecutionDoesNotRequireProject(t *testing.T) {
 func TestApplicationExecutionSnapshotAndFencing(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	agent, e := s.CreateAgent(
-		ctx,
-		"coding",
-		"Coding",
-		AgentConfig{
-			SystemPrompt: "published",
-			MaxTurns:     3,
-			Model:        ModelSpec{Name: "test", BaseURL: "http://model.test/v1"},
-		},
-	)
-	if e != nil {
-		t.Fatal(e)
+	cfg := AgentConfig{
+		SystemPrompt: "published",
+		MaxTurns:     3,
+		Model:        ModelSpec{Name: "test", BaseURL: "http://model.test/v1"},
 	}
-	version, e := s.PublishAgent(ctx, "coding", agent.ID, agent.Revision)
-	if e != nil {
-		t.Fatal(e)
-	}
+	agent := createAgentFixture(t, s, "coding", "Coding", cfg)
+	version := publishAgentFixture(t, s, "coding", agent.ID, agent.Revision)
 	spec := sdk.ExecutionSpec{
 		Scope:        &Scope{TenantID: "t", ProjectID: "p", ActorID: "u", TaskID: "task", RoundID: "round"},
 		Query:        "fix",
 		AgentID:      agent.ID,
 		AgentVersion: version.Number,
 	}
-	r, created, e := s.SubmitExecution(ctx, "coding", "round", spec, time.Minute)
+	r, created, e := submitExecutionFixture(t, s, "coding", "round", spec, time.Minute, cfg)
 	if e != nil || !created {
 		t.Fatal(e)
 	}
-	again, created, e := s.SubmitExecution(ctx, "coding", "round", spec, time.Minute)
+	again, created, e := submitExecutionFixture(t, s, "coding", "round", spec, time.Minute, cfg)
 	if e != nil || created || again.ID != r.ID {
 		t.Fatal(e)
 	}
 	spec.Scope.ProjectID = "foreign"
-	if _, _, e = s.SubmitExecution(ctx, "coding", "round", spec, time.Minute); !errors.Is(e, ErrConflict) {
+	if _, _, e = submitExecutionFixture(
+		t,
+		s,
+		"coding",
+		"round",
+		spec,
+		time.Minute,
+		cfg,
+	); !errors.Is(
+		e,
+		ErrConflict,
+	) {
 		t.Fatal(e)
 	}
 	claimed := claim(t, s, "worker")
@@ -170,5 +181,37 @@ func TestCheckExecutionLeaseEnforcesDeadline(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("lease accepted after deadline expired")
+	}
+}
+
+func TestAuthorizeExecutionBoundsAndWorkerCheck(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	createRun(t, s)
+	claimed := claim(t, s, "worker-a")
+
+	verdict, err := s.AuthorizeExecution(ctx, "owner", claimed.ID, "worker-a", claimed.Epoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verdict.Allowed || verdict.RunID != claimed.ID || verdict.WorkerID != "worker-a" ||
+		verdict.Epoch != claimed.Epoch {
+		t.Fatalf("unexpected authorization verdict: %+v", verdict)
+	}
+	if verdict.CheckedAt.IsZero() || verdict.ExpiresAt.IsZero() || !verdict.ExpiresAt.After(verdict.CheckedAt) {
+		t.Fatalf(
+			"expected database clock bounds, got checkedAt=%v expiresAt=%v",
+			verdict.CheckedAt,
+			verdict.ExpiresAt,
+		)
+	}
+
+	// Another worker cannot authorize under worker-a's claim.
+	wrongWorker, err := s.AuthorizeExecution(ctx, "owner", claimed.ID, "worker-b", claimed.Epoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrongWorker.Allowed {
+		t.Fatal("mismatched worker must not be authorized")
 	}
 }

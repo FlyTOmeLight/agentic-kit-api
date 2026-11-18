@@ -228,7 +228,7 @@ func memoryHTTPUpdateBody(revision int64, restore bool, summary, value string) s
 
 func memoryHTTPDocument(summary, value string) string {
 	return `{
-		"scope":{"kind":"OwnerPrivate","owner":"owner"},
+		"scope":{"kind":"OwnerPrivate","owner":"owner","tenant":"tenant"},
 		"kind":"Fact",
 		"subjectKey":"editor",
 		"summary":"` + summary + `",

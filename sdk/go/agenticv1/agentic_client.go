@@ -15,6 +15,7 @@ type Client struct {
 	Agents     AgentAPI
 	Sessions   SessionAPI
 	Runs       RunAPI
+	Sandboxes  SandboxAPI
 	Memories   MemoryAPI
 }
 
@@ -42,6 +43,7 @@ func NewClient(baseURL, token string, httpClient *http.Client) (*Client, error) 
 		Agents:     &agentClient{transport: httpTransport},
 		Sessions:   &sessionClient{transport: httpTransport},
 		Runs:       &runClient{transport: httpTransport},
+		Sandboxes:  &sandboxClient{transport: httpTransport},
 		Memories:   &memoryClient{transport: httpTransport},
 	}, nil
 }

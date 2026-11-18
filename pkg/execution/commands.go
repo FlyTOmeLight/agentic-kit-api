@@ -18,12 +18,13 @@ const (
 
 // SubmitCommand is the durable accept input for chat and application entrypoints.
 type SubmitCommand struct {
-	Owner       string
-	RequestKey  string
-	RequestHash string
-	TTL         time.Duration
-	MaxAttempts int
-	Kind        SubmitKind
+	PricingSnapshot *PricingSnapshot
+	Owner           string
+	RequestKey      string
+	RequestHash     string
+	TTL             time.Duration
+	MaxAttempts     int
+	Kind            SubmitKind
 
 	// Chat: explicit session and user query.
 	SessionID string
@@ -33,20 +34,25 @@ type SubmitCommand struct {
 	// Application: immutable version and trusted scope/bindings.
 	ExecutionSpec ExecutionSpec
 
+	// GoalID optionally binds the run to a durable goal for budget tracking
+	// and convergence evaluation.
+	GoalID string
+
 	Memory       memory.Selection
 	MemoryFilter memory.RecallFilter
 }
 
 // SubmissionFacts are passed to prepare after session locks succeed.
 type SubmissionFacts struct {
-	Owner          string
-	SessionID      string
-	SessionAgentID string
-	Kind           SubmitKind
-	Query          string
-	ExecutionSpec  ExecutionSpec
-	Memory         memory.Selection
-	MemoryFilter   memory.RecallFilter
+	PricingSnapshot *PricingSnapshot
+	Owner           string
+	SessionID       string
+	SessionAgentID  string
+	Kind            SubmitKind
+	Query           string
+	ExecutionSpec   ExecutionSpec
+	Memory          memory.Selection
+	MemoryFilter    memory.RecallFilter
 }
 
 // PreparedSubmission is the compiled snapshot ready to persist.
@@ -72,6 +78,8 @@ const (
 	BoundaryFail               BoundaryKind = "Fail"
 	BoundaryAwaitClarification BoundaryKind = "AwaitClarification"
 	BoundaryAwaitReview        BoundaryKind = "AwaitReview"
+	BoundaryAwaitExternal      BoundaryKind = "AwaitExternal"
+	BoundaryBlock              BoundaryKind = "Block"
 )
 
 // InteractionKind distinguishes a clarification pause from a human review pause.
@@ -90,6 +98,7 @@ type Boundary struct {
 	Output      string
 	Detail      string
 	WaitingStep string
+	ExternalRef string
 	Context     *ContextInfo
 }
 
@@ -119,9 +128,11 @@ type Source struct {
 
 // StepIntent is the recorded intent of a tool call, stable across retries.
 type StepIntent struct {
-	ID     string
-	Input  string
-	Policy agent.Policy
+	ID           string
+	Input        string
+	Policy       agent.Policy
+	ExternalRef  string
+	ExternalWait time.Duration
 }
 
 // StepOutcome tells the executor whether to invoke the tool, reuse a committed
@@ -129,9 +140,10 @@ type StepIntent struct {
 type StepOutcome string
 
 const (
-	StepExecute   StepOutcome = "Execute"
-	StepReplay    StepOutcome = "Replay"
-	StepUncertain StepOutcome = "Uncertain"
+	StepExecute      StepOutcome = "Execute"
+	StepReplay       StepOutcome = "Replay"
+	StepUncertain    StepOutcome = "Uncertain"
+	StepExternalWait StepOutcome = "ExternalWait"
 )
 
 type StepDecision struct {

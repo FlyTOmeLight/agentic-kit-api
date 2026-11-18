@@ -17,7 +17,7 @@ import (
 // ReadVersion reads one archived document by its fixed version reference.
 // The reference supplies the complete storage identity; the URI is only
 // compared with the response and is never resolved or fetched directly.
-func (s *ArtifactStore) ReadVersion(ctx context.Context, ref memory.VersionRef) (*memory.Document, error) {
+func (s *MemoryArchive) ReadVersion(ctx context.Context, ref memory.VersionRef) (*memory.Document, error) {
 	binding := &memory.ArtifactBinding{
 		StoreID:    ref.StoreID,
 		TenantID:   ref.TenantID,

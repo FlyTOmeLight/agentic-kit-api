@@ -19,7 +19,9 @@ func (s *Store) Trace(ctx context.Context, owner, id string, after int64) (*RunT
 	}
 	var trace RunTrace
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		run, err := readRun(tx.Model(&table.Run{}).Where("id = ? AND owner_id = ?", id, owner))
+		run, err := readRun(
+			table.TenantQuery(ctx, tx.Model(&table.Run{})).Where("id = ? AND owner_id = ?", id, owner),
+		)
 		if err != nil {
 			return err
 		}

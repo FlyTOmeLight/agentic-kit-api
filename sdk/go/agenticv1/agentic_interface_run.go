@@ -10,6 +10,7 @@ type RunAPI interface {
 	Get(ctx context.Context, req *GetRunRequest) (*Run, error)
 	Trace(ctx context.Context, req *GetRunTraceRequest) (*RunTrace, error)
 	Cancel(ctx context.Context, req *CancelRunRequest) error
+	Unblock(ctx context.Context, req *UnblockRunRequest) error
 	Answer(ctx context.Context, req *AnswerRunRequest) error
 	Resolve(ctx context.Context, req *ResolveRunRequest) error
 

@@ -2,11 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	serrors "github.com/FlyTOmeLight/server-go/errors"
 
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
@@ -22,6 +25,11 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 		),
 	)
 	defer server.Close()
+	server.Client().Transport = scopeTransport{
+		base:    server.Client().Transport,
+		tenant:  "tenant",
+		project: "project",
+	}
 	client, e := sdk.NewClient(server.URL, testToken, server.Client())
 	if e != nil {
 		t.Fatal(e)
@@ -57,9 +65,43 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	submitStatus := func(c *sdk.Client, key string, version int64) int {
+		_, err := c.Executions.Submit(ctx, &sdk.SubmitExecutionRequest{
+			IdempotencyKey: key,
+			Spec: sdk.ExecutionSpec{
+				Scope: &sdk.Scope{
+					TenantID:  "tenant",
+					ProjectID: "project",
+					ActorID:   "actor",
+					TaskID:    "task",
+					RoundID:   key,
+				},
+				Query:        "fix",
+				AgentID:      agent.ID,
+				AgentVersion: version,
+			},
+			TimeoutSeconds: 60,
+		})
+		var apiErr *serrors.Error
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("%s: want API error, got %v", key, err)
+		}
+		return apiErr.Status
+	}
+	if status := submitStatus(client, "unpublished", 1); status != 404 {
+		t.Fatalf("unpublished version: %d", status)
+	}
 	version, e := client.Agents.Publish(ctx, &sdk.PublishAgentRequest{ID: agent.ID, Revision: agent.Revision})
 	if e != nil {
 		t.Fatal(e)
+	}
+	ordinary, e := sdk.NewClient(server.URL, "ordinary-token-with-24-characters", server.Client())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer ordinary.Close()
+	if status := submitStatus(ordinary, "foreign", version.Number); status != 404 {
+		t.Fatalf("foreign agent: %d", status)
 	}
 	request := sdk.SubmitExecutionRequest{
 		Spec: sdk.ExecutionSpec{

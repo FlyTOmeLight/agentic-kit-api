@@ -30,13 +30,17 @@ func (s *Store) Retry(ctx context.Context, l Lease, state json.RawMessage, reaso
 	err = tx.Model(&table.Run{}).
 		Where("id = ?", l.RunID).
 		Updates(map[string]any{
-			"state":        string(state),
-			"status":       status,
-			"error":        reason,
-			"lease_until":  nil,
-			"available_at": gorm.Expr("clock_timestamp()+?*interval '1 millisecond'", delay.Milliseconds()),
-			"waiting_step": "",
-			"waiting_kind": "",
+			"state":       string(state),
+			"status":      status,
+			"error":       reason,
+			"lease_until": nil,
+			"available_at": gorm.Expr(
+				"clock_timestamp()+?*interval '1 millisecond'",
+				delay.Milliseconds(),
+			),
+			"waiting_step":         "",
+			"waiting_kind":         "",
+			"waiting_external_ref": "",
 		}).
 		Error
 	if err != nil {

@@ -47,6 +47,7 @@ func submitWithMemory(
 	recaller MemoryRecaller,
 ) *Run {
 	t.Helper()
+	cfg, agentID, version := sessionPublishedConfigFixture(t, s, session)
 	input, _ := json.Marshal(struct{ Session, Query string }{Session: session, Query: "question"})
 	r, _, err := s.Accept(context.Background(), execution.SubmitCommand{
 		Owner:       "owner",
@@ -58,11 +59,20 @@ func submitWithMemory(
 		SessionID:   session,
 		Query:       "question",
 		Memory:      selection,
-	}, PrepareChatSubmissionWith(recaller))
+	}, PrepareChatSubmission(cfg, agentID, version, recaller))
 	if err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 	return r
+}
+
+// sessionPublishedConfigFixture resolves the published config body for a
+// fixture session, mirroring the production prefetch outside the accept
+// transaction.
+func sessionPublishedConfigFixture(t *testing.T, s *Store, sessionID string) (AgentConfig, string, int64) {
+	t.Helper()
+	agentID, version := sessionPublishedFixture(t, s, sessionID)
+	return fixtureVersionConfig(t, agentID, version), agentID, version
 }
 
 func decodeRunSnapshot(t *testing.T, s *Store, runID string) contextbuilder.Snapshot {
@@ -85,7 +95,7 @@ func decodeRunSnapshot(t *testing.T, s *Store, runID string) contextbuilder.Snap
 
 func TestSubmitRecallFreezesMemoryMaterials(t *testing.T) {
 	s := testStore(t)
-	session := testConversation(t, s, Spec{MaxTurns: 5})
+	session, _ := testConversation(t, s, Spec{MaxTurns: 5})
 
 	recaller := &stubRecaller{entries: []memory.Entry{{
 		ID:       "mem_1",
@@ -119,7 +129,7 @@ func TestSubmitRecallFreezesMemoryMaterials(t *testing.T) {
 
 func TestSubmitRecallEmptyIsDistinctFact(t *testing.T) {
 	s := testStore(t)
-	session := testConversation(t, s, Spec{MaxTurns: 5})
+	session, _ := testConversation(t, s, Spec{MaxTurns: 5})
 
 	recaller := &stubRecaller{}
 	run := submitWithMemory(t, s, session.ID, memory.SelectionRecall, recaller)
@@ -135,7 +145,7 @@ func TestSubmitRecallEmptyIsDistinctFact(t *testing.T) {
 
 func TestSubmitOffNeverRecalls(t *testing.T) {
 	s := testStore(t)
-	session := testConversation(t, s, Spec{MaxTurns: 5})
+	session, _ := testConversation(t, s, Spec{MaxTurns: 5})
 
 	recaller := &stubRecaller{err: errors.New("must not be called")}
 	run := submitWithMemory(t, s, session.ID, memory.SelectionOff, recaller)
@@ -151,7 +161,8 @@ func TestSubmitOffNeverRecalls(t *testing.T) {
 
 func TestSubmitRecallFailureRollsBack(t *testing.T) {
 	s := testStore(t)
-	session := testConversation(t, s, Spec{MaxTurns: 5})
+	session, cfg := testConversation(t, s, Spec{MaxTurns: 5})
+	agentID, version := sessionPublishedFixture(t, s, session.ID)
 
 	recaller := &stubRecaller{err: memory.ErrUnavailable}
 	input, _ := json.Marshal(struct{ Session, Query string }{Session: session.ID, Query: "question"})
@@ -165,7 +176,7 @@ func TestSubmitRecallFailureRollsBack(t *testing.T) {
 		SessionID:   session.ID,
 		Query:       "question",
 		Memory:      memory.SelectionRecall,
-	}, PrepareChatSubmissionWith(recaller))
+	}, PrepareChatSubmission(cfg, agentID, version, recaller))
 	if !errors.Is(err, memory.ErrUnavailable) {
 		t.Fatalf("Accept error = %v, want ErrUnavailable", err)
 	}
@@ -181,7 +192,8 @@ func TestSubmitRecallFailureRollsBack(t *testing.T) {
 
 func TestSubmitRecallPassesFilter(t *testing.T) {
 	s := testStore(t)
-	session := testConversation(t, s, Spec{MaxTurns: 5})
+	session, cfg := testConversation(t, s, Spec{MaxTurns: 5})
+	agentID, version := sessionPublishedFixture(t, s, session.ID)
 
 	recaller := &stubRecaller{}
 	input, _ := json.Marshal(struct{ Session, Query string }{Session: session.ID, Query: "question"})
@@ -197,7 +209,7 @@ func TestSubmitRecallPassesFilter(t *testing.T) {
 		Query:        "question",
 		Memory:       memory.SelectionRecall,
 		MemoryFilter: filter,
-	}, PrepareChatSubmissionWith(recaller))
+	}, PrepareChatSubmission(cfg, agentID, version, recaller))
 	if err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
@@ -211,7 +223,8 @@ func TestSubmitRecallPassesFilter(t *testing.T) {
 
 func TestSubmitRecallWithoutRecallerRejected(t *testing.T) {
 	s := testStore(t)
-	session := testConversation(t, s, Spec{MaxTurns: 5})
+	session, cfg := testConversation(t, s, Spec{MaxTurns: 5})
+	agentID, version := sessionPublishedFixture(t, s, session.ID)
 
 	input, _ := json.Marshal(struct{ Session, Query string }{Session: session.ID, Query: "question"})
 	_, _, err := s.Accept(context.Background(), execution.SubmitCommand{
@@ -224,7 +237,7 @@ func TestSubmitRecallWithoutRecallerRejected(t *testing.T) {
 		SessionID:   session.ID,
 		Query:       "question",
 		Memory:      memory.SelectionRecall,
-	}, PrepareChatSubmission)
+	}, PrepareChatSubmission(cfg, agentID, version, nil))
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("Accept error = %v, want ErrInvalid", err)
 	}
@@ -239,6 +252,7 @@ func submitApplicationWithMemory(
 	recaller MemoryRecaller,
 ) *Run {
 	t.Helper()
+	cfg := fixtureVersionConfig(t, spec.AgentID, spec.AgentVersion)
 	input, _ := json.Marshal(struct {
 		Spec   execution.ExecutionSpec
 		Memory memory.Selection
@@ -252,7 +266,7 @@ func submitApplicationWithMemory(
 		Kind:          execution.SubmitApplication,
 		ExecutionSpec: spec,
 		Memory:        selection,
-	}, PrepareApplicationSubmissionWith(recaller))
+	}, PrepareApplicationSubmission(cfg, spec.AgentID, spec.AgentVersion, recaller))
 	if err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
@@ -261,17 +275,12 @@ func submitApplicationWithMemory(
 
 func publishTestAgent(t *testing.T, s *Store, owner string) string {
 	t.Helper()
-	a, err := s.CreateAgent(context.Background(), owner, "app", AgentConfig{
+	a := createAgentFixture(t, s, owner, "app", AgentConfig{
 		SystemPrompt: "v1",
 		Model:        ModelSpec{Name: "local", BaseURL: "http://model.test/v1"},
 		MaxTurns:     5,
 	})
-	if err != nil {
-		t.Fatalf("CreateAgent: %v", err)
-	}
-	if _, err := s.PublishAgent(context.Background(), owner, a.ID, a.Revision); err != nil {
-		t.Fatalf("PublishAgent: %v", err)
-	}
+	publishAgentFixture(t, s, owner, a.ID, a.Revision)
 	return a.ID
 }
 
@@ -327,7 +336,7 @@ func TestApplicationRecallDerivesScopeFromTrustedWorkspace(t *testing.T) {
 
 func TestChatRecallStaysOwnerPrivate(t *testing.T) {
 	s := testStore(t)
-	session := testConversation(t, s, Spec{MaxTurns: 5})
+	session, _ := testConversation(t, s, Spec{MaxTurns: 5})
 
 	recaller := &stubRecaller{}
 	submitWithMemory(t, s, session.ID, memory.SelectionRecall, recaller)

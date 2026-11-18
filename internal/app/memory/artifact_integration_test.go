@@ -22,6 +22,7 @@ import (
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
@@ -167,7 +168,13 @@ func TestArtifactIntegrationPendingRecoveryAndHistory(t *testing.T) {
 	svc, store := testServiceWithArchive(t, archive)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	doc := factDocument(memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}, "editor", "first", "tabs")
+	ctx = access.WithScope(ctx, access.Scope{TenantID: binding.TenantID})
+	doc := factDocument(
+		memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner", Tenant: binding.TenantID},
+		"editor",
+		"first",
+		"tabs",
+	)
 	entry, err := svc.Create(ctx, "owner", "editor", "create", doc)
 	if err != nil {
 		t.Fatal(err)
@@ -295,9 +302,9 @@ func realArtifactServer(t *testing.T, grants map[string]memory.ArtifactBinding) 
 	})
 }
 
-func realArtifactStore(t *testing.T, endpoint, token string) *client.ArtifactStore {
+func realArtifactStore(t *testing.T, endpoint, token string) *client.MemoryArchive {
 	t.Helper()
-	archive, err := client.NewArtifactStore(client.ArtifactConfig{
+	archive, err := client.NewMemoryArchive(client.ArtifactConfig{
 		Endpoint: endpoint, BearerToken: token, StoreID: "artifact-test", TenantID: "tenant",
 		Timeout: 3 * time.Second, MaxPayloadBytes: 256 * 1024,
 	})

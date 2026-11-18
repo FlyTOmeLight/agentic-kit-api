@@ -263,7 +263,7 @@ func TestArtifactReadVersionDependencyFailure(t *testing.T) {
 func TestArtifactReadVersionTransportFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {}))
 	server.Close()
-	store, err := NewArtifactStore(ArtifactConfig{
+	store, err := NewMemoryArchive(ArtifactConfig{
 		Endpoint:        server.URL,
 		StoreID:         "archive",
 		Timeout:         time.Second,

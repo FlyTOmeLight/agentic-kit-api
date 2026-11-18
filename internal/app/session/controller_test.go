@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/client"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
@@ -22,6 +23,7 @@ type submittedMessage struct {
 
 func (s *submittedMessage) Submit(
 	_ context.Context,
+	_ client.Identity,
 	_, session, key, query string,
 	_ time.Duration,
 	_ int,

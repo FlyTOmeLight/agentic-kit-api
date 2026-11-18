@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 func durableTestStore(t *testing.T) *durable.Store {
@@ -55,18 +58,46 @@ func createDurableRun(t *testing.T, s *durable.Store) *durable.Run {
 		Model:    durable.ModelSpec{Name: "test", BaseURL: "http://localhost:11434/v1"},
 		MaxTurns: 5,
 	}
-	a, err := s.CreateAgent(context.Background(), "owner", "test", cfg)
+	agentRow := table.Agent{
+		ID:       durable.NewID(),
+		TenantID: "tenant",
+		OwnerID:  "owner",
+		Name:     "test",
+		Draft:    cfg,
+		Revision: 1,
+	}
+	if err := s.DB().Create(&agentRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	version := table.AgentVersion{
+		AgentID:            agentRow.ID,
+		Number:             1,
+		ArtifactVersionID:  "fixture-version-" + agentRow.ID,
+		ArtifactVersionURI: "artifact://fixture/" + agentRow.ID,
+	}
+	if err := s.DB().Create(&version).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB().Model(&agentRow).
+		Updates(map[string]any{"published_revision": 1, "published_version": 1}).
+		Error; err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.CreateSession(context.Background(), "owner", agentRow.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.PublishAgent(context.Background(), "owner", a.ID, a.Revision); err != nil {
-		t.Fatal(err)
-	}
-	session, err := s.CreateSession(context.Background(), "owner", a.ID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, _, err := s.Submit(context.Background(), "owner", session.ID, durable.NewID(), "question", time.Hour, 3)
+	input, _ := json.Marshal(struct{ Session, Query string }{Session: session.ID, Query: "question"})
+	r, _, err := s.Accept(context.Background(), execution.SubmitCommand{
+		Owner:       "owner",
+		RequestKey:  durable.NewID(),
+		RequestHash: durable.Hash(input),
+		TTL:         time.Hour,
+		MaxAttempts: 3,
+		Kind:        execution.SubmitChat,
+		SessionID:   session.ID,
+		Query:       "question",
+	}, durable.PrepareChatSubmission(cfg, agentRow.ID, 1, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,3 +28,53 @@ TenantID = "${env:ARTIFACT_TENANT_ID:}"
 BearerToken = "${env:ARTIFACT_BEARER_TOKEN:}"
 TimeoutSeconds = "${env:ARTIFACT_TIMEOUT_SECONDS:30}"
 MaxPayloadBytes = "${env:ARTIFACT_MAX_PAYLOAD_BYTES:262144}"
+
+[Pricing]
+Version = "${env:PRICING_VERSION:}"
+Models = []
+
+# To enable cost accounting, replace Models = [] with model entries:
+# [[Pricing.Models]]
+# Name = "your-model"
+# InputPerMillion = 1.0
+# CachedInputPerMillion = 0.0
+# OutputPerMillion = 2.0
+# Prices are USD per million tokens. Omit cached price to use input price.
+# Empty Version derives a stable catalog digest; each Run freezes its price.
+
+# Sandbox routes require an allowed Forge service. With an allowlist,
+# empty K8sContext serves metadata routes without provisioning pods.
+[Sandbox]
+# Empty disables sandbox HTTP routes.
+AllowedServices = []
+K8sContext = "${env:SANDBOX_K8S_CONTEXT:}"
+K8sNamespace = "${env:SANDBOX_K8S_NAMESPACE:sandbox-center}"
+GuardImage = "${env:SANDBOX_GUARD_IMAGE:}"
+# RuntimeClassName stays empty locally and in CI until the gVisor node pool
+# is configured at stage 4.
+RuntimeClassName = "${env:SANDBOX_RUNTIME_CLASS:}"
+CheckpointImage = "${env:SANDBOX_CHECKPOINT_IMAGE:}"
+CheckpointStoreHostPath = "${env:SANDBOX_CHECKPOINT_STORE_HOST_PATH:}"
+
+[Callback]
+# Enabling requires SigningSecret and both nonempty allowlists.
+Enabled = false
+SigningSecret = "${env:CALLBACK_SIGNING_SECRET:}"
+AllowedSources = []
+AllowedServices = []
+
+[Tenant]
+# Required at startup. HTTPS only, except HTTP on loopback.
+Endpoint = "${env:TENANT_ENDPOINT:}"
+# This API's Forge service credential, not the caller's user credential.
+ServiceAPIKey = "${env:TENANT_SERVICE_API_KEY:}"
+# Milliseconds; zero uses the SDK default.
+Timeout = 5000
+# Empty disables internal execution, goal and lease HTTP routes.
+AllowedPropagationServices = []
+
+# Published Agent configuration is stored in artifact-go. Timeout is in
+# milliseconds; zero keeps the SDK default.
+[AgentArtifact]
+Endpoint = "${env:AGENT_ARTIFACT_ENDPOINT:http://127.0.0.1:18080}"
+Timeout = 5000

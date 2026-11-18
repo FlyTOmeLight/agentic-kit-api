@@ -2,6 +2,65 @@
 
 本文件按日期保留历史检查结果，条目中的路径、版本和限制描述当时的实现。当前功能、布局和契约分别以 README、docs/layout.md 和 docs/api.md 为准；可复用经验见 docs/lessons/。
 
+## 2026-11-17 Agent 版本发布与 Run 快照
+
+OrbStack 的 `forge` release revision 15 使用 Artifact `v0.5.1` 和 Forge Tenant API `v0.13.0`。Forge 的 `/internal/v1/service/self` 返回 `agentic-kit-api`，Artifact 的出站调用接收方白名单配置为 `artifact.forgeTenant.allowedPropagationServices=["agentic-kit-api"]`。API 入站的 `[Tenant].AllowedPropagationServices` 单独用于内部执行接口和 Goal 等路由的调用服务认证。
+
+在本机独立启动 API，用真实 Forge 用户 API key 和已授权的租户创建 Agent、发布版本 1、读取正文、创建 Session 并提交 Run。修改草稿并发布版本 2 后，两个版本分别返回各自的正文，旧 Run 的 `configVersion` 仍为 `1`。
+
+2026-11-18 复核工作树解析到 artifact-go `v0.5.1` 和 forge-tenant-api `v0.13.0`。`GOWORK=off` 下执行 `go build -mod=readonly ./...` 和 `go test -mod=readonly ./...` 均成功，共通过 30 个包的 377 项测试。上述 OrbStack 探针范围止于 Run 接受和版本固定。Worker 执行、Cookie 会话、项目范围、同 revision 重放和真实集群的越权拒绝还需各自的联调证据。
+
+## 2026-11-17 提交时冻结计价快照
+
+API 在 Chat/Application 接受前冻结价格版本、模型、BaseURL 和单价。非空价格表缺模型拒绝提交；空表明确冻结为仅 token 计量。幂等 replay 返回原 Run，Goal 续跑和 Child Run 继承原快照，部署改价不会改变已有任务的计费依据。Worker 只读快照，旧 Run 无冻结标记、快照非法或模型身份不匹配时均在调用前拒绝；主模型与摘要使用同一模型和价格，已持久化的 `PricingFailure` 接管后仍阻断。
+
+本阶段 API 与 Worker 全量 `make integration` 均通过，包含 `go test -race` 与 `go vet ./...`。连接本机 PostgreSQL（55432），API 另连接 Redis（56379），使用 `GOCACHE=/private/tmp/agentic-kit-m0a-build` 和本地 go.work。API durable 包耗时 31.709 秒、service 包 10.290 秒、sandboxcenter 包 20.609 秒；Worker engine 包耗时 68.787 秒。原始临时日志为 `agentic-frozen-pricing-api.log`、`agentic-frozen-pricing-worker.log`，结论记录后清理；下节 84.771 秒和旧日志属于上一阶段。
+
+覆盖价格版本生成、空表/缺模型、提交与改价后 replay、Goal/Child 继承、Worker 冻结快照校验、费用预算、接管与摘要。1 个子代理完成实际调用路径只读复核，未发现具体缺陷。文档收尾不改变 Go 逻辑，沿用本阶段全量结果。
+
+以上为受控响应与本机存储验证，不含真实供应方报价、账单或摘要质量。价格表仍按模型名匹配，未区分不同供应方的同名模型；没有额度预占或严格硬预算。响应已产生但记账未提交时费用仍可能未知。真实 Kubernetes 本轮未重跑，存储仍为单节点 hostPath；本地组合验证不代表独立发布依赖通过。
+
+## 2026-11-17 模型计价与缺价恢复
+
+Worker 主模型与摘要根据可选价格表计算费用，统一通过 `RecordUsageWithCost` 提交。配置了非空价格表时，模型缺价或只有正数总 token 而无输入输出拆分，会先持久化已知 token、零费用和 `PricingFailure`，再返回确定性错误；接管继续阻断。空价格表允许仅 token 计量，但带费用预算的 Goal 在调用前失败。零费用不代表供应方免费，重复 usage 不会补价，配置变更不回填历史费用。
+
+本阶段 API 与 Worker 均通过 `make integration`，包含全量 `go test -race` 与 `go vet ./...`；连接本机 PostgreSQL（55432），API 另连接 Redis（56379），使用可写 `GOCACHE=/private/tmp/agentic-kit-m0a-build`。Worker 最后一次全量包含摘要费用预算用例，engine 包耗时 84.771 秒。定向检查包括 engine 计价、usage 与恢复 61 项，config/service 31 项，以及 `TestCompactionUsageGovernance` 9 项，计数包含子测试。
+
+API 最终复跑的 `make integration` 退出码为 0，日志为 `/private/tmp/agentic-pricing-api-close.log`。此前 `TestSubmissionRecallQueryAndFilterReplay` 因夹具未提供 verified user 失败；已补齐可信 tenant scope 与 `PropagatedUserID`，保留生产鉴权。定向测试及随后的全量均通过。收尾期间 Worker 只调整文档，未重复运行已通过的全量测试。
+
+以上为受控模型响应与本机存储验证，不含真实供应方价格、账单或摘要质量核对。当前价格表未冻结版本，也未按供应方区分同名模型；没有额度预占或严格硬预算。真实 Kubernetes 本轮未重跑，检查点仍为单节点 `hostPath`；Worker 仍通过 `go.mod` 替换本地 API 仓库，独立发布依赖未验证。
+
+## 2026-11-16 Forge 鉴权与租户隔离
+
+用户请求通过 Forge 校验身份与租户，再把可信 tenant/project 放入请求 context；Agent、Session、Run、Goal 和 Memory 的访问及身份继承接入租户隔离。内部执行接口只允许白名单服务透传用户身份，沙箱接口使用独立服务鉴权；callback 默认关闭，启用时要求服务白名单、来源白名单和签名。Agent 发布继续把正文保存到 artifact-go，Run 保留冻结的配置快照。
+
+在独立工作副本中使用 `GOWORK=off`、`GOCACHE=/private/tmp/agentic-kit-api-build`，连接本地隔离 PostgreSQL（55432）和 Redis（56379）执行：
+
+- `go test -mod=readonly -race -json -count=1 -timeout=120s ./...`：659 项通过、18 项跳过、0 项失败，计数包含子测试。跳过项需要 Kubernetes、专用沙箱或 Worker 验收环境。
+- `go vet -mod=readonly ./...`、`GOFLAGS=-mod=readonly make build`：通过。
+- 本轮修改及新增 Go 文件的 `gofmt -l`：无输出。
+
+测试覆盖 Forge 用户身份校验、伪造 Header、服务白名单、可信身份透传、跨租户读写拒绝及父子资源身份继承。框架生命周期用例使用真实 HTTP、PostgreSQL 和 Redis，Forge/artifact 为受控 HTTP 假服务；真实 Forge/artifact 联调尚未执行。本轮未修改 agentic-kit 或 agentic-kit-worker，未验证 Worker 与新鉴权接口的真实联调。
+
+本轮只验证空库或空 schema 初始化和目标结构重复初始化；不迁移或回填旧的无 tenant 数据，不清理历史 Memory 唯一索引。旧库升级和真实发布链路仍需单独验收。
+
+## 2026-11-13 Agent 资产接入 artifact-go
+
+API 的草稿事务迁到 `internal/app/agent`，已发布版本正文由 artifact-go 保存，本地 `agent_version` 保留编号和远端引用；新任务提交在事务外预取配置，再冻结 Run 快照。修复了草稿 JSON 更新的 GORM 编码错误，并把应用提交的未发布版本和跨 owner 断言移到 HTTP/SDK 层。
+
+本轮发现本地 `go.work` 掩盖了 `go.mod` 缺少 artifact-go 的问题，已显式固定到 v0.5.0 并运行 `go mod tidy`。使用 `GOWORK=off`、`GOCACHE=/private/tmp/agentic-kit-api-build`、本地隔离 PostgreSQL/Redis 执行：
+
+- `go test -mod=readonly -race -json -count=1 -timeout=120s ./...`：394 项通过、18 项跳过、0 项失败，计数包含子测试；跳过项需要专用沙箱、Kubernetes 或 Worker 验收环境。
+- `go vet -mod=readonly ./...`、`go build -mod=readonly ./...`：通过。
+- `make doc`：完成 OpenAPI 重新生成；随后 `TestOpenAPIMatchesRoutes`、`TestSwaggerServesGeneratedContract` 两项契约测试通过。
+- `go list -mod=readonly -deps`：`pkg/durable` 无 artifact SDK 依赖，`pkg/execution` 无 GORM、HTTP 或 artifact SDK 依赖。
+
+Worker 测试夹具已适配 `Accept + PrepareChatSubmission`，进程测试使用本地 artifact HTTP 假服务与测试身份常量。在 Worker 当前 workspace 下运行 `go test -mod=readonly -race -count=1 -timeout=180s ./internal/engine ./internal/adapters/sandbox`，150 项通过，包含 `TestProcessKillResumesWithoutRepeatingTool` 与 `TestProcessShutdownCancelsInFlightHTTPTool`。本轮只修改 Worker 测试，生产执行路径继续读取冻结的 Run 配置；`agentic-kit` 未改动。Worker 普通及 `sandboxe2e` 标签编译检查、两包 vet 通过；未运行依赖专用集群的 sandboxe2e smoke。
+
+artifact 请求使用本地 HTTP 假服务；以上结果不包含真实 artifact/Forge 联调，也不包含已有数据库的历史版本迁移。身份 middleware 尚未接入；Controller 到 artifact 的会话 Cookie、CSRF 与 Origin 透传尚未实现。
+
+## 首期验证基线
+
 最早验证日期：2026-10-02。使用本机 Go 1.27.1、隔离的 PostgreSQL 17.6 与 Redis 7.2.10 容器。原 agentic-kit 和现有业务数据库未修改。
 
 两个仓库均完成 gofmt、go test -race -count=1 -timeout=60s ./...、go vet ./... 和命令入口构建。测试显式设置 TEST_DATABASE_URL；API 测试还设置 TEST_REDIS_URL，没有把缺少数据库时的跳过视为通过。

@@ -102,7 +102,7 @@ func (h *Controller) events(c *core.Context) {
 		if err != nil {
 			return
 		}
-		if run.Status.Terminal() && after >= run.EventSeq {
+		if (run.Status.Terminal() || run.Status == durable.Blocked) && after >= run.EventSeq {
 			return
 		}
 		// Redis is a wake-up accelerator. Database polling still serves committed events during a Redis outage.

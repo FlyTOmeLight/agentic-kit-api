@@ -101,6 +101,35 @@ func (h *Controller) answer(c *core.Context) { h.supply(c, durable.InteractionCl
 // @Router /v1/runs/{id}/resolve [post]
 func (h *Controller) resolve(c *core.Context) { h.supply(c, durable.InteractionReview) }
 
+// unblock 人工接受未知消费后恢复任务。
+// @Summary 人工恢复阻断的任务
+// @Tags Run
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "id"
+// @Param request body agenticv1.UnblockRunRequest true "epoch 与人工处理说明"
+// @Success 204 "成功，无响应体"
+// @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 409 {object} serrors.Error "状态、epoch 或恢复条件冲突"
+// @Failure 413 {object} serrors.Error "请求体超过限制"
+// @Failure 500 {object} serrors.Error "内部错误"
+// @Router /v1/runs/{id}/unblock [post]
+func (h *Controller) unblock(c *core.Context) {
+	req := sdk.UnblockRunRequest{ID: c.Param("id")}
+	if err := binder.Bind(c, &req).JSON().Error(); err != nil {
+		serrors.AbortWithError(c, err)
+		return
+	}
+	if err := h.service.Unblock(c.Request.Context(), auth.UserID(c), req.ID, req.Epoch, req.Reason); err != nil {
+		apperror.Respond(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (h *Controller) supply(c *core.Context, kind durable.InteractionKind) {
 	var req struct {
 		sdk.GetRunRequest

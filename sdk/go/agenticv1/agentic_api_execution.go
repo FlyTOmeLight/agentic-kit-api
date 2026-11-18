@@ -18,8 +18,6 @@ type SubmitExecutionRequest struct {
 	MemoryFilter   *MemoryRecallFilter `json:"memoryFilter,omitempty"`
 }
 
-type LeaseCheck struct {
-	Allowed bool `json:"allowed"`
-}
+type LeaseCheck = execution.RunAuthorization
 
 type FilesystemBinding = execution.FilesystemBinding

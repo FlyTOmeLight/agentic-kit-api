@@ -34,10 +34,10 @@ func TestResumePendingRetriesCommittedOperations(t *testing.T) {
 		{
 			name: "create",
 			prepare: func(t *testing.T, svc *Service, archive *fakeArchiver) string {
-				scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+				scope := archiveTestScope("owner")
 				archive.failPublish = memory.ErrUnavailable
 				if _, err := svc.Create(
-					context.Background(),
+					archiveTestContext(),
 					"owner",
 					"actor",
 					"create",
@@ -52,9 +52,9 @@ func TestResumePendingRetriesCommittedOperations(t *testing.T) {
 		{
 			name: "update",
 			prepare: func(t *testing.T, svc *Service, archive *fakeArchiver) string {
-				scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+				scope := archiveTestScope("owner")
 				entry, err := svc.Create(
-					context.Background(),
+					archiveTestContext(),
 					"owner",
 					"actor",
 					"create",
@@ -65,7 +65,7 @@ func TestResumePendingRetriesCommittedOperations(t *testing.T) {
 				}
 				archive.failPublish = memory.ErrUnavailable
 				if _, err := svc.Update(
-					context.Background(),
+					archiveTestContext(),
 					"owner",
 					"actor",
 					"update",
@@ -82,9 +82,9 @@ func TestResumePendingRetriesCommittedOperations(t *testing.T) {
 		{
 			name: "restore",
 			prepare: func(t *testing.T, svc *Service, archive *fakeArchiver) string {
-				scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+				scope := archiveTestScope("owner")
 				entry, err := svc.Create(
-					context.Background(),
+					archiveTestContext(),
 					"owner",
 					"actor",
 					"create",
@@ -93,12 +93,12 @@ func TestResumePendingRetriesCommittedOperations(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := svc.Retire(context.Background(), "owner", "actor", "retire", entry.ID, 1); err != nil {
+				if _, err := svc.Retire(archiveTestContext(), "owner", "actor", "retire", entry.ID, 1); err != nil {
 					t.Fatal(err)
 				}
 				archive.failPublish = memory.ErrUnavailable
 				if _, err := svc.Restore(
-					context.Background(),
+					archiveTestContext(),
 					"owner",
 					"actor",
 					"restore",
@@ -130,7 +130,7 @@ func TestResumePendingRetriesCommittedOperations(t *testing.T) {
 			if resumed != 1 {
 				t.Fatalf("resumed = %d, want 1", resumed)
 			}
-			entry, err := svc.Get(context.Background(), "owner", entryID)
+			entry, err := svc.Get(archiveTestContext(), "owner", entryID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,9 +168,9 @@ func pendingOperationStatus(
 func TestResumePendingRetriesCollectionFailure(t *testing.T) {
 	archive := &fakeArchiver{failCollection: memory.ErrUnavailable}
 	svc, store := testServiceWithArchive(t, archive)
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+	scope := archiveTestScope("owner")
 	if _, err := svc.Create(
-		context.Background(),
+		archiveTestContext(),
 		"owner",
 		"actor",
 		"create",
@@ -185,7 +185,7 @@ func TestResumePendingRetriesCollectionFailure(t *testing.T) {
 	if err != nil || resumed != 1 {
 		t.Fatalf("ResumePending = (%d, %v), want (1, nil)", resumed, err)
 	}
-	entry, err := svc.Get(context.Background(), "owner", receipt.EntryID)
+	entry, err := svc.Get(archiveTestContext(), "owner", receipt.EntryID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,9 +201,9 @@ func TestResumePendingRetriesCollectionFailure(t *testing.T) {
 func TestResumePendingWaitsForUnexpiredClaim(t *testing.T) {
 	archive := &fakeArchiver{failPublish: memory.ErrUnavailable}
 	svc, store := testServiceWithArchive(t, archive)
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+	scope := archiveTestScope("owner")
 	if _, err := svc.Create(
-		context.Background(),
+		archiveTestContext(),
 		"owner",
 		"actor",
 		"create",
@@ -245,9 +245,9 @@ func TestResumePendingWaitsForUnexpiredClaim(t *testing.T) {
 func TestResumePendingContinuesAfterInvalidReceipt(t *testing.T) {
 	archive := &fakeArchiver{failPublish: memory.ErrUnavailable}
 	svc, store := testServiceWithArchive(t, archive)
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+	scope := archiveTestScope("owner")
 	if _, err := svc.Create(
-		context.Background(),
+		archiveTestContext(),
 		"owner",
 		"actor",
 		"valid",
@@ -284,7 +284,7 @@ func TestResumePendingContinuesAfterInvalidReceipt(t *testing.T) {
 	if resumed != 1 || err != nil {
 		t.Fatalf("second ResumePending = (%d, %v), want one success", resumed, err)
 	}
-	if _, err := svc.Get(context.Background(), "owner", valid.EntryID); err != nil {
+	if _, err := svc.Get(archiveTestContext(), "owner", valid.EntryID); err != nil {
 		t.Fatalf("valid operation was not resumed: %v", err)
 	}
 	if status := pendingOperationStatus(t, store, "invalid"); status != memory.OperationPending {
@@ -295,9 +295,9 @@ func TestResumePendingContinuesAfterInvalidReceipt(t *testing.T) {
 func TestResumePendingDefersUnboundReceipt(t *testing.T) {
 	archive := &fakeArchiver{failPublish: memory.ErrUnavailable}
 	svc, store := testServiceWithArchive(t, archive)
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
+	scope := archiveTestScope("owner")
 	if _, err := svc.Create(
-		context.Background(),
+		archiveTestContext(),
 		"owner",
 		"actor",
 		"valid",
@@ -338,7 +338,7 @@ func TestResumePendingDefersUnboundReceipt(t *testing.T) {
 	if resumed != 1 || err != nil {
 		t.Fatalf("second ResumePending = (%d, %v), want one success", resumed, err)
 	}
-	if _, err := svc.Get(context.Background(), "owner", valid.EntryID); err != nil {
+	if _, err := svc.Get(archiveTestContext(), "owner", valid.EntryID); err != nil {
 		t.Fatalf("valid operation was not resumed: %v", err)
 	}
 	if status := pendingOperationStatus(t, store, "unbound"); status != memory.OperationPending {

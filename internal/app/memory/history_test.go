@@ -42,8 +42,8 @@ func (f *historyArchiver) ReadVersion(_ context.Context, ref memory.VersionRef) 
 func TestVersionHistory(t *testing.T) {
 	archive := &historyArchiver{documents: make(map[string]memory.Document)}
 	svc, store := testServiceWithArchive(t, archive)
-	ctx := context.Background()
-	scope := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}
+	ctx := archiveTestContext()
+	scope := archiveTestScope("owner-a")
 	doc := factDocument(scope, "editor", "first", "tabs")
 	entry, err := svc.Create(ctx, "owner-a", "actor-a", "create", doc)
 	if err != nil {
@@ -136,8 +136,8 @@ func TestVersionHistory(t *testing.T) {
 
 func TestLocalMemoryHasEmptyVersionHistory(t *testing.T) {
 	svc, _ := testService(t)
-	ctx := context.Background()
-	doc := factDocument(memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner-a"}, "", "local", "body")
+	ctx := archiveTestContext()
+	doc := factDocument(archiveTestScope("owner-a"), "", "local", "body")
 	entry, err := svc.Create(ctx, "owner-a", "actor-a", "create", doc)
 	if err != nil {
 		t.Fatal(err)

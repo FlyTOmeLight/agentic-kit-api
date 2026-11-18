@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/contextbuilder"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
@@ -35,128 +36,92 @@ func validEndpoint(raw string) bool {
 		u.Fragment == ""
 }
 
-// PrepareChatSubmission resolves the published agent version and conversation history.
+// PrepareChatSubmission compiles a chat run snapshot from a prefetched
+// published config; the closure only reads conversation history inside the
+// caller transaction and never queries agent tables or remote stores. The
+// given recaller is used when the submission selects Recall; nil keeps every
+// submission MemoryOff.
 func PrepareChatSubmission(
-	ctx context.Context,
-	tx *gorm.DB,
-	facts execution.SubmissionFacts,
-) (execution.PreparedSubmission, error) {
-	return PrepareChatSubmissionWith(nil)(ctx, tx, facts)
-}
-
-// PrepareChatSubmissionWith returns a chat preparer that recalls memory
-// through the given recaller when the submission selected Recall.
-func PrepareChatSubmissionWith(recaller MemoryRecaller) PrepareSubmission {
-	return func(ctx context.Context, tx *gorm.DB, facts execution.SubmissionFacts) (execution.PreparedSubmission, error) {
-		return prepareChatSubmission(ctx, tx, facts, recaller)
-	}
-}
-
-func prepareChatSubmission(
-	ctx context.Context,
-	tx *gorm.DB,
-	facts execution.SubmissionFacts,
+	config agent.AgentConfig,
+	agentID string,
+	version int64,
 	recaller MemoryRecaller,
-) (execution.PreparedSubmission, error) {
-	var agentRow table.Agent
-	if err := tx.WithContext(ctx).Where("owner_id = ? AND id = ?", facts.Owner, facts.SessionAgentID).
-		Take(&agentRow).Error; err != nil {
-		return execution.PreparedSubmission{}, recordError(err)
-	}
-	if agentRow.PublishedVersion == 0 {
-		return execution.PreparedSubmission{}, ErrConflict
-	}
-	var version table.AgentVersion
-	if err := tx.WithContext(ctx).Where("agent_id = ? AND number = ?", agentRow.ID, agentRow.PublishedVersion).
-		Take(&version).Error; err != nil {
-		return execution.PreparedSubmission{}, err
-	}
-	if len(version.Config.Toolsets) > 0 {
-		return execution.PreparedSubmission{}, ErrInvalid
-	}
-	spec := execution.CompileRunSpec(version.Config, agentRow.ID, version.Number, facts.Query, nil, nil)
-	history, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
-	if err != nil {
-		return execution.PreparedSubmission{}, err
-	}
-	spec.History = legacyHistory(history)
-	snapshot, err := freezeContext(ctx, tx, recaller, facts, spec, history)
-	if err != nil {
-		return execution.PreparedSubmission{}, err
-	}
-	return execution.PreparedSubmission{
-		Spec:            spec,
-		UserMessage:     execution.Message{Role: "user", Content: facts.Query},
-		ContextSnapshot: snapshot,
-	}, nil
-}
-
-// PrepareApplicationSubmission resolves an explicit published version and optional filesystem binding.
-func PrepareApplicationSubmission(
-	ctx context.Context,
-	tx *gorm.DB,
-	facts execution.SubmissionFacts,
-) (execution.PreparedSubmission, error) {
-	return PrepareApplicationSubmissionWith(nil)(ctx, tx, facts)
-}
-
-// PrepareApplicationSubmissionWith returns an application preparer that
-// recalls memory through the given recaller when the submission selected Recall.
-func PrepareApplicationSubmissionWith(recaller MemoryRecaller) PrepareSubmission {
-	return func(ctx context.Context, tx *gorm.DB, facts execution.SubmissionFacts) (execution.PreparedSubmission, error) {
-		return prepareApplicationSubmission(ctx, tx, facts, recaller)
-	}
-}
-
-func prepareApplicationSubmission(
-	ctx context.Context,
-	tx *gorm.DB,
-	facts execution.SubmissionFacts,
-	recaller MemoryRecaller,
-) (execution.PreparedSubmission, error) {
-	input := facts.ExecutionSpec
-	var agentRow table.Agent
-	if err := tx.WithContext(ctx).Where("owner_id = ? AND id = ?", facts.Owner, input.AgentID).
-		Take(&agentRow).Error; err != nil {
-		return execution.PreparedSubmission{}, recordError(err)
-	}
-	var version table.AgentVersion
-	if err := tx.WithContext(ctx).Where("agent_id = ? AND number = ?", agentRow.ID, input.AgentVersion).
-		Take(&version).Error; err != nil {
-		return execution.PreparedSubmission{}, recordError(err)
-	}
-	spec := execution.CompileRunSpec(
-		version.Config,
-		agentRow.ID,
-		version.Number,
-		input.Query,
-		input.Scope,
-		input.Filesystem,
-	)
-	if len(spec.Toolsets) > 0 {
-		if spec.Filesystem == nil || spec.Filesystem.Provider != "AIO" ||
-			!validEndpoint(spec.Filesystem.URL) ||
-			spec.Filesystem.TokenEnv == "" ||
-			!strings.HasPrefix(spec.Filesystem.Workspace, "/") {
+) PrepareSubmission {
+	return func(
+		ctx context.Context,
+		tx *gorm.DB,
+		facts execution.SubmissionFacts,
+	) (execution.PreparedSubmission, error) {
+		if len(config.Toolsets) > 0 {
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
-	} else if spec.Filesystem != nil {
-		return execution.PreparedSubmission{}, ErrInvalid
+		spec := execution.CompileRunSpec(config, agentID, version, facts.Query, nil, nil)
+		spec.PricingSnapshot = facts.PricingSnapshot
+		history, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
+		if err != nil {
+			return execution.PreparedSubmission{}, err
+		}
+		spec.History = legacyHistory(history)
+		snapshot, err := freezeContext(ctx, tx, recaller, facts, spec, history)
+		if err != nil {
+			return execution.PreparedSubmission{}, err
+		}
+		return execution.PreparedSubmission{
+			Spec:            spec,
+			UserMessage:     execution.Message{Role: "user", Content: facts.Query},
+			ContextSnapshot: snapshot,
+		}, nil
 	}
-	history, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
-	if err != nil {
-		return execution.PreparedSubmission{}, err
+}
+
+// PrepareApplicationSubmission compiles an application run snapshot from a
+// prefetched config; toolset/filesystem consistency depends only on the spec.
+// The given recaller is used when the submission selects Recall; nil keeps
+// every submission MemoryOff.
+func PrepareApplicationSubmission(
+	config agent.AgentConfig,
+	agentID string,
+	version int64,
+	recaller MemoryRecaller,
+) PrepareSubmission {
+	return func(
+		ctx context.Context,
+		tx *gorm.DB,
+		facts execution.SubmissionFacts,
+	) (execution.PreparedSubmission, error) {
+		input := facts.ExecutionSpec
+		spec := execution.CompileRunSpec(config, agentID, version, input.Query, input.Scope, input.Filesystem)
+		spec.PricingSnapshot = facts.PricingSnapshot
+		if len(spec.Toolsets) > 0 {
+			if spec.Filesystem == nil ||
+				(spec.Filesystem.Provider != "AIO" && spec.Filesystem.Provider != "Sandbox") ||
+				!validEndpoint(spec.Filesystem.URL) ||
+				spec.Filesystem.TokenEnv == "" ||
+				!strings.HasPrefix(spec.Filesystem.Workspace, "/") {
+				return execution.PreparedSubmission{}, ErrInvalid
+			}
+			if spec.Filesystem.Provider == "AIO" &&
+				(spec.Filesystem.ProfileID != "" || spec.Filesystem.RestoreFromSandboxID != "") {
+				return execution.PreparedSubmission{}, ErrInvalid
+			}
+		} else if spec.Filesystem != nil {
+			return execution.PreparedSubmission{}, ErrInvalid
+		}
+		history, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
+		if err != nil {
+			return execution.PreparedSubmission{}, err
+		}
+		spec.History = legacyHistory(history)
+		snapshot, err := freezeContext(ctx, tx, recaller, facts, spec, history)
+		if err != nil {
+			return execution.PreparedSubmission{}, err
+		}
+		return execution.PreparedSubmission{
+			Spec:            spec,
+			UserMessage:     execution.Message{Role: "user", Content: input.Query},
+			ContextSnapshot: snapshot,
+		}, nil
 	}
-	spec.History = legacyHistory(history)
-	snapshot, err := freezeContext(ctx, tx, recaller, facts, spec, history)
-	if err != nil {
-		return execution.PreparedSubmission{}, err
-	}
-	return execution.PreparedSubmission{
-		Spec:            spec,
-		UserMessage:     execution.Message{Role: "user", Content: input.Query},
-		ContextSnapshot: snapshot,
-	}, nil
 }
 
 // loadConversationHistory returns complete stored turns oldest first. A Run is
@@ -164,7 +129,7 @@ func prepareApplicationSubmission(
 // together. Incomplete turns are omitted rather than injecting orphan calls.
 func loadConversationHistory(tx *gorm.DB, owner, session string) ([]contextbuilder.MessageGroup, error) {
 	var runs []table.Run
-	if err := tx.Model(&table.Run{}).
+	if err := table.TenantQuery(tx.Statement.Context, tx).Model(&table.Run{}).
 		Select("id").
 		Where("owner_id = ? AND session_id = ?", owner, session).
 		Order("created_at, id").
@@ -311,7 +276,7 @@ func recallMaterials(
 	if facts.Kind == execution.SubmitApplication {
 		agentID = facts.ExecutionSpec.AgentID
 	}
-	scope := memoryScopeFromFacts(facts)
+	scope := memoryScopeFromFacts(ctx, facts)
 	entries, err := recaller.RecallTx(ctx, tx, scope, agentID, facts.Query, facts.MemoryFilter)
 	if err != nil {
 		return nil, err
@@ -323,19 +288,18 @@ func recallMaterials(
 	return blocks, nil
 }
 
-// memoryScopeFromFacts derives the recall isolation key. Chat submissions have
-// no business tenant/project context and stay OwnerPrivate. Application
-// executions derive from the trusted workspace scope the caller asserted:
-// tenant plus actor selects ActorPrivate; tenant, project and actor select
-// ActorProject. Missing pieces fall back to OwnerPrivate rather than widening
-// to a shared scope.
-func memoryScopeFromFacts(facts execution.SubmissionFacts) memory.Scope {
+func memoryScopeFromFacts(ctx context.Context, facts execution.SubmissionFacts) memory.Scope {
+	requestScope, _ := access.FromContext(ctx)
+	ownerScope := memory.Scope{
+		Kind: memory.ScopeOwnerPrivate, Owner: facts.Owner,
+		Tenant: requestScope.TenantID, Project: requestScope.ProjectID,
+	}
 	if facts.Kind != execution.SubmitApplication || facts.ExecutionSpec.Scope == nil {
-		return memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: facts.Owner}
+		return ownerScope
 	}
 	scope := facts.ExecutionSpec.Scope
 	if scope.TenantID == "" || scope.ActorID == "" {
-		return memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: facts.Owner}
+		return ownerScope
 	}
 	if scope.ProjectID == "" {
 		return memory.Scope{

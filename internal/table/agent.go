@@ -8,7 +8,9 @@ import (
 
 type Agent struct {
 	ID                string            `gorm:"type:text;primaryKey;not null"`
-	OwnerID           string            `gorm:"type:text;not null;index:agent_owner,priority:1"`
+	TenantID          string            `gorm:"type:text;not null;index:agent_owner,priority:1"`
+	ProjectID         string            `gorm:"type:text;not null"`
+	OwnerID           string            `gorm:"type:text;not null;index:agent_owner,priority:2"`
 	Name              string            `gorm:"type:text;not null"`
 	Draft             agent.AgentConfig `gorm:"serializer:json;type:jsonb;not null"`
 	Revision          int64             `gorm:"not null"`
@@ -21,11 +23,12 @@ type Agent struct {
 func (Agent) TableName() string { return "agent" }
 
 type AgentVersion struct {
-	AgentID   string            `gorm:"type:text;primaryKey;not null"`
-	Number    int64             `gorm:"primaryKey;autoIncrement:false;not null"`
-	Config    agent.AgentConfig `gorm:"serializer:json;type:jsonb;not null"`
-	CreatedAt time.Time         `gorm:"not null"`
-	Agent     *Agent            `gorm:"foreignKey:AgentID;references:ID"`
+	AgentID            string    `gorm:"type:text;primaryKey;not null"`
+	Number             int64     `gorm:"primaryKey;autoIncrement:false;not null"`
+	ArtifactVersionID  string    `gorm:"type:text;not null"`
+	ArtifactVersionURI string    `gorm:"type:text;not null"`
+	CreatedAt          time.Time `gorm:"not null"`
+	Agent              *Agent    `gorm:"foreignKey:AgentID;references:ID"`
 }
 
 func (AgentVersion) TableName() string { return "agent_version" }

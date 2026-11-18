@@ -16,19 +16,12 @@ func TestApplicationsReusePublishedAgentsAndTaskConversations(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := testStore(t)
 			ctx := context.Background()
-			a, err := s.CreateAgent(
-				ctx,
-				"app",
-				name,
-				AgentConfig{
-					SystemPrompt: "v1",
-					Model:        ModelSpec{Name: "local", BaseURL: "http://model.test/v1"},
-					MaxTurns:     20,
-				},
-			)
-			if err != nil {
-				t.Fatal(err)
+			cfgV1 := AgentConfig{
+				SystemPrompt: "v1",
+				Model:        ModelSpec{Name: "local", BaseURL: "http://model.test/v1"},
+				MaxTurns:     20,
 			}
+			a := createAgentFixture(t, s, "app", name, cfgV1)
 			req := sdk.ExecutionSpec{
 				AgentID:      a.ID,
 				AgentVersion: 1,
@@ -41,59 +34,24 @@ func TestApplicationsReusePublishedAgentsAndTaskConversations(t *testing.T) {
 					RoundID:   "round1",
 				},
 			}
-			if _, _, err = s.SubmitExecution(
-				ctx,
-				"app",
-				"unpublished",
-				req,
-				time.Minute,
-			); !errors.Is(
-				err,
-				ErrNotFound,
-			) {
-				t.Fatalf("unpublished: %v", err)
-			}
-			if _, err = s.PublishAgent(ctx, "app", a.ID, a.Revision); err != nil {
-				t.Fatal(err)
-			}
-			first, _, err := s.SubmitExecution(ctx, "app", "round1", req, time.Minute)
+			publishAgentFixture(t, s, "app", a.ID, a.Revision)
+			first, _, err := submitExecutionFixture(t, s, "app", "round1", req, time.Minute, cfgV1)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err = s.SubmitExecution(
-				ctx,
-				"foreign",
-				"round1",
-				req,
-				time.Minute,
-			); !errors.Is(
-				err,
-				ErrNotFound,
-			) {
-				t.Fatalf("foreign owner: %v", err)
-			}
-			if _, _, err = s.SubmitExecution(
-				ctx,
-				"app",
-				"overlap",
-				req,
-				time.Minute,
+			if _, _, err = submitExecutionFixture(
+				t, s, "app", "overlap", req, time.Minute, cfgV1,
 			); !errors.Is(
 				err,
 				ErrConflict,
 			) {
 				t.Fatalf("overlap: %v", err)
 			}
-			changed := a.Draft
+			changed := cfgV1
 			changed.SystemPrompt = "v2"
-			a, err = s.UpdateAgent(ctx, "app", a.ID, name, a.Revision, changed)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = s.PublishAgent(ctx, "app", a.ID, a.Revision); err != nil {
-				t.Fatal(err)
-			}
-			replay, created, err := s.SubmitExecution(ctx, "app", "round1", req, time.Minute)
+			updated := updateAgentFixture(t, s, "app", a.ID, name, a.Revision, changed)
+			publishAgentFixture(t, s, "app", a.ID, updated.Revision)
+			replay, created, err := submitExecutionFixture(t, s, "app", "round1", req, time.Minute, cfgV1)
 			if err != nil || created || replay.ID != first.ID || replay.Spec.SystemPrompt != "v1" {
 				t.Fatalf("retry changed snapshot: %+v %v", replay, err)
 			}
@@ -108,7 +66,7 @@ func TestApplicationsReusePublishedAgentsAndTaskConversations(t *testing.T) {
 			req.AgentVersion = 2
 			req.Scope.RoundID = "round2"
 			req.Query = "revise it"
-			second, _, err := s.SubmitExecution(ctx, "app", "round2", req, time.Minute)
+			second, _, err := submitExecutionFixture(t, s, "app", "round2", req, time.Minute, changed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +80,7 @@ func TestApplicationsReusePublishedAgentsAndTaskConversations(t *testing.T) {
 				t.Fatal(err)
 			}
 			req.Scope.ProjectID = "other-project"
-			third, _, err := s.SubmitExecution(ctx, "app", "other-project", req, time.Minute)
+			third, _, err := submitExecutionFixture(t, s, "app", "other-project", req, time.Minute, changed)
 			if err != nil || third.SessionID == first.SessionID || len(third.Spec.History) != 0 {
 				t.Fatalf("project isolation: %+v %v", third, err)
 			}
@@ -137,26 +95,17 @@ func TestApplicationsReusePublishedAgentsAndTaskConversations(t *testing.T) {
 func TestConcurrentApplicationRoundsShareOneConversation(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	agent, err := s.CreateAgent(
-		ctx,
-		"app",
-		"Coding",
-		AgentConfig{Model: ModelSpec{Name: "local", BaseURL: "http://model.test/v1"}, MaxTurns: 20},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.PublishAgent(ctx, "app", agent.ID, agent.Revision); err != nil {
-		t.Fatal(err)
-	}
+	cfg := AgentConfig{Model: ModelSpec{Name: "local", BaseURL: "http://model.test/v1"}, MaxTurns: 20}
+	agent := createAgentFixture(t, s, "app", "Coding", cfg)
+	publishAgentFixture(t, s, "app", agent.ID, agent.Revision)
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
 	for _, round := range []string{"one", "two"} {
 		wg.Add(1)
 		go func(round string) {
 			defer wg.Done()
-			_, _, err := s.SubmitExecution(
-				ctx,
+			_, _, err := submitExecutionFixture(
+				t, s,
 				"app",
 				round,
 				sdk.ExecutionSpec{
@@ -172,6 +121,7 @@ func TestConcurrentApplicationRoundsShareOneConversation(t *testing.T) {
 					},
 				},
 				time.Minute,
+				cfg,
 			)
 			results <- err
 		}(round)

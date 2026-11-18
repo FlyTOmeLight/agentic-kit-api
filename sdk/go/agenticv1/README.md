@@ -2,7 +2,11 @@
 
 导入 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`。SDK 与 API 同模块发布；私有仓库认证见根目录 README。
 
-下面的函数完成创建 Agent、发布、创建会话和提交消息。身份校验由接入的 Forge middleware 负责。
+身份校验已接入 Forge middleware。用户业务请求必须携带 `x-forge-tenant-id`，可选 `x-forge-project-id`；服务端将验证后的 tenant/project 写入 `access.Scope`，路由末端拒绝空租户。
+
+`NewClient(baseURL, token, httpClient)` 当前要求非空 Bearer token。用户调用应传入 Forge 可验证的用户 API key，并在 HTTP 传输层补齐 `x-forge-tenant-id` 与可选 `x-forge-project-id`。发布、读取版本正文和新任务提交会访问 artifact。API 使用自身配置的 `Tenant.ServiceAPIKey` 传播已核验的 user/tenant/project，并将个人资源归属固定为该用户。入站用户 Bearer、Cookie、CSRF 和 Origin 均不转发。缺 tenant 或 actor 时服务端拒绝远端调用。会话认证示例见 [根 README](../../../README.md#调用接口)。
+
+下面的函数读取草稿，接收调用方已完成身份和租户 Header 装配的客户端；客户端的创建和关闭由调用方负责。
 
 ```go
 package example
@@ -14,49 +18,18 @@ import (
     sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
-func Start(ctx context.Context, baseURL, token string) (*sdk.Run, error) {
-    client, err := sdk.NewClient(baseURL, token, nil)
-    if err != nil {
-        return nil, err
-    }
-    defer client.Close()
+func ReadAgent(ctx context.Context, client *sdk.Client, agentID string) (*sdk.Agent, error) {
     ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
     defer cancel()
-    agent, err := client.Agents.Create(ctx, &sdk.CreateAgentRequest{
-        Name: "对话助手",
-        Config: sdk.AgentConfig{
-            SystemPrompt: "请用中文回答。",
-            Model: sdk.ModelSpec{
-                Name: "qwen3.8:27b-mlx",
-                BaseURL: "http://127.0.0.1:11434/v1",
-            },
-            MaxTurns: 10,
-        },
-    })
-    if err != nil {
-        return nil, err
-    }
-    _, err = client.Agents.Publish(ctx, &sdk.PublishAgentRequest{ID: agent.ID, Revision: agent.Revision})
-    if err != nil {
-        return nil, err
-    }
-    session, err := client.Sessions.Create(ctx, &sdk.CreateSessionRequest{AgentID: agent.ID})
-    if err != nil {
-        return nil, err
-    }
-    result, err := client.Sessions.SendMessage(ctx, &sdk.SendMessageRequest{
-        SessionID: session.ID, IdempotencyKey: "question-001", Query: "请介绍一下你自己。",
-    })
-    if err != nil {
-        return nil, err
-    }
-    return &result.Run, nil
+    return client.Agents.Get(ctx, &sdk.GetAgentRequest{ID: agentID})
 }
 ```
 
-实际应用保存 Agent 和 Session ID，后续消息直接调用 `client.Sessions.SendMessage`。`Idempotency-Key` 在同一 owner 下去重；应用应为每条新消息生成并保存唯一编号，网络失败重试时复用它。客户端不自动创建编号或重试。
+实际应用保存 Agent 和 Session ID，后续消息调用 `client.Sessions.SendMessage`。`Idempotency-Key` 在同一 tenant、owner 下去重，不重放其他租户的 Run；应用应为每条新消息生成并保存唯一编号，网络失败重试时复用它。客户端不自动创建编号或重试。
 
 `Sessions.SendMessage` 的响应 `Created` 表示是否创建新任务：202 为 true，200 幂等回放为 false。提交成功只代表服务接受任务；通过 `Runs.Get`、`Sessions.ListMessages` 或事件流获取执行结果。
+
+Run 因模型或摘要消费未知进入 Blocked 后，人工可调用 `client.Runs.Unblock(ctx, &sdk.UnblockRunRequest{ID: runID, Epoch: blockedRun.Epoch, Reason: "已核查并接受未知消费，授权重新派发"})`。成功返回 nil，服务端递增 epoch 并重新排队，保留 checkpoint 和已记录用量。该动作可能重复计费，不补写未知 usage。状态、epoch、期限、会话或预算不允许恢复时返回 409；计价失败也不能用此入口解除。重复请求返回 409，响应丢失时先查 Run 与事件，不自动读取新 epoch 后再次批准。恢复 child 不直接恢复 Goal；完成相关核查后还需调用 `POST /internal/v1/goals/{id}/resume` 显式恢复 Goal，完整准入与审计字段见 HTTP 契约。
 
 ## Memory
 
@@ -76,7 +49,7 @@ if err != nil {
 }
 ```
 
-`IdempotencyKey` 由 SDK 写入 `Idempotency-Key` Header，不会进入 JSON body；该 Header 三个写接口都必填，body 中出现 `idempotencyKey` 会被拒绝。同一 owner 下同键同参重试返回首次生效结果，不重复发布或覆盖后来变更；同键不同参或 actor 返回 409。网络超时或 503 后应复用原键，不要生成新键。
+`IdempotencyKey` 由 SDK 写入必填的 `Idempotency-Key` Header。同一租户和 owner 下，同键同参重试返回首次生效结果，同键不同参或 actor 返回 409。网络超时或 503 后复用原键。
 
 Update 和 Restore 的 revision 不匹配、恢复活跃条目、更新停用条目或改变身份字段都会返回 409。Memory 写操作的 503 状态包括：`MemoryOperationPending`（操作已受理但尚未完成，使用原键重试）、`MemoryUnavailable`（依赖暂不可用，修复后继续原键）、`MemoryOperationOutcomeUnknown`（本地生效提交结果不明，保留原键、原 collection 和原版本身份继续原键处理，不能换键或重建集合）和 `MemoryVersionUnavailable`（归档版本正文不可用，可能来自源版本 410；同样保留原版本身份并交由受控修复）。
 
@@ -121,7 +94,13 @@ func NewConversation(sessions sdk.SessionAPI) *Conversation {
 
 ## 受信任应用执行
 
-`Client.Executions` 提供 Submit 与 CheckLease，使用 SubmitExecutionRequest / ExecutionSpec / Scope。ExecutionSpec 仅包含 agentID、agentVersion、scope 和 query。先通过 Agents 创建并发布定义，再调用 Executions.Submit；同一应用任务跨轮复用 Session。Submit 的幂等键与不可变快照重试语义和服务端一致。服务身份与调用权限由 Forge middleware 校验；浏览器用户不得持有服务凭据。Run.Scope 记录提交时的业务上下文，不替代每次敏感操作的动态授权。
+`Client.Executions` 提供 Submit 与 CheckLease，使用 SubmitExecutionRequest / ExecutionSpec / Scope。先通过 Agents 创建并发布定义，再调用 Executions.Submit；同一应用任务跨轮复用 Session。Submit 的幂等键与不可变快照重试语义和服务端一致。内部 execution/goal/lease 路由仅在配置 propagation 服务白名单时注册，由 Forge `MiddlewareInternalPropagation` 校验服务 Authorization 及目标身份；调用方需携带 `x-impersonate-target-tenant-id`、`x-impersonate-target-user-id` 和可选 `x-impersonate-target-project-id`，并使 ExecutionSpec 的 tenant/project 与已验证 scope 一致。浏览器用户不得持有服务凭据。Run.Scope 记录提交时的业务上下文，不替代每次敏感操作的动态授权。
+
+## 沙箱检查点恢复
+
+沙箱路由仅在配置 `Sandbox.AllowedServices` 并装配服务认证时注册；申请的 tenant/owner 来自可信调用方请求体，不从 Forge 用户 scope 推导。`Sandboxes.Acquire` 的 `RequiredSave` 开启必要保存保护；`RestoreFromSandboxID` 指定已保存、销毁的来源沙箱。服务端依据新 Run 冻结的 Sandbox 文件系统配置校验来源和 Profile；SDK 不接受检查点目录路径。恢复成功后才返回 Active 和 lease，`Sandbox.ResumeCheckpoint` 返回实际恢复的检查点。
+
+释放返回 SaveBlocked 表示保存尚未完成，需查询到 Destroyed 和非空 SavedCheckpoint 后才能作为恢复来源。同一申请重试保留 requestKey；修改恢复来源必须使用新请求键。当前实现与本地验证范围见仓库 `docs/sandbox-center/layerfs-save-verification.md`。
 
 ## 布局迁移
 
