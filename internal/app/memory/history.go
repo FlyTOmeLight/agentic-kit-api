@@ -16,8 +16,8 @@ type versionReader interface {
 
 func historyQuery(db *gorm.DB, entry *memory.Entry) *gorm.DB {
 	return db.Model(&table.MemoryOperation{}).
-		Where("owner_id = ? AND entry_id = ? AND status = ? AND op_type IN ?",
-			entry.Scope.Owner, entry.ID, string(memory.OperationApplied),
+		Where("tenant_id = ? AND owner_id = ? AND entry_id = ? AND status = ? AND op_type IN ?",
+			entry.Scope.Tenant, entry.Scope.Owner, entry.ID, string(memory.OperationApplied),
 			[]string{
 				string(memory.OperationCreate),
 				string(memory.OperationUpdate),

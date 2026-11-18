@@ -24,8 +24,8 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | POST /v1/runs/{id}/resolve | 提交人工确认的工具结果 | stepID、result |
 | POST /v1/runs/{id}/unblock | 接受未知消费并授权重新派发，返回 204 | epoch、reason |
 | GET /v1/runs/{id}/events | SSE 回放及订阅 | Last-Event-ID header 或 after query，格式 runID:seq |
-| POST /v1/memories | 创建 OwnerPrivate 记忆，返回 201 | document；Idempotency-Key header 必填 |
-| GET /v1/memories | 列出 OwnerPrivate 记忆 | after、limit |
+| POST /v1/memories | 创建 OwnerPrivate 或 ActorPrivate 记忆，返回 201 | document；Idempotency-Key header 必填 |
+| GET /v1/memories | 列出当前身份可访问的私人记忆 | after、limit |
 | GET /v1/memories/{id} | 读取当前生效投影 | 无 |
 | GET /v1/memories/{id}/versions | 分页列出已生效归档版本 | afterRevision、limit |
 | GET /v1/memories/{id}/versions/{versionID} | 读取已生效版本正文 | 无 |
@@ -70,7 +70,9 @@ SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payloa
 
 ## Memory
 
-当前 HTTP 维护入口开放 OwnerPrivate 范围。服务从 Forge 验证结果确定租户、项目和 owner，写入文档的 `scope.tenant`、`scope.project` 必须与验证结果一致。Create 返回 201，其余成功操作返回 200。Entry 的 `revision` 表示当前投影修订，启用归档时还返回固定的 `activeVersionRef`。
+HTTP 维护入口开放 OwnerPrivate 和租户级 ActorPrivate。服务从 Forge 验证结果确定租户、项目和 owner，写入文档的 `scope.tenant`、`scope.project` 必须与验证结果一致。ActorPrivate 要求请求处于租户级且 `scope.project` 为空。`scope.actor` 可省略或填写当前用户，服务保存核验后的用户 ID。`outputVisibility` 省略时默认 `Private`，ActorPrivate 只接受 `Private`。项目请求及其他租户或用户看不到该条目及其版本历史。
+
+租户级应用执行显式指定 `memory=Recall` 时，`spec.scope.actorID` 必须等于 Forge 核验的用户 ID，否则返回 403，包括幂等重放。成功接受的 Run 冻结当时选中的本地投影。Create 返回 201，其余 Memory 维护操作成功返回 200。Entry 的 `revision` 表示当前投影修订，启用归档时还返回固定的 `activeVersionRef`。
 
 `POST /v1/memories` 的 body 必须包含完整 `document`。`PUT /v1/memories/{id}` 的 body 必须包含 `expectedRevision` 和完整 `document`；`restore` 为 `false` 或省略时执行 Update，只允许修改活跃条目；`restore` 为 `true` 时执行 Restore，只允许恢复已停用条目。两种操作都要求 `expectedRevision` 等于操作开始时的当前 revision，成功后 revision 递增。Scope、agentID、kind、subjectKey 等身份字段不能通过更新改变。对活跃条目请求 Restore、对已停用条目执行普通 Update、revision 不匹配或同键不同参数均返回 409。`POST /v1/memories/{id}/retire` 只接受 `expectedRevision`。
 

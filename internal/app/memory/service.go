@@ -66,7 +66,7 @@ func (s *Service) Create(
 	owner, actor, requestKey string,
 	doc memory.Document,
 ) (*memory.Entry, error) {
-	if err := authorizeDocument(ctx, owner, &doc); err != nil {
+	if err := authorizeDocument(ctx, owner, actor, &doc); err != nil {
 		return nil, err
 	}
 	if owner == "" || actor == "" || requestKey == "" {
@@ -75,7 +75,7 @@ func (s *Service) Create(
 	if err := validateDocument(&doc); err != nil {
 		return nil, err
 	}
-	if err := validateWriteScope(doc.Scope, owner); err != nil {
+	if err := validateWriteScope(doc.Scope, owner, actor); err != nil {
 		return nil, err
 	}
 	doc.SchemaVersion = schemaVersion
@@ -87,11 +87,13 @@ func (s *Service) Create(
 
 // Get returns one entry if the caller is authorized.
 func (s *Service) Get(ctx context.Context, owner, id string) (*memory.Entry, error) {
-	if _, err := requireScope(ctx); err != nil {
+	scope, err := requireScope(ctx)
+	if err != nil {
 		return nil, err
 	}
 	var row table.MemoryEntry
-	if err := privateEntries(table.TenantQuery(ctx, s.db), owner).Where("id = ?", id).Take(&row).Error; err != nil {
+	query := privateEntries(table.TenantQuery(ctx, s.db), owner, scope.ProjectID == "")
+	if err := query.Where("id = ?", id).Take(&row).Error; err != nil {
 		return nil, mapError(err)
 	}
 	return row.ToDomain(), nil
@@ -99,13 +101,14 @@ func (s *Service) Get(ctx context.Context, owner, id string) (*memory.Entry, err
 
 // List returns entries owned by the caller, newest first.
 func (s *Service) List(ctx context.Context, owner, after string, limit int) ([]memory.Entry, error) {
-	if _, err := requireScope(ctx); err != nil {
+	scope, err := requireScope(ctx)
+	if err != nil {
 		return nil, err
 	}
 	if limit < 1 || limit > 100 {
 		return nil, memory.ErrInvalid
 	}
-	q := privateEntries(table.TenantQuery(ctx, s.db), owner).Where("id > ?", after)
+	q := privateEntries(table.TenantQuery(ctx, s.db), owner, scope.ProjectID == "").Where("id > ?", after)
 	var rows []table.MemoryEntry
 	if err := q.Order("id").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, mapError(err)
@@ -148,7 +151,7 @@ func (s *Service) prepareRevisioned(
 	doc memory.Document,
 	opType memory.OperationType,
 ) (*memory.Entry, error) {
-	if err := authorizeDocument(ctx, owner, &doc); err != nil {
+	if err := authorizeDocument(ctx, owner, actor, &doc); err != nil {
 		return nil, err
 	}
 	if owner == "" || actor == "" || requestKey == "" || entryID == "" || expectedRevision < 1 {
@@ -157,7 +160,7 @@ func (s *Service) prepareRevisioned(
 	if err := validateDocument(&doc); err != nil {
 		return nil, err
 	}
-	if err := validateWriteScope(doc.Scope, owner); err != nil {
+	if err := validateWriteScope(doc.Scope, owner, actor); err != nil {
 		return nil, err
 	}
 	doc.SchemaVersion = schemaVersion
@@ -251,15 +254,17 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 		if err != nil {
 			return err
 		}
-		if err := validateWriteScope(doc.Scope, existing.OwnerID); err != nil {
+		if err := validateWriteScope(doc.Scope, existing.OwnerID, existing.ActorID); err != nil {
 			return err
 		}
+		actorPrivate := doc.Scope.Project == "" && existing.ActorID == existing.OwnerID
 		var target *memory.Entry
 		if existing.Type != memory.OperationCreate {
 			var entryRow table.MemoryEntry
 			if err := privateEntries(
 				tx.Clauses(clause.Locking{Strength: "UPDATE"}),
 				existing.OwnerID,
+				actorPrivate,
 			).Where("tenant_id = ? AND id = ?", existing.TenantID, existing.EntryID).
 				Take(&entryRow).
 				Error; err != nil {
@@ -320,7 +325,11 @@ func (s *Service) prepare(ctx context.Context, op *memory.Operation) (*memory.En
 		}
 		if existing.Type != memory.OperationCreate {
 			if target.Binding == nil {
-				result := privateEntries(tx.Model(&table.MemoryEntry{}), existing.OwnerID).
+				result := privateEntries(
+					tx.Model(&table.MemoryEntry{}),
+					existing.OwnerID,
+					actorPrivate,
+				).
 					Where("tenant_id = ? AND id = ? AND binding IS NULL", existing.TenantID, existing.EntryID).
 					Update("binding", mustMarshal(existing.Binding))
 				if err := requireUpdated(result); err != nil {
@@ -508,6 +517,9 @@ func (s *Service) activate(
 		if doc.Scope.Tenant != current.TenantID {
 			return memory.ErrConflict
 		}
+		if err := validateWriteScope(doc.Scope, current.OwnerID, current.ActorID); err != nil {
+			return err
+		}
 		ref := current.VersionRef
 		now := time.Now().Unix()
 		switch current.Type {
@@ -530,9 +542,15 @@ func (s *Service) activate(
 			}
 		case memory.OperationUpdate, memory.OperationRestore:
 			var row table.MemoryEntry
-			if err := privateEntries(tx.Clauses(clause.Locking{Strength: "UPDATE"}), current.OwnerID).
+			actorPrivate := doc.Scope.Project == "" && current.ActorID == current.OwnerID
+			if err := privateEntries(
+				tx.Clauses(clause.Locking{Strength: "UPDATE"}),
+				current.OwnerID,
+				actorPrivate,
+			).
 				Where("tenant_id = ? AND id = ?", current.TenantID, current.EntryID).
-				Take(&row).Error; err != nil {
+				Take(&row).
+				Error; err != nil {
 				return mapError(err)
 			}
 			existing := row.ToDomain()
@@ -693,6 +711,14 @@ func (s *Service) Retire(
 			return memory.ErrConflict
 		}
 		op = stored
+		var row table.MemoryEntry
+		query := privateEntries(
+			table.TenantQuery(ctx, tx.Clauses(clause.Locking{Strength: "UPDATE"})),
+			owner, scope.ProjectID == "" && actor == owner,
+		)
+		if err := query.Where("id = ?", entryID).Take(&row).Error; err != nil {
+			return mapError(err)
+		}
 		if op.Status == memory.OperationApplied {
 			var err error
 			entry, err = appliedEntry(op)
@@ -701,11 +727,6 @@ func (s *Service) Retire(
 		}
 		if op.Status == memory.OperationRejected {
 			return memory.ErrConflict
-		}
-		var row table.MemoryEntry
-		if err := privateEntries(table.TenantQuery(ctx, tx.Clauses(clause.Locking{Strength: "UPDATE"})), owner).
-			Where("id = ?", entryID).Take(&row).Error; err != nil {
-			return mapError(err)
 		}
 		entry = row.ToDomain()
 		if entry.RetiredAt != nil {
@@ -778,6 +799,14 @@ func (s *Service) RecallTx(
 		"owner_id = ? AND scope_kind = ? AND tenant_id = ? AND project_id = ? AND actor_id = ? AND retired_at IS NULL",
 		scope.Owner, string(scope.Kind), scope.Tenant, scope.Project, scope.Actor,
 	)
+	if scope.Kind == memory.ScopeActorPrivate {
+		request, err := requireScope(ctx)
+		if err != nil || request.TenantID != scope.Tenant || request.ProjectID != "" ||
+			scope.Project != "" || scope.Actor != scope.Owner {
+			return nil, memory.ErrForbidden
+		}
+		q = q.Where("output_visibility = ?", memory.OutputPrivate)
+	}
 	if agentID != "" {
 		q = q.Where("agent_id = ? OR agent_id = ''", agentID)
 	} else {
@@ -845,13 +874,19 @@ func requireScope(ctx context.Context) (access.Scope, error) {
 	return scope, nil
 }
 
-func authorizeDocument(ctx context.Context, owner string, doc *memory.Document) error {
+func authorizeDocument(ctx context.Context, owner, actor string, doc *memory.Document) error {
 	scope, err := requireScope(ctx)
 	if err != nil {
 		return err
 	}
 	if doc.Scope.Tenant != scope.TenantID || doc.Scope.Project != scope.ProjectID {
 		return memory.ErrForbidden
+	}
+	if doc.Scope.Kind == memory.ScopeActorPrivate {
+		if scope.ProjectID != "" || actor != owner || (doc.Scope.Actor != "" && doc.Scope.Actor != actor) {
+			return memory.ErrForbidden
+		}
+		doc.Scope.Actor = actor
 	}
 	doc.Scope.Owner = owner
 	return nil
@@ -876,6 +911,9 @@ func validateDocument(doc *memory.Document) error {
 	if doc.OutputVisibility != memory.OutputPrivate && doc.OutputVisibility != memory.OutputProject {
 		return memory.ErrInvalid
 	}
+	if doc.Scope.Kind == memory.ScopeActorPrivate && doc.OutputVisibility != memory.OutputPrivate {
+		return memory.ErrInvalid
+	}
 	if doc.Source.Class != memory.SourceHumanConfirmed {
 		return memory.ErrInvalid
 	}
@@ -885,15 +923,31 @@ func validateDocument(doc *memory.Document) error {
 	return nil
 }
 
-func validateWriteScope(scope memory.Scope, owner string) error {
-	if scope.Kind != memory.ScopeOwnerPrivate || scope.Owner != owner || scope.Actor != "" {
-		return memory.ErrInvalid
+func validateWriteScope(scope memory.Scope, owner, actor string) error {
+	if scope.Owner == owner {
+		switch scope.Kind {
+		case memory.ScopeOwnerPrivate:
+			if scope.Actor == "" {
+				return nil
+			}
+		case memory.ScopeActorPrivate:
+			if actor == owner && actor != "" && scope.Actor == actor && scope.Project == "" {
+				return nil
+			}
+		}
 	}
-	return nil
+	return memory.ErrInvalid
 }
 
-func privateEntries(tx *gorm.DB, owner string) *gorm.DB {
-	return tx.Where("owner_id = ? AND scope_kind = ? AND actor_id = ''", owner, string(memory.ScopeOwnerPrivate))
+func privateEntries(tx *gorm.DB, owner string, actorPrivate bool) *gorm.DB {
+	query := tx.Where("owner_id = ?", owner)
+	if actorPrivate {
+		return query.Where(
+			"((scope_kind = ? AND actor_id = '') OR (scope_kind = ? AND project_id = '' AND actor_id = ?))",
+			memory.ScopeOwnerPrivate, memory.ScopeActorPrivate, owner,
+		)
+	}
+	return query.Where("scope_kind = ? AND actor_id = ''", memory.ScopeOwnerPrivate)
 }
 
 func revisionConflict(entry *memory.Entry, op *memory.Operation, doc *memory.Document) string {
