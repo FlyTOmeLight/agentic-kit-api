@@ -2,6 +2,26 @@
 
 本文件按日期保留历史检查结果，条目中的路径、版本和限制描述当时的实现。当前功能、布局和契约分别以 README、docs/layout.md 和 docs/api.md 为准；可复用经验见 docs/lessons/。
 
+## 2026-11-19 OrbStack Worker 冻结项目记忆与接管
+
+临时探针 `TestOrbStackWorkerFrozenProjectRecall` 使用 API `7ff5db4` 的应用执行提交路径、OrbStack PostgreSQL 的独立 schema，以及从 Worker `313aeb5` 构建的两个 `cmd/worker` 进程。Worker 按该提交的 `go.mod` 使用 API 模块 `976d526`，构建时设置 `GOWORK=off` 和 `-mod=readonly`。本次使用受控项目授权、Artifact、模型和工具响应。真实 Forge 和 Artifact 的提交授权验证见前一天的记录。
+
+- 首次模型请求收到冻结的 `Project` 记忆。第二次请求带上已保存的工具结果后，探针挂起模型响应，更新本地记忆投影并强制终止第一个 Worker。
+- 第二个 Worker 接管后，Run 在 epoch `2` 进入 `Blocked`，模型请求仍为两次，工具仍为一次。探针通过 `Store.Unblock` 人工解除后，第三次请求的 `messages` 与中断前逐字节一致，仍使用冻结的 `Project` 内容。三次请求均未包含 `Private` 内容或更新后的投影。
+- Run 在 epoch `4` 完成，快照正文与摘要保持一致。两个成功响应共入账 6 tokens，工具总计执行一次。持久事件按 `RunBlocked`、`RunUnblocked`、`RunCompleted` 的顺序出现。
+
+探针在 `go test -race` 下首次通过，随后连续复跑三次均通过。测试进程退出时清理了临时 Worker 和隔离 schema。
+
+## 2026-11-18 OrbStack ActorProject 授权联调
+
+`TestOrbStackActorProjectRecall` 通过。用测试探针启动分支上的 API HTTP 路由，连接 OrbStack 上的 Forge Tenant API `v0.13.0`、Artifact `v0.5.1` 和本机 PostgreSQL 的独立 schema。探针向真实 Artifact 发布并读取测试 Agent 版本，在本地预置同一用户和项目下各一条 `Project` 与 `Private` 记忆投影。
+
+- 测试用户在专用项目无读权限时，`POST /internal/v1/executions` 返回 `403 Forbidden`。
+- Forge 临时 `reviewer` 授权生效后，用原请求键提交返回 `202`，同键重放返回 `200` 和同一 Run。数据库中的 `ContextSnapshot` 处于 Recall 模式，记忆材料仅包含 `Project` 条目。
+- Forge 撤权生效后，原请求键和新请求键均返回 `403 Forbidden`，内部健康检查仍为 `200`，原 Run 的快照摘要保持一致。
+
+验收后确认测试用户的项目读权限恢复为关闭，清理测试 schema 和 Agent Artifact，撤销临时服务凭据并复测返回 `401`。本次验证范围到 Run 接受与快照冻结。ActorProject 维护、Memory 远端归档与 Worker 消费快照需要各自的验收。
+
 ## 2026-11-18 ActorProject 执行召回授权
 
 `GOWORK=off GOFLAGS=-mod=readonly make integration` 通过，包含 API 全仓竞态测试和 `go vet`。`TestApplicationActorProjectRecall` 使用本机 PostgreSQL 和受控 Forge HTTP 服务，验证项目读权限检查使用当前用户与已验范围、撤权后首次提交和重放都被拒绝、依赖故障返回 `MemoryUnavailable`。项目条目使用预置投影，验证只有标记为 `Project` 的条目进入 Run 快照，以及缺少项目授权的 `RecallTx` 调用被拒绝。ActorProject 维护入口和真实 Forge 项目授权联调留待后续验证。

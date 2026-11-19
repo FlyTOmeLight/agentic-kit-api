@@ -1,6 +1,6 @@
 # Agentic Kit 通用 Agent Memory 技术设计
 
-状态：本地 OwnerPrivate 和租户级 ActorPrivate 的人工维护、显式 Restore、生效投影、操作回执和生效版本历史 API 已实现；`RecallTx` 已接入 Run 接受事务并冻结完整材料。ActorProject 执行召回已接入 Forge 项目读权限检查，只选取项目可见的本地投影。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.0`、server-go `v0.13.0`。配置归档时，API 后台已能继续未完成的 Create/Update/Restore。本地真实 artifact HTTP 服务与 PostgreSQL 联调覆盖服务凭据、固定版本、幂等、作用域隔离及代理故障下的 Pending 恢复，见[验证记录](verification.md#memory-真实-artifact-联合验证)。ActorProject 维护入口、ProjectShared、自动提炼、语义检索及版本删除/回收待实施，外部部署验收尚未完成。
+状态：本地 OwnerPrivate 和租户级 ActorPrivate 的人工维护、显式 Restore、生效投影、操作回执和生效版本历史 API 已实现。`RecallTx` 已接入 Run 接受事务并冻结完整材料。ActorProject 只召回项目可见的本地投影，授权、幂等重放和撤权已在 [OrbStack](verification.md#2026-11-18-orbstack-actorproject-授权联调) 用真实 Forge 验证。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.1`、server-go `v0.13.0`。配置归档时，API 后台能继续未完成的 Create/Update/Restore。服务凭据、固定版本、幂等、作用域隔离及代理故障下的 Pending 恢复见[验证记录](verification.md#memory-真实-artifact-联合验证)。ActorProject 维护入口、ProjectShared、自动提炼、语义检索及版本删除/回收待实施。
 
 本文替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 的范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
 
@@ -34,7 +34,7 @@ flowchart LR
 
 ### 2.2 artifact-go 当前能力
 
-当前适配依赖 artifact-go `v0.5.0` 的 SDK 契约，已接入集合创建与版本发布。下表说明消费方式；本地适配和测试不代表真实 artifact 部署已完成联合验收。
+当前适配依赖 artifact-go `v0.5.1` 的 SDK 契约，已接入集合创建与版本发布。下表说明 Memory 的使用方式。
 
 | 能力 | 当前契约 | Memory 使用方式 |
 | --- | --- | --- |
@@ -67,11 +67,11 @@ MemoryScope包含owner、actor等业务约束，不能直接等同artifact三元
 
 ProjectShared的存储user不授予其独占的Memory业务权限；创建者离开项目也不改变绑定，其他有权限成员继续通过Memory维护。接入方须能在核验当前维护者权限后承载绑定的归属上下文；不能承载时明确报接入错误，不切换为当前编辑人的user、不新建另一个集合。普通客户端不能直接指定任意ArtifactBinding。owner、agent和输出受众的额外限制仍由Memory检查，artifact不推断这些业务规则。
 
-**SDK与框架依赖。** 当前 go.mod 使用 artifact-go `v0.5.0` 和 server-go `v0.13.0`，不使用本地 replace。仅 `internal/client` 引用 artifact SDK，领域值、durable、builder、worker 和本项目公开 SDK 不暴露其类型。验证使用 `GOWORK=off`；本地构建与协议测试不能代替真实部署联调。
+**SDK与框架依赖。** 当前 go.mod 使用 artifact-go `v0.5.1` 和 server-go `v0.13.0`。仅 `internal/client` 引用 artifact SDK，领域值、durable、builder、worker 和本项目公开 SDK 不暴露其类型。正式依赖验证使用 `GOWORK=off`。
 
 ### 2.4 artifact-go 接入契约与部署验收
 
-三元数据隔离和集合幂等创建已由所依赖的 `v0.5.0` 提供，Memory 适配已消费这些契约。下表保留服务端职责与部署验收条件，不表示真实 artifact 部署已经验证：
+三元数据隔离和集合幂等创建由 artifact-go 提供，Memory 适配已接入这些契约。下表列出服务端职责和部署验收条件。
 
 | 项目 | artifact-go负责的交付 | Memory消费约束 |
 | --- | --- | --- |
@@ -234,6 +234,8 @@ Agent 版本不因本设计增加自动开启学习的开关。服务端政策�
 
 worker 读取 Run 的完整冻结材料，不读取当前 Entry 或远端版本。context_builder 每次以相同冻结政策和预算结合当前模型轮次消息构建输入；Eino adapter 负责格式转换，保留现有 checkpoint 和工具步骤恢复。
 
+OrbStack 已验证项目记忆在首次模型请求中可见。源投影更新后，Worker 强杀接管会在已派发的模型边界进入 `Blocked`，人工解除后沿用原快照和已完成的工具结果。见 [Worker 接管验证](verification.md#2026-11-19-orbstack-worker-冻结项目记忆与接管)。
+
 先裁低相关/低优先级的整条记忆，再裁最旧完整历史组；`context-v1`/`context-v2`中系统指令、真实工具定义/协议开销、当前用户输入和本轮完整工具调用/结果链属于必需输入。`context-v3`在历史耗尽后允许把当前轮较旧的工具结果替换为投影标记，保留最近 `KeepRecentToolResults` 条完整结果（默认3条），工具关联仍完整。预算按实际模型和协议计数，字节限制不冒充 token 计数。裁剪与投影后仍超限时明确报 `ContextBudgetExceeded`；接受前可确定的超限不创建 Run，执行中超限保存已有事实并失败，不用同一输入自动重试。
 
 裁剪与投影只影响此次模型输入，不修改冻结材料、checkpoint 或已存步骤，不做 LLM 摘要。恢复不重复追加 Memory，不把记忆伪装为用户刚发出的命令。源记忆纠正、停用或 artifact 历史不可读，均不改写已接受 Run；需要立即停止其影响时取消 Run，再提交新请求。
@@ -308,12 +310,13 @@ Memory.Service 在消费处定义只含实际 artifact 行为的小接口，由 
 | 停用后恢复 | 普通Update不能恢复；显式Restore发布新版本并原子启用；失败不改变条目或并发赢家状态；同键重放不重复发布或覆盖后来变更 |
 | 受保护历史 | retention 不淘汰受保护版本；Retire 不删除历史；未采用版本不自动生效 |
 | Run 原子冻结 | prepare 失败不留 Session/Run/快照/消息；引用与完整内容对应 |
+| ActorProject 执行召回 | OrbStack 已验证 Forge 项目授权生效后只召回 `Project` 投影。撤权后拒绝重放和新提交，已有快照保持一致。 |
 | Off/Empty/错误 | 默认 Off 不召回；无匹配为 Empty；投影读取失败使接受回滚 |
 | 恢复与依赖故障 | artifact 离线及源版本不可读时，已接受 Run 仍用原快照；不重复注入或执行已存工具结果 |
 | 预算与材料选择 | 中文/代码标签固定用例、稳定顺序、完整工具链、动态工具输出超限及明确失败 |
 | 历史归属与保留 | 仅Applied的Create/Update/Restore进入列表，Retire/Pending/Rejected排除；猜测未采用versionID返回404；远端离线仍可分页；源正文缺失保留元数据并报不可用 |
 
-部署验收仍需用隔离数据库和真实 artifact 服务覆盖跨服务故障；API/worker 按变更范围执行 integration、race、vet、build、Swagger 与跨进程接管验证。正式依赖验证使用 GOWORK=off、无本地 replace。真实 artifact 部署和共享范围授权验收尚未完成；自动提炼与版本回收仍未实现。后台 Pending 恢复已实现，恢复循环与数据库恢复用例（含 Create/Update/Restore、claim 跳过、损坏与无 binding 回执推进）均已通过；真实 artifact 故障联调仍待完成。
+在 OrbStack 用隔离数据库和真实 artifact 服务验收 Memory 归档与跨服务故障。API 和 Worker 按变更范围执行 integration、race、vet、build、Swagger 与跨进程接管验证，正式依赖验证使用 `GOWORK=off`。共享范围授权、自动提炼与版本回收待实施。后台 Pending 恢复已通过恢复循环与数据库用例，覆盖 Create/Update/Restore、跳过有效 claim，以及损坏或无 binding 的回执推进。OrbStack 上的 Memory 归档故障恢复仍待验证。
 
 ## 11. 后续演进边界
 
