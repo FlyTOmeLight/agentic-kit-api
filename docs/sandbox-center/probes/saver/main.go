@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,10 +18,29 @@ import (
 const baseLayerDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 func main() {
-	if err := run("/workspace", "/checkpoints"); err != nil {
+	var err error
+	if len(os.Args) == 5 {
+		err = saveAttempt(os.Args[1:])
+	} else if len(os.Args) == 1 {
+		err = run("/workspace", "/checkpoints")
+	} else {
+		err = errors.New("expected checkpoint directory, sandbox ID, generation and attempt")
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "save: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func saveAttempt(args []string) error {
+	if !filepath.IsLocal(args[0]) {
+		return errors.New("invalid checkpoint directory")
+	}
+	command := exec.Command("python3", "-B", "/usr/local/bin/layerfs_checkpoint.py",
+		"save", "/workspace", filepath.Join("/checkpoints", args[0]), baseLayerDigest,
+		args[1], args[2], args[3])
+	command.Stdout, command.Stderr = os.Stdout, os.Stderr
+	return command.Run()
 }
 
 func run(workspace, store string) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,53 @@ func TestValidateCheckpointID(t *testing.T) {
 	} {
 		if err := validateCheckpointID(bad); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("invalid checkpoint %q accepted: %v", bad, err)
+		}
+	}
+}
+
+func TestCheckpointConfigRequiresExactlyOneStore(t *testing.T) {
+	for _, cfg := range []CheckpointConfig{
+		{Image: "saver:test", StoreHostPath: "/checkpoints"},
+		{Image: "saver:test", StorePVC: "checkpoint-store"},
+	} {
+		if err := cfg.valid(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, cfg := range []CheckpointConfig{
+		{Image: "saver:test"},
+		{Image: "saver:test", StoreHostPath: "/checkpoints", StorePVC: "checkpoint-store"},
+		{StorePVC: "checkpoint-store"},
+	} {
+		if err := cfg.valid(); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("invalid checkpoint config accepted: %+v: %v", cfg, err)
+		}
+	}
+}
+
+func TestCheckpointManifestUsesConfiguredStore(t *testing.T) {
+	sandbox := Sandbox{ID: "sandbox", Generation: 2}
+	for _, test := range []struct {
+		cfg  CheckpointConfig
+		want map[string]any
+	}{
+		{
+			cfg: CheckpointConfig{Image: "saver:test", StoreHostPath: "/checkpoints"},
+			want: map[string]any{"name": "checkpoints", "hostPath": map[string]any{
+				"path": "/checkpoints", "type": "DirectoryOrCreate",
+			}},
+		},
+		{
+			cfg: CheckpointConfig{Image: "saver:test", StorePVC: "checkpoint-store"},
+			want: map[string]any{"name": "checkpoints", "persistentVolumeClaim": map[string]any{
+				"claimName": "checkpoint-store",
+			}},
+		},
+	} {
+		spec := saverPodManifest(sandbox, test.cfg)["spec"].(map[string]any)
+		volume := spec["volumes"].([]any)[1]
+		if !reflect.DeepEqual(volume, test.want) {
+			t.Fatalf("checkpoint volume mismatch: got %+v, want %+v", volume, test.want)
 		}
 	}
 }
@@ -165,5 +213,43 @@ func TestSaveWaitsForConcurrentSaver(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCheckpointRetryRollsAttempt(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	sandbox := Sandbox{
+		ID: "checkpoint-retry", OwnerID: "owner", RequestKey: "checkpoint-retry",
+		Status: SandboxStatusSaveBlocked, RequiredSave: true, StoppedAt: &now,
+		Generation: 1, CheckpointAttempt: "attempt-1",
+	}
+	if err := store.db.Create(&sandbox).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.rotateCheckpointAttempt(ctx, sandbox); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.GetSandbox(ctx, sandbox.ID)
+	if err != nil || current.CheckpointAttempt == sandbox.CheckpointAttempt ||
+		current.CheckpointRetryCount != 1 {
+		t.Fatalf("attempt was not rolled: %+v %v", current, err)
+	}
+	if err := store.rotateCheckpointAttempt(ctx, sandbox); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale attempt rotation: %v", err)
+	}
+	if err := store.rotateCheckpointAttempt(ctx, *current); err != nil {
+		t.Fatal(err)
+	}
+	current, err = store.GetSandbox(ctx, sandbox.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.rotateCheckpointAttempt(ctx, *current); !errors.Is(err, ErrConflict) {
+		t.Fatalf("retry limit was not enforced: %v", err)
+	}
+	if current.Status != SandboxStatusSaveBlocked || current.SavedCheckpoint != "" {
+		t.Fatalf("retry published an unverified attempt: %+v", current)
 	}
 }

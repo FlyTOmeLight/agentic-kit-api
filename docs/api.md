@@ -103,11 +103,11 @@ server-go HTTPHost 提供无需鉴权的 `GET /ping`（200，正文 `pong`）、
 
 申请按 `(ownerId, requestKey)` 幂等；相同请求返回原 sandbox。续租按 lease revision 单调递增，相同 revision 与 requestKey 重放返回原事实，旧 revision 返回 409。执行按 `(leaseId, requestKey)` 幂等：控制面先持久化 intent 和 dispatch 回执再派发，派发结果不可知时操作保留 `Unknown` 并返回 502 `OutcomeUnknown`，客户端应通过回执查询确认，不能直接重试为第二次执行。释放是幂等的；已销毁的 sandbox 直接返回。
 
-`requiredSave` 默认 `false`，申请后不可变，属于幂等摘要。设为 `true` 时，当前 Kubernetes Provider 为工作区申请独立的 1 GiB、ReadWriteOnce PVC，使用集群默认 StorageClass，记录 `workspaceUid`。释放或到期先关闭租约并进入 `SaveBlocked`，再停止原 Pod UID 的 Guard；确认容器已终止后记录 `stoppedAt`，保留 Pod、PVC 与未关闭的环境记录。DELETE 成功可以返回 `SaveBlocked`；调用方必须检查 `status`，只有 `Destroyed` 才表示物理回收已完成。停止结果不明确时返回错误，阻塞状态仍保存在数据库，由对账继续处理。
+`requiredSave` 默认 `false`，申请后不可变，属于幂等摘要。设为 `true` 时，Kubernetes Provider 为工作区申请独立的 1 GiB PVC，记录 `workspaceUid`。默认使用集群默认 StorageClass 和 `ReadWriteOnce`。部署方可通过 `[Sandbox].WorkspaceStorageClass` 指定存储类，通过 `WorkspaceAccessMode` 请求 `ReadWriteMany`。释放或到期先关闭租约并进入 `SaveBlocked`，再停止原 Pod UID 的 Guard。确认容器已终止后记录 `stoppedAt`，保留 Pod、PVC 与未关闭的环境记录。DELETE 成功可以返回 `SaveBlocked`。`Destroyed` 表示物理回收已完成。停止结果不明确时返回错误，阻塞状态仍保存在数据库，由对账继续处理。
 
-配置 `[Sandbox].CheckpointImage` 与绝对路径 `CheckpointStoreHostPath` 后，对账循环在实例停止后打包 `/workspace`、核实内容寻址检查点，写入 `savedCheckpoint`，再回收 Pod/PVC 并将检查点回填到 Run 环境记录。保存失败保持 `SaveBlocked`；期限与普通释放不能解除阻塞。没有公开保存确认或放弃接口。当前检查点目录使用单节点 hostPath，尚未接入共享对象存储。
+配置 `[Sandbox].CheckpointImage` 并在 `CheckpointStorePVC` 与绝对路径 `CheckpointStoreHostPath` 中选择一项。PVC 模式下，中心先登记保存尝试。Saver 打包 `/workspace` 并写入提交标记。独立的只读 Verifier 按保存尝试读取存储，校验标记、沙箱身份与检查点内容。校验通过后，中心写入 `savedCheckpoint`，再回收 Pod/PVC 并将检查点回填到 Run 环境记录。保存或校验失败时继续保持 `SaveBlocked` 并保留工作区 PVC。期限与普通释放不能解除阻塞。保存确认由中心负责，支持范围及验证环境见[保存与恢复验证](sandbox-center/layerfs-save-verification.md)。
 
-`restoreFromSandboxId` 指定已保存的来源沙箱，并要求 `requiredSave=true`。中心验证来源已停止且为 `Destroyed`、`savedCheckpoint` 非空、tenant/owner/profile 及 profile revision 一致，并校验来源 ID 匹配当前 Run 冻结的 Filesystem 配置，不能省略或替换。客户端不能提供任意检查点路径；中心解析并冻结 `resumeCheckpoint`。需配置 `Sandbox.CheckpointImage` 与 `CheckpointStoreHostPath`；恢复成功后新沙箱才允许激活。响应同时返回 `restoreFromSandboxId` 和 `resumeCheckpoint`，Worker 验证绑定后才激活环境。单节点真实 Kubernetes 验证见[跨 Run 工作区恢复](lessons/long-task-boundaries.md#跨-run-续跑必须等待工作区保存确认)。
+`restoreFromSandboxId` 指定已保存的来源沙箱，并要求 `requiredSave=true`。中心验证来源已停止且为 `Destroyed`、`savedCheckpoint` 非空、tenant/owner/profile 及 profile revision 一致，并校验来源 ID 匹配当前 Run 冻结的 Filesystem 配置，不能省略或替换。客户端不能提供任意检查点路径；中心解析并冻结 `resumeCheckpoint`。恢复沿用保存的镜像和存储配置，成功后新沙箱才允许激活。响应同时返回 `restoreFromSandboxId` 和 `resumeCheckpoint`，Worker 验证绑定后才激活环境。单节点真实 Kubernetes 验证见[跨 Run 工作区恢复](lessons/long-task-boundaries.md#跨-run-续跑必须等待工作区保存确认)。
 
 恢复使用 Pod init container，工作区通过校验和原子目录发布后 Guard 才能启动。恢复失败不会发放 lease；未激活实例经释放或超时对账清理为 `Lost`，不保存半成品，来源检查点仍然保留。调用方重新申请使用新 requestKey。配置未启用检查点能力时，运行时恢复请求返回 409 `NotReady`。
 

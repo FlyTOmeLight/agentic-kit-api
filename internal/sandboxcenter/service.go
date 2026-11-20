@@ -81,7 +81,7 @@ func (s *Store) Acquire(ctx context.Context, in AcquireInput) (*Sandbox, *Lease,
 		if _, err := authorizeRun(ctx, tx, in.OwnerID, in.RunID, in.WorkerID, in.RunEpoch); err != nil {
 			return err
 		}
-		checkpoint, err := resolveRestoreCheckpoint(tx, in)
+		checkpoint, directory, err := resolveRestoreCheckpoint(tx, in)
 		if err != nil {
 			return err
 		}
@@ -99,6 +99,7 @@ func (s *Store) Acquire(ctx context.Context, in AcquireInput) (*Sandbox, *Lease,
 			RequiredSave:         in.RequiredSave,
 			RestoreFromSandboxID: in.RestoreFromSandboxID,
 			ResumeCheckpoint:     checkpoint,
+			ResumeCheckpointDir:  directory,
 			Generation:           0,
 			Version:              1,
 			CreatedAt:            time.Now().UTC(),

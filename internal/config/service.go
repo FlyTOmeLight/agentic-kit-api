@@ -75,6 +75,9 @@ type SandboxConfig struct {
 	RuntimeClassName        string
 	CheckpointImage         string
 	CheckpointStoreHostPath string
+	CheckpointStorePVC      string
+	WorkspaceStorageClass   string
+	WorkspaceAccessMode     string
 }
 
 // Load decodes the framework snapshot used by the server.
@@ -161,11 +164,14 @@ func (cfg Service) ValidateAPI() error {
 	if len(cfg.Callback.AllowedSources) > 0 && strings.TrimSpace(cfg.Callback.SigningSecret) == "" {
 		return errors.New("Callback.SigningSecret is required with AllowedSources")
 	}
-	if cfg.Sandbox.CheckpointImage != "" || cfg.Sandbox.CheckpointStoreHostPath != "" {
+	if cfg.Sandbox.CheckpointImage != "" || cfg.Sandbox.CheckpointStoreHostPath != "" ||
+		cfg.Sandbox.CheckpointStorePVC != "" {
 		if cfg.Sandbox.K8sContext == "" || cfg.Sandbox.CheckpointImage == "" ||
-			!filepath.IsAbs(cfg.Sandbox.CheckpointStoreHostPath) {
+			(cfg.Sandbox.CheckpointStoreHostPath == "" && cfg.Sandbox.CheckpointStorePVC == "") ||
+			(cfg.Sandbox.CheckpointStoreHostPath != "" && cfg.Sandbox.CheckpointStorePVC != "") ||
+			(cfg.Sandbox.CheckpointStoreHostPath != "" && !filepath.IsAbs(cfg.Sandbox.CheckpointStoreHostPath)) {
 			return errors.New(
-				"Sandbox checkpoints require K8sContext, CheckpointImage and an absolute CheckpointStoreHostPath",
+				"Sandbox checkpoints require K8sContext, CheckpointImage and one absolute CheckpointStoreHostPath or CheckpointStorePVC",
 			)
 		}
 	}

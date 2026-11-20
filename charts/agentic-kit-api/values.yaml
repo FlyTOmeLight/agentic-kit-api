@@ -17,3 +17,18 @@ artifact:
   # Supply ARTIFACT_BEARER_TOKEN in existingSecret; do not put it in values.
   timeoutSeconds: 30
   maxPayloadBytes: 262144
+sandbox:
+  enabled: false
+  apiImage: ""
+  kubeconfigSecret: ""
+  # Existing Secret with key "config.toml"; the file must keep the
+  # ${env:VAR:default} bindings used by conf/server/config.toml.
+  existingConfigSecret: ""
+  context: ""
+  namespace: sandbox-center
+  guardImage: ""
+  runtimeClass: ""
+  checkpointImage: ""
+  checkpointPVC: ""
+  workspaceStorageClass: ""
+  workspaceAccessMode: ""

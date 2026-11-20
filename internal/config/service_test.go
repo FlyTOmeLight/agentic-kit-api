@@ -82,6 +82,70 @@ ServiceAPIKey = "test-service-key-at-least-32-characters"
 	}
 }
 
+func TestShippedConfigLoadsCheckpointPVC(t *testing.T) {
+	t.Setenv("SANDBOX_CHECKPOINT_STORE_PVC", "checkpoint-store")
+	t.Setenv("SANDBOX_WORKSPACE_ACCESS_MODE", "ReadWriteMany")
+	cfg, err := Load(filepath.Join("..", "..", "conf", "server", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sandbox.CheckpointStorePVC != "checkpoint-store" {
+		t.Fatalf("checkpoint PVC = %q", cfg.Sandbox.CheckpointStorePVC)
+	}
+	if cfg.Sandbox.WorkspaceAccessMode != "ReadWriteMany" {
+		t.Fatalf("workspace access mode = %q", cfg.Sandbox.WorkspaceAccessMode)
+	}
+}
+
+func TestSandboxCheckpointStorageConfig(t *testing.T) {
+	clearEnv(t,
+		"SANDBOX_K8S_CONTEXT",
+		"SANDBOX_GUARD_IMAGE",
+		"SANDBOX_CHECKPOINT_IMAGE",
+		"SANDBOX_CHECKPOINT_STORE_PVC",
+		"SANDBOX_WORKSPACE_STORAGE_CLASS",
+	)
+	t.Setenv("SANDBOX_K8S_CONTEXT", "orbstack")
+	t.Setenv("SANDBOX_GUARD_IMAGE", "agentic-guard-execd:saveblocked")
+	t.Setenv("SANDBOX_CHECKPOINT_IMAGE", "agentic-sandbox-saver:v1")
+	t.Setenv("SANDBOX_CHECKPOINT_STORE_PVC", "checkpoint-store")
+	t.Setenv("SANDBOX_WORKSPACE_STORAGE_CLASS", "juicefs-csi")
+
+	path := writeConfig(t, `
+[DB]
+Driver='PostgreSQL'
+DSN = "postgres://file:password@localhost/db"
+[HTTPServer]
+Listen = "127.0.0.1:9000"
+WriteTimeout = -1
+[Redis]
+Addrs = ["localhost:6379"]
+[AgentArtifact]
+Endpoint = "http://127.0.0.1:18080"
+[Tenant]
+Endpoint = "https://tenant.example.test"
+ServiceAPIKey = "test-service-key-at-least-32-characters"
+[Sandbox]
+AllowedServices = []
+K8sContext = "${env:SANDBOX_K8S_CONTEXT:}"
+K8sNamespace = "sandbox-center"
+GuardImage = "${env:SANDBOX_GUARD_IMAGE:}"
+CheckpointImage = "${env:SANDBOX_CHECKPOINT_IMAGE:}"
+CheckpointStorePVC = "${env:SANDBOX_CHECKPOINT_STORE_PVC:}"
+WorkspaceStorageClass = "${env:SANDBOX_WORKSPACE_STORAGE_CLASS:}"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.ValidateAPI(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sandbox.WorkspaceStorageClass != "juicefs-csi" {
+		t.Fatalf("workspace storage class not loaded: %+v", cfg.Sandbox)
+	}
+}
+
 func TestServiceConfigFailures(t *testing.T) {
 	for _, tc := range []struct{ name, content string }{
 		{name: "malformed", content: "[database"},
@@ -232,6 +296,17 @@ ServiceAPIKey = "test-service-key-at-least-32-characters"
 		K8sContext:              "local",
 		CheckpointImage:         "saver:v1",
 		CheckpointStoreHostPath: "/checkpoints",
+	}
+	pvcCfg := cfg
+	pvcCfg.Sandbox.CheckpointStoreHostPath = ""
+	pvcCfg.Sandbox.CheckpointStorePVC = "checkpoint-store"
+	if err := pvcCfg.ValidateAPI(); err != nil {
+		t.Fatal(err)
+	}
+	bothCfg := cfg
+	bothCfg.Sandbox.CheckpointStorePVC = "checkpoint-store"
+	if err := bothCfg.ValidateAPI(); err == nil {
+		t.Fatal("checkpoint host path and PVC are mutually exclusive")
 	}
 	cfg.Callback = CallbackConfig{
 		Enabled:         true,

@@ -24,18 +24,34 @@ const (
 	checkpointEmptyBase = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 )
 
-// CheckpointConfig pins the saver runtime. StoreHostPath is the local
-// single-node object-store stand-in; production swaps in object storage.
+// CheckpointConfig pins the saver runtime. StoreHostPath keeps the legacy
+// single-node layout; StorePVC selects a shared volume such as JuiceFS.
 type CheckpointConfig struct {
 	Image         string
 	StoreHostPath string
+	StorePVC      string
 }
 
 func (c CheckpointConfig) valid() error {
-	if c.Image == "" || !filepath.IsAbs(c.StoreHostPath) {
-		return fmt.Errorf("%w: saver image and checkpoint host path are required", ErrInvalidInput)
+	switch {
+	case c.StoreHostPath != "" && c.StorePVC != "":
+		return fmt.Errorf("%w: checkpoint host path and PVC are mutually exclusive", ErrInvalidInput)
+	case c.Image == "" || (c.StoreHostPath == "" && c.StorePVC == "") ||
+		(c.StoreHostPath != "" && !filepath.IsAbs(c.StoreHostPath)):
+		return fmt.Errorf("%w: saver image and one checkpoint store are required", ErrInvalidInput)
 	}
 	return nil
+}
+
+func checkpointVolume(cfg CheckpointConfig, hostPathType string) map[string]any {
+	if cfg.StorePVC != "" {
+		return map[string]any{"name": "checkpoints", "persistentVolumeClaim": map[string]any{
+			"claimName": cfg.StorePVC,
+		}}
+	}
+	return map[string]any{"name": "checkpoints", "hostPath": map[string]any{
+		"path": cfg.StoreHostPath, "type": hostPathType,
+	}}
 }
 
 // Save drives one save pass for a stopped save-blocked sandbox. It is
@@ -85,6 +101,16 @@ func (s *Service) Save(ctx context.Context, sandbox Sandbox) error {
 	if err != nil {
 		return err
 	}
+	if s.checkpointConfig.StorePVC != "" || sandbox.CheckpointAttempt != "" {
+		current, err := s.store.GetSandbox(ctx, sandbox.ID)
+		if err != nil {
+			return err
+		}
+		if current.Status == SandboxStatusSaveBlocked {
+			return ErrNotReady
+		}
+		return s.completeSave(ctx, *current)
+	}
 	if podUID != "" {
 		return s.provider.destroyObject(ctx, "pods", saverPodPrefix+sandbox.ID, podUID)
 	}
@@ -95,6 +121,12 @@ func (s *Service) saveCheckpoint(ctx context.Context, sandbox Sandbox, savedPodU
 	cfg := s.checkpointConfig
 	if err := cfg.valid(); err != nil {
 		return err
+	}
+	if cfg.StorePVC != "" {
+		return s.reconcileCheckpoint(ctx, sandbox)
+	}
+	if sandbox.CheckpointAttempt != "" {
+		return fmt.Errorf("%w: registered checkpoint requires its PVC store", ErrConflict)
 	}
 	name := saverPodPrefix + sandbox.ID
 	out, err := s.provider.kubectl(ctx, nil, "get", "pod", name, "-o", "json", "--ignore-not-found")
@@ -184,6 +216,25 @@ func (s *Service) saveCheckpoint(ctx context.Context, sandbox Sandbox, savedPodU
 // The sandbox itself moves to Releasing via confirmRequiredSave; the
 // reconciler's existing branch then destroys pod and PVC.
 func (s *Service) completeSave(ctx context.Context, sandbox Sandbox) error {
+	if sandbox.CheckpointAttempt != "" {
+		for _, role := range []string{"saver", "verify"} {
+			pod, err := s.provider.checkpointPod(ctx, sandbox, role)
+			if err != nil {
+				return err
+			}
+			if pod != nil {
+				if err := s.provider.destroyObject(
+					ctx,
+					"pods",
+					role+"-"+sandbox.ID,
+					pod.Metadata.UID,
+				); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 	name := saverPodPrefix + sandbox.ID
 	out, err := s.provider.kubectl(ctx, nil, "get", "pod", name, "-o", "json", "--ignore-not-found")
 	if err != nil {
@@ -240,6 +291,11 @@ func saverPodManifest(sb Sandbox, cfg CheckpointConfig) map[string]any {
 		"app.kubernetes.io/part-of":         "agentic-sandbox",
 		"sandbox-center/sandbox-generation": fmt.Sprint(sb.Generation),
 	}
+	var arguments []string
+	if sb.CheckpointAttempt != "" {
+		labels["sandbox-center/checkpoint-attempt"] = sb.CheckpointAttempt
+		arguments = []string{checkpointDirectory(sb), sb.ID, fmt.Sprint(sb.Generation), sb.CheckpointAttempt}
+	}
 	return map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Pod",
@@ -255,6 +311,7 @@ func saverPodManifest(sb Sandbox, cfg CheckpointConfig) map[string]any {
 			"containers": []any{map[string]any{
 				"name":  "saver",
 				"image": cfg.Image,
+				"args":  arguments,
 				"securityContext": map[string]any{
 					"runAsUser":                0,
 					"readOnlyRootFilesystem":   true,
@@ -284,13 +341,7 @@ func saverPodManifest(sb Sandbox, cfg CheckpointConfig) map[string]any {
 						"readOnly":  true,
 					},
 				},
-				map[string]any{
-					"name": "checkpoints",
-					"hostPath": map[string]any{
-						"path": cfg.StoreHostPath,
-						"type": "DirectoryOrCreate",
-					},
-				},
+				checkpointVolume(cfg, "DirectoryOrCreate"),
 			},
 		},
 	}

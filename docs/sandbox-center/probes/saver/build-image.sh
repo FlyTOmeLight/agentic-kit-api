@@ -4,19 +4,23 @@
 # so python3 and the probe toolchain are identical to the verified probes.
 # Run from the repo root.
 #
-# Produces agentic-sandbox-saver:<tag> in the local Docker image store. The
-# image is only a local/CI artifact; the production image pipeline is stage
-# 4 work.
+# Produces agentic-sandbox-saver:<tag> for the Docker server's architecture.
+# Set TARGETARCH to arm64 or amd64 to build for a different node pool.
 set -eu
 
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
 tag=${1:-v1}
-build=${BUILD_DIR:-/private/tmp/agentic-saver-build}
+arch=${TARGETARCH:-$(docker version --format '{{.Server.Arch}}')}
+case "$arch" in
+  amd64|arm64) ;;
+  *) echo "Unsupported TARGETARCH: $arch" >&2; exit 2 ;;
+esac
+build=${BUILD_DIR:-${TMPDIR:-/tmp}/agentic-saver-build-$arch}
 
 mkdir -p "$build"
 
 (cd "$repo" &&
-  GOCACHE="$build/gocache" GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+  GOCACHE="$build/gocache" GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
     go build -trimpath -o "$build/saver" ./docs/sandbox-center/probes/saver)
 
 cp "$repo/docs/sandbox-center/probes/kubernetes/testdata/layerfs_checkpoint.py" "$build/layerfs_checkpoint.py"
@@ -28,5 +32,6 @@ COPY layerfs_checkpoint.py /usr/local/bin/layerfs_checkpoint.py
 ENTRYPOINT ["/usr/local/bin/saver"]
 EOF
 
-docker build --network none --pull=false -f "$build/Dockerfile.saver" -t "agentic-sandbox-saver:$tag" "$build"
+docker build --platform "linux/$arch" --network none --pull=false \
+  -f "$build/Dockerfile.saver" -t "agentic-sandbox-saver:$tag" "$build"
 docker image inspect "agentic-sandbox-saver:$tag" --format '{{.Id}}'

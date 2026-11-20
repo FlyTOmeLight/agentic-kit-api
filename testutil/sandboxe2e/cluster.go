@@ -58,11 +58,12 @@ func start(t *testing.T, schemaDSN string) *Cluster {
 	checkpoints := sandboxcenter.CheckpointConfig{
 		Image:         os.Getenv("SANDBOX_E2E_SAVER_IMAGE"),
 		StoreHostPath: os.Getenv("SANDBOX_E2E_CHECKPOINT_HOST_PATH"),
+		StorePVC:      os.Getenv("SANDBOX_E2E_CHECKPOINT_PVC"),
 	}
 	if checkpoints.Image == "" {
 		checkpoints.Image = "agentic-sandbox-saver:v1"
 	}
-	if checkpoints.StoreHostPath == "" {
+	if checkpoints.StoreHostPath == "" && checkpoints.StorePVC == "" {
 		checkpoints.StoreHostPath = "/private/tmp/sandbox-center-checkpoints"
 	}
 
