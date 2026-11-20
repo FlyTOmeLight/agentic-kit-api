@@ -43,6 +43,9 @@ type Sandbox struct {
 	ResumeCheckpoint     string     `gorm:"type:text;not null;default:''" json:"resumeCheckpoint,omitempty"`
 	StoppedAt            *time.Time `gorm:"type:timestamptz" json:"stoppedAt,omitempty"`
 	SavedCheckpoint      string     `gorm:"type:text;not null;default:''" json:"savedCheckpoint,omitempty"`
+	CheckpointAttempt    string     `gorm:"type:text;not null;default:''" json:"-"`
+	CheckpointRetryCount int        `gorm:"not null;default:0" json:"-"`
+	ResumeCheckpointDir  string     `gorm:"type:text;not null;default:''" json:"-"`
 	PodUID               string     `gorm:"type:text;not null;default:''" json:"podUid"`
 	WorkspaceUID         string     `gorm:"type:text;not null;default:''" json:"workspaceUid"`
 	Generation           int64      `gorm:"type:bigint;not null;default:0" json:"generation"`

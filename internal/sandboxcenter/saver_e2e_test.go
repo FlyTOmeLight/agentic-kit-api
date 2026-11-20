@@ -3,7 +3,9 @@ package sandboxcenter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -25,11 +27,12 @@ func TestRequiredSaveLayerfsE2E(t *testing.T) {
 			"SANDBOX_E2E_SAVER_IMAGE",
 		),
 		StoreHostPath: os.Getenv("SANDBOX_E2E_CHECKPOINT_HOST_PATH"),
+		StorePVC:      os.Getenv("SANDBOX_E2E_CHECKPOINT_PVC"),
 	}
 	if checkpoints.Image == "" {
 		checkpoints.Image = "agentic-sandbox-saver:v1"
 	}
-	if checkpoints.StoreHostPath == "" {
+	if checkpoints.StoreHostPath == "" && checkpoints.StorePVC == "" {
 		checkpoints.StoreHostPath = "/private/tmp/sandbox-center-checkpoints"
 	}
 	store := testStore(t)
@@ -57,7 +60,10 @@ func TestRequiredSaveLayerfsE2E(t *testing.T) {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), 90*time.Second)
 			defer stop()
-			for _, pod := range []string{saverPodPrefix + sandbox.ID, "digest-" + sandbox.ID, "sandbox-" + sandbox.ID} {
+			for _, pod := range []string{
+				saverPodPrefix + sandbox.ID, "verify-" + sandbox.ID, "damage-" + sandbox.ID,
+				"digest-" + sandbox.ID, "sandbox-" + sandbox.ID,
+			} {
 				if _, err := provider.kubectl(cleanup, nil, "delete", "pod", pod,
 					"--ignore-not-found", "--wait", "--timeout=30s"); err != nil {
 					t.Error(err)
@@ -97,6 +103,64 @@ ln /workspace/project/src/main.go /workspace/project/hardlink
 	if _, err := service.Release(ctx, source.ID); err != nil {
 		t.Fatal(err)
 	}
+	if checkpoints.StorePVC != "" {
+		waitForCondition(t, ctx, "saver writes checkpoint before its receipt is lost", func() bool {
+			current, err := store.GetSandbox(ctx, source.ID)
+			if err == nil && current.CheckpointAttempt != "" {
+				pod, err := provider.checkpointPod(ctx, *current, "saver")
+				if err == nil && pod != nil && pod.Status.Phase == "Succeeded" {
+					return true
+				}
+			}
+			reconciler.Sweep(ctx)
+			return false
+		})
+		current, err := store.GetSandbox(ctx, source.ID)
+		if err != nil || current.Status != SandboxStatusSaveBlocked || current.SavedCheckpoint != "" {
+			t.Fatalf("unverified save must keep its workspace: %+v %v", current, err)
+		}
+		saver, err := provider.checkpointPod(ctx, *current, "saver")
+		if err != nil || saver == nil {
+			t.Fatalf("read saver: %+v %v", saver, err)
+		}
+		if err := provider.destroyObject(
+			ctx,
+			"pods",
+			saverPodPrefix+source.ID,
+			saver.Metadata.UID,
+		); err != nil {
+			t.Fatal(err)
+		}
+		flipCheckpointManifestByte(t, ctx, provider, *current, checkpoints)
+		if err := service.Save(ctx, *current); !errors.Is(err, ErrNotReady) {
+			t.Fatalf("start checkpoint verification: %v", err)
+		}
+		verify := "verify-" + source.ID
+		if _, err := provider.kubectl(ctx, nil, "wait", "--for=jsonpath={.status.phase}=Failed", "pod/"+verify,
+			"--timeout=60s"); err != nil {
+			t.Fatalf("corrupt checkpoint should fail verification: %v", err)
+		}
+		if err := service.Save(ctx, *current); !errors.Is(err, ErrConflict) ||
+			!strings.Contains(err.Error(), "manifest digest mismatch") {
+			t.Fatalf("corrupt checkpoint should block publication: %v", err)
+		}
+		blocked, err := store.GetSandbox(ctx, source.ID)
+		if err != nil || blocked.Status != SandboxStatusSaveBlocked || blocked.SavedCheckpoint != "" {
+			t.Fatalf("corrupt checkpoint was published: %+v %v", blocked, err)
+		}
+		uid, err := provider.objectUID(ctx, "persistentvolumeclaims", "workspace-"+source.ID)
+		if err != nil || uid != blocked.WorkspaceUID || uid == "" {
+			t.Fatalf("corrupt checkpoint must retain the original PVC: UID=%q %v", uid, err)
+		}
+		flipCheckpointManifestByte(t, ctx, provider, *current, checkpoints)
+		verifier, err := provider.checkpointPod(ctx, *current, "verify")
+		if err != nil || verifier == nil {
+			t.Fatalf("read failed verifier: %+v %v", verifier, err)
+		}
+		if err := provider.destroyObject(ctx, "pods", verify, verifier.Metadata.UID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var saved *Sandbox
 	deadline := time.Now().Add(3 * time.Minute)
 	for time.Now().Before(deadline) {
@@ -118,6 +182,9 @@ ln /workspace/project/src/main.go /workspace/project/hardlink
 	if saved == nil {
 		t.Fatal("save loop did not converge")
 	}
+	if checkpoints.StorePVC != "" && saved.CheckpointAttempt == "" {
+		t.Fatal("recovered save did not retain the registered attempt")
+	}
 	out, err := provider.kubectl(ctx, nil, "get", "pvc", "workspace-"+source.ID, "--ignore-not-found", "-o", "name")
 	if err != nil || len(out) != 0 {
 		t.Fatalf("saved workspace not reclaimed: %s %v", out, err)
@@ -134,7 +201,7 @@ ln /workspace/project/src/main.go /workspace/project/hardlink
 	restored := acquire(input)
 	current, err := store.GetSandbox(ctx, restored.ID)
 	if err != nil || current.Status != SandboxStatusActive || current.ResumeCheckpoint != saved.SavedCheckpoint ||
-		current.RestoreFromSandboxID != source.ID {
+		current.RestoreFromSandboxID != source.ID || current.ResumeCheckpointDir != checkpointDirectory(*saved) {
 		t.Fatalf("restored sandbox not active with frozen source: %+v %v", current, err)
 	}
 	after := workspaceTreeDigest(t, ctx, provider, *current, checkpoints)
@@ -142,6 +209,52 @@ ln /workspace/project/src/main.go /workspace/project/hardlink
 		t.Fatalf("restored tree digest differs: before=%s after=%s", before, after)
 	}
 	t.Logf("cross-run Acquire restored tree digest %s", after)
+}
+
+func flipCheckpointManifestByte(
+	t *testing.T,
+	ctx context.Context,
+	provider *Provider,
+	sandbox Sandbox,
+	cfg CheckpointConfig,
+) {
+	t.Helper()
+	name := "damage-" + sandbox.ID
+	pod := saverPodManifest(sandbox, cfg)
+	pod["metadata"].(map[string]any)["name"] = name
+	spec := pod["spec"].(map[string]any)
+	container := spec["containers"].([]any)[0].(map[string]any)
+	container["command"] = []string{"python3", "-B", "-c", `
+import pathlib
+import sys
+
+entry = pathlib.Path(sys.argv[1])
+manifest = entry / (entry / "commit").read_text().removeprefix("sha256:")
+with manifest.open("r+b") as contents:
+    first = contents.read(1)
+    contents.seek(0)
+    contents.write(bytes([first[0] ^ 1]))
+`}
+	container["args"] = []string{path.Join("/checkpoints", checkpointDirectory(sandbox))}
+	manifest, err := json.Marshal(pod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.kubectl(ctx, manifest, "create", "-f", "-"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.kubectl(ctx, nil, "wait", "--for=jsonpath={.status.phase}=Succeeded",
+		"pod/"+name, "--timeout=60s"); err != nil {
+		logs, _ := provider.kubectl(ctx, nil, "logs", name)
+		t.Fatalf("simulate checkpoint corruption: %s %v", logs, err)
+	}
+	uid, err := provider.objectUID(ctx, "pods", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.destroyObject(ctx, "pods", name, uid); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func workspaceTreeDigest(

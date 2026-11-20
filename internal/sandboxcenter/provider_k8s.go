@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,9 @@ type K8sConfig struct {
 
 	// RuntimeClassName stays empty until the gVisor node pool exists (stage 4).
 	RuntimeClassName string
+
+	WorkspaceStorageClass string
+	WorkspaceAccessMode   string
 
 	// CPULimit, MemoryLimit, PIDLimit mirror the verified docker probe bounds.
 	CPULimit string
@@ -49,6 +53,11 @@ func (c K8sConfig) valid() error {
 	if c.Context == "" || c.Namespace == "" || c.GuardImage == "" {
 		return fmt.Errorf("%w: k8s context, namespace and guard image are required", ErrInvalidInput)
 	}
+	switch c.WorkspaceAccessMode {
+	case "", "ReadWriteOnce", "ReadWriteMany":
+	default:
+		return fmt.Errorf("%w: workspace access mode must be ReadWriteOnce or ReadWriteMany", ErrInvalidInput)
+	}
 	return nil
 }
 
@@ -60,6 +69,9 @@ type Provider struct {
 func NewProvider(cfg K8sConfig) (*Provider, error) {
 	if err := cfg.valid(); err != nil {
 		return nil, err
+	}
+	if cfg.WorkspaceAccessMode == "" {
+		cfg.WorkspaceAccessMode = "ReadWriteOnce"
 	}
 	if cfg.CPULimit == "" {
 		cfg.CPULimit = "1"
@@ -228,15 +240,21 @@ func (p *Provider) podManifest(sb Sandbox, admission admissionRequest) map[strin
 		spec["initContainers"] = append([]any{restoreInitContainer(sb, p.cfg.Checkpoints)}, initializers...)
 		guard := spec["containers"].([]any)[0].(map[string]any)
 		guard["volumeMounts"].([]any)[1].(map[string]any)["subPath"] = "workspace"
-		spec["volumes"] = append(spec["volumes"].([]any), map[string]any{
-			"name":     "checkpoints",
-			"hostPath": map[string]any{"path": p.cfg.Checkpoints.StoreHostPath, "type": "Directory"},
-		})
+		spec["volumes"] = append(spec["volumes"].([]any), checkpointVolume(p.cfg.Checkpoints, "Directory"))
 	}
 	return pod
 }
 
 func (p *Provider) ensureWorkspace(ctx context.Context, sb Sandbox) (string, error) {
+	spec := map[string]any{
+		"accessModes": []string{p.cfg.WorkspaceAccessMode},
+		"resources": map[string]any{
+			"requests": map[string]string{"storage": "1Gi"},
+		},
+	}
+	if p.cfg.WorkspaceStorageClass != "" {
+		spec["storageClassName"] = p.cfg.WorkspaceStorageClass
+	}
 	manifest, err := json.Marshal(map[string]any{
 		"apiVersion": "v1",
 		"kind":       "PersistentVolumeClaim",
@@ -247,12 +265,7 @@ func (p *Provider) ensureWorkspace(ctx context.Context, sb Sandbox) (string, err
 				"sandbox-center/id":            sb.ID,
 			},
 		},
-		"spec": map[string]any{
-			"accessModes": []string{"ReadWriteOnce"},
-			"resources": map[string]any{
-				"requests": map[string]string{"storage": "1Gi"},
-			},
-		},
+		"spec": spec,
 	})
 	if err != nil {
 		return "", err
@@ -291,6 +304,13 @@ func (p *Provider) Provision(
 		}
 		if err := checkpoints.valid(); err != nil {
 			return "", err
+		}
+		if sb.ResumeCheckpointDir != "" &&
+			(checkpoints.StorePVC == "" || !filepath.IsLocal(sb.ResumeCheckpointDir)) {
+			return "", fmt.Errorf(
+				"%w: restoring a registered checkpoint requires its PVC store",
+				ErrInvalidInput,
+			)
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.ProvisionDeadline)

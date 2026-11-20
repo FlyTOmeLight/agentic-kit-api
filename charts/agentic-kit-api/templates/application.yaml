@@ -10,12 +10,38 @@ spec:
       labels: {app: {{ .Release.Name }}-api}
     spec:
       automountServiceAccountToken: false
-      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532}
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532{{ if .Values.sandbox.enabled }}, fsGroup: 65532{{ end }}}
+      {{- if .Values.sandbox.enabled }}
+      volumes:
+        - name: sandbox-kubectl-cache
+          emptyDir: {}
+        - name: sandbox-kubeconfig
+          secret:
+            secretName: {{ required "sandbox.kubeconfigSecret is required when sandbox is enabled" .Values.sandbox.kubeconfigSecret | quote }}
+            defaultMode: 0444
+            items:
+              - key: kubeconfig
+                path: kubeconfig
+        - name: sandbox-config
+          secret:
+            secretName: {{ required "sandbox.existingConfigSecret is required when sandbox is enabled" .Values.sandbox.existingConfigSecret | quote }}
+            defaultMode: 0444
+            items:
+              - key: config.toml
+                path: config.toml
+      {{- end }}
       containers:
         - name: api
+          {{- if .Values.sandbox.enabled }}
+          image: {{ required "sandbox.apiImage containing kubectl is required when sandbox is enabled" .Values.sandbox.apiImage | quote }}
+          {{- else }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          {{- end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: [/server]
+          {{- if .Values.sandbox.enabled }}
+          args: ["-config", "/etc/agentic-kit/config.toml"]
+          {{- end }}
           envFrom: [{secretRef: {name: {{ required "existingSecret required" .Values.existingSecret }}}}]
           env:
             - name: LISTEN_ADDR
@@ -30,6 +56,43 @@ spec:
               value: {{ .Values.artifact.timeoutSeconds | quote }}
             - name: ARTIFACT_MAX_PAYLOAD_BYTES
               value: {{ .Values.artifact.maxPayloadBytes | quote }}
+            {{- if .Values.sandbox.enabled }}
+            - name: KUBECACHEDIR
+              value: /var/cache/agentic-kit
+            - name: KUBECONFIG
+              value: /var/run/agentic-kit/kube/kubeconfig
+            - name: SANDBOX_K8S_CONTEXT
+              value: {{ required "sandbox.context is required when sandbox is enabled" .Values.sandbox.context | quote }}
+            - name: SANDBOX_K8S_NAMESPACE
+              value: {{ required "sandbox.namespace is required when sandbox is enabled" .Values.sandbox.namespace | quote }}
+            - name: SANDBOX_GUARD_IMAGE
+              value: {{ required "sandbox.guardImage is required when sandbox is enabled" .Values.sandbox.guardImage | quote }}
+            {{- with .Values.sandbox.runtimeClass }}
+            - name: SANDBOX_RUNTIME_CLASS
+              value: {{ . | quote }}
+            {{- end }}
+            - name: SANDBOX_CHECKPOINT_IMAGE
+              value: {{ required "sandbox.checkpointImage is required when sandbox is enabled" .Values.sandbox.checkpointImage | quote }}
+            - name: SANDBOX_CHECKPOINT_STORE_PVC
+              value: {{ required "sandbox.checkpointPVC is required when sandbox is enabled" .Values.sandbox.checkpointPVC | quote }}
+            {{- with .Values.sandbox.workspaceStorageClass }}
+            - name: SANDBOX_WORKSPACE_STORAGE_CLASS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.sandbox.workspaceAccessMode }}
+            - name: SANDBOX_WORKSPACE_ACCESS_MODE
+              value: {{ . | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: sandbox-kubectl-cache
+              mountPath: /var/cache/agentic-kit
+            - name: sandbox-kubeconfig
+              mountPath: /var/run/agentic-kit/kube
+              readOnly: true
+            - name: sandbox-config
+              mountPath: /etc/agentic-kit
+              readOnly: true
+            {{- end }}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
           resources:
             requests: {cpu: 50m, memory: 96Mi}

@@ -160,7 +160,7 @@ def write_layer(upper, filename):
     require(os.path.getsize(filename) <= MAX_ARCHIVE_BYTES, "layer exceeds probe size limit")
 
 
-def pack(upper, store, base_digest):
+def pack(upper, store, base_digest, identity=None):
     require(base_digest.startswith("sha256:") and len(base_digest) == 71, "invalid base digest")
     store = pathlib.Path(store)
     store.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -183,6 +183,8 @@ def pack(upper, store, base_digest):
                 "size": layer.stat().st_size,
             },
         }
+        if identity is not None:
+            manifest["saveAttempt"] = identity
         manifest_bytes = canonical_json(manifest)
         manifest_digest = "sha256:" + hashlib.sha256(manifest_bytes).hexdigest()
         os.replace(layer, store / layer_digest[7:])
@@ -265,7 +267,7 @@ def apply_metadata(target, member):
                         follow_symlinks=False)
 
 
-def restore(store, manifest_digest, base_digest, destination):
+def read_checkpoint(store, manifest_digest, base_digest, identity=None):
     manifest_path = digest_path(store, manifest_digest)
     require(manifest_path.stat().st_size <= 65536, "manifest too large")
     manifest_bytes = manifest_path.read_bytes()
@@ -276,11 +278,50 @@ def restore(store, manifest_digest, base_digest, destination):
             and manifest["engine"] == "overlayfs" and manifest["consistency"] == "CrashConsistent",
             "unsupported manifest")
     require(manifest["baseLayerDigest"] == base_digest, "base digest mismatch")
+    if identity is not None:
+        require(manifest.get("saveAttempt") == identity, "checkpoint belongs to another save attempt")
     layer = manifest["layer"]
     require(layer["mediaType"] == "application/vnd.oci.image.layer.v1.tar", "unsupported layer")
     layer_path = digest_path(store, layer["digest"])
     require(layer["size"] == layer_path.stat().st_size <= MAX_ARCHIVE_BYTES, "invalid layer size")
     require(digest_file(layer_path) == layer["digest"], "layer digest mismatch")
+    return layer, layer_path
+
+
+def save_attempt(upper, store, base_digest, identity):
+    store = pathlib.Path(store)
+    store.mkdir(mode=0o700, parents=True, exist_ok=False)
+    packed = pack(upper, store, base_digest, identity)
+    for digest in (packed["layerDigest"], packed["manifestDigest"]):
+        with digest_path(store, digest).open("rb") as saved:
+            os.fsync(saved.fileno())
+    temporary = store / ".commit"
+    with temporary.open("x", encoding="ascii") as marker:
+        marker.write(packed["manifestDigest"])
+        marker.flush()
+        os.fsync(marker.fileno())
+    os.rename(temporary, store / "commit")
+
+
+def verify_attempt(store, base_digest, identity):
+    store = pathlib.Path(store)
+    try:
+        with (store / "commit").open("rb") as marker:
+            manifest_digest = marker.read(72).decode("ascii")
+    except FileNotFoundError:
+        try:
+            store.stat()
+        except FileNotFoundError:
+            return "absent"
+        return "incomplete"
+    layer, layer_path = read_checkpoint(store, manifest_digest, base_digest, identity)
+    with tarfile.open(layer_path, "r:") as archive:
+        validate_members(archive)
+    return "checkpoint: " + manifest_digest + ":" + layer["digest"][7:]
+
+
+def restore(store, manifest_digest, base_digest, destination):
+    layer, layer_path = read_checkpoint(store, manifest_digest, base_digest)
     destination = pathlib.Path(destination)
     require(not os.path.lexists(destination), "restore destination already exists")
     with tarfile.open(layer_path, "r:") as archive:
@@ -333,13 +374,29 @@ def main():
     recover.add_argument("destination")
     digest = commands.add_parser("digest")
     digest.add_argument("root")
+    save = commands.add_parser("save")
+    save.add_argument("workspace")
+    verify = commands.add_parser("verify")
+    for attempt in (save, verify):
+        attempt.add_argument("store")
+        attempt.add_argument("base_digest")
+        attempt.add_argument("sandbox")
+        attempt.add_argument("generation", type=int)
+        attempt.add_argument("attempt")
     args = parser.parse_args()
     if args.command == "pack":
         print(json.dumps(pack(args.upper, args.store, args.base_digest)))
     elif args.command == "restore":
         print(json.dumps(restore(args.store, args.manifest_digest, args.base_digest, args.destination)))
-    else:
+    elif args.command == "digest":
         print(tree_digest(args.root))
+    else:
+        identity = {"sandbox": args.sandbox, "generation": args.generation, "attempt": args.attempt}
+        if args.command == "save":
+            save_attempt(args.workspace, args.store, args.base_digest, identity)
+        else:
+            result = verify_attempt(args.store, args.base_digest, identity)
+            pathlib.Path("/dev/termination-log").write_text(result, encoding="ascii")
 
 
 if __name__ == "__main__":

@@ -79,7 +79,7 @@ BearerToken 与存储作用域授权是两层检查。token 用于证明调用 a
 
 入站业务路由通过 Forge middleware 获取已验证的租户与用户身份，再检查对象归属。
 
-本地沙箱运行时通过 `[Sandbox]` 启用。自动保存与检查点恢复需设置 `SANDBOX_K8S_CONTEXT`、`SANDBOX_GUARD_IMAGE`、`SANDBOX_CHECKPOINT_IMAGE` 和绝对路径 `SANDBOX_CHECKPOINT_STORE_HOST_PATH`；后两项必须同时配置。当前存储适用于单节点 hostPath，申请恢复还须匹配 Run 冻结的文件系统绑定，详见[保存与恢复验证](docs/sandbox-center/layerfs-save-verification.md)。
+沙箱运行时通过 `[Sandbox]` 启用。生产部署使用预建的 JuiceFS CSI `ReadWriteMany` 检查点 PVC，并为工作区指定 `SANDBOX_WORKSPACE_STORAGE_CLASS` 和 `SANDBOX_WORKSPACE_ACCESS_MODE=ReadWriteMany`，以便 Guard 和 Saver 在不同节点挂载同一工作区。Helm 默认关闭沙箱。启用时需配置 API、Guard 和 Saver 镜像、kubeconfig 与完整 TOML 的 Secret、目标 context 和检查点 PVC。单节点环境可沿用 `SANDBOX_CHECKPOINT_STORE_HOST_PATH`。部署配置、验收命令与回退步骤见 [LayerFS 保存与恢复](docs/sandbox-center/layerfs-save-verification.md#helm-部署与生产验收)。
 
 模型价格配置在 API 的 `[Pricing]`，示例见 `conf/server/config.toml`。`Models` 按模型名精确匹配，单价单位为 USD / 1M tokens；缓存输入价省略时继承普通输入价，显式 0 表示零价。`Version` 留空时按排序后的价格表生成稳定摘要。API 在接受 Chat/Application Run 时冻结版本、模型、BaseURL 与单价；非空表缺模型拒绝提交。空表冻结为仅 token 计量，费用记录为 0，不表示供应方免费；此时带 `MaxCostUSD > 0` 的 Goal 会在模型或摘要调用前失败。
 

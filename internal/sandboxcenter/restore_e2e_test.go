@@ -30,33 +30,71 @@ func TestCheckpointRestoreHTTPE2E(t *testing.T) {
 			"SANDBOX_E2E_SAVER_IMAGE",
 		),
 		StoreHostPath: os.Getenv("SANDBOX_E2E_CHECKPOINT_HOST_PATH"),
+		StorePVC:      os.Getenv("SANDBOX_E2E_CHECKPOINT_PVC"),
 	}
 	if checkpoints.Image == "" {
 		checkpoints.Image = "agentic-sandbox-saver:v1"
 	}
-	if checkpoints.StoreHostPath == "" {
+	if checkpoints.StoreHostPath == "" && checkpoints.StorePVC == "" {
 		checkpoints.StoreHostPath = "/private/tmp/sandbox-center-checkpoints"
 	}
+	namespace := os.Getenv("SANDBOX_E2E_NAMESPACE")
+	if namespace == "" {
+		namespace = "sandbox-center"
+	}
+	sourceRuntime := os.Getenv("SANDBOX_E2E_SOURCE_RUNTIME_CLASS")
+	restoreRuntime := os.Getenv("SANDBOX_E2E_RESTORE_RUNTIME_CLASS")
+	workspaceClass := os.Getenv("SANDBOX_E2E_WORKSPACE_STORAGE_CLASS")
+	workspaceAccessMode := os.Getenv("SANDBOX_E2E_WORKSPACE_ACCESS_MODE")
+	crossNode := sourceRuntime != "" || restoreRuntime != ""
+	if crossNode && (sourceRuntime == "" || restoreRuntime == "" ||
+		sourceRuntime == restoreRuntime || checkpoints.StorePVC == "" ||
+		workspaceClass == "" || workspaceAccessMode != "ReadWriteMany") {
+		t.Fatal(
+			"cross-node restore requires distinct RuntimeClasses, a checkpoint PVC and a workspace StorageClass with ReadWriteMany",
+		)
+	}
 	store := testStore(t)
-	provider, err := NewProvider(K8sConfig{
-		Context: cluster, Namespace: "sandbox-center", GuardImage: image, MaxLifetime: 24 * time.Hour,
-	})
+	providerConfig := K8sConfig{
+		Context:               cluster,
+		Namespace:             namespace,
+		GuardImage:            image,
+		MaxLifetime:           24 * time.Hour,
+		RuntimeClassName:      sourceRuntime,
+		WorkspaceStorageClass: workspaceClass,
+		WorkspaceAccessMode:   workspaceAccessMode,
+	}
+	provider, err := NewProvider(providerConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := NewService(store, provider).WithCheckpoints(checkpoints)
 	reconciler := NewReconciler(store, provider, ReconcilerConfig{}, nil).WithCheckpoints(service)
-	router := gin.New()
-	NewController(service).RegisterRoutes(router.Group("/v1"))
-	server := httptest.NewServer(router)
-	t.Cleanup(server.Close)
-	client, err := sdk.NewClient(server.URL, "local-test", &http.Client{Timeout: 2 * time.Minute})
-	if err != nil {
-		t.Fatal(err)
+	startClient := func(service *Service) *sdk.Client {
+		t.Helper()
+		router := gin.New()
+		NewController(service).RegisterRoutes(router.Group("/v1"))
+		server := httptest.NewServer(router)
+		t.Cleanup(server.Close)
+		client, err := sdk.NewClient(server.URL, "local-test", &http.Client{Timeout: 2 * time.Minute})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = client.Close() })
+		return client
 	}
-	t.Cleanup(func() { _ = client.Close() })
+	client := startClient(service)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	nodeForSandbox := func(id string) string {
+		t.Helper()
+		out, err := provider.kubectl(ctx, nil, "get", "pod", "sandbox-"+id, "-o", "jsonpath={.spec.nodeName}")
+		if node := strings.TrimSpace(string(out)); err == nil && node != "" {
+			return node
+		}
+		t.Fatalf("sandbox %s has no scheduled node: %s %v", id, out, err)
+		return ""
+	}
 	claim := AcquireInput{OwnerID: "restore-owner", WorkerID: "worker", RunID: "restore-run", RunEpoch: 1}
 	createRunClaim(t, store, claim)
 	request := sdk.AcquireSandboxRequest{
@@ -68,7 +106,7 @@ func TestCheckpointRestoreHTTPE2E(t *testing.T) {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), 90*time.Second)
 			defer stop()
-			for _, name := range []string{"saver-" + id, "sandbox-" + id} {
+			for _, name := range []string{"saver-" + id, "verify-" + id, "sandbox-" + id} {
 				if _, err := provider.kubectl(
 					cleanup,
 					nil,
@@ -106,6 +144,7 @@ func TestCheckpointRestoreHTTPE2E(t *testing.T) {
 	}
 	save := func(id string) *Sandbox {
 		t.Helper()
+		started := time.Now()
 		if _, err := client.Sandboxes.Release(ctx, id); err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +166,10 @@ func TestCheckpointRestoreHTTPE2E(t *testing.T) {
 					t.Fatalf("late save replay: %v", err)
 				}
 				for _, resource := range []struct{ kind, name string }{
-					{kind: "pod", name: "sandbox-" + id}, {kind: "pod", name: "saver-" + id}, {kind: "pvc", name: "workspace-" + id},
+					{kind: "pod", name: "sandbox-" + id},
+					{kind: "pod", name: "saver-" + id},
+					{kind: "pod", name: "verify-" + id},
+					{kind: "pvc", name: "workspace-" + id},
 				} {
 					out, err := provider.kubectl(
 						ctx,
@@ -149,6 +191,7 @@ func TestCheckpointRestoreHTTPE2E(t *testing.T) {
 						)
 					}
 				}
+				t.Logf("sandbox %s release to Destroyed: %s", id, time.Since(started))
 				return current
 			}
 			select {
@@ -174,7 +217,21 @@ chmod 0700 /workspace/project/empty
 ln -s src/main.txt /workspace/project/entry
 ln /workspace/project/src/main.txt /workspace/project/hardlink
 `)
+	var sourceNode string
+	if crossNode {
+		sourceNode = nodeForSandbox(source.Sandbox.ID)
+	}
 	saved := save(source.Sandbox.ID)
+	if crossNode {
+		providerConfig.RuntimeClassName = restoreRuntime
+		restoreProvider, err := NewProvider(providerConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		service = NewService(store, restoreProvider).WithCheckpoints(checkpoints)
+		reconciler = NewReconciler(store, restoreProvider, ReconcilerConfig{}, nil).WithCheckpoints(service)
+		client = startClient(service)
+	}
 	claim.RunID = "restored-run"
 	createRunClaim(t, store, claim)
 	request.RunID = claim.RunID
@@ -196,6 +253,13 @@ ln /workspace/project/src/main.txt /workspace/project/hardlink
 		target.Sandbox.RestoreFromSandboxID != source.Sandbox.ID {
 		t.Fatalf("restore identity not preserved: %+v", target)
 	}
+	if crossNode {
+		targetNode := nodeForSandbox(target.Sandbox.ID)
+		if targetNode == sourceNode {
+			t.Fatalf("source and restored sandbox both scheduled on %s", sourceNode)
+		}
+		t.Logf("cross-node restore: %s -> %s", sourceNode, targetNode)
+	}
 	t.Logf("restore acquire to Active: %s", time.Since(started))
 	execute(target.Sandbox.ID, "verify", `set -eu
 test "$(cat /workspace/project/src/main.txt)" = 'saved workspace'
@@ -211,6 +275,9 @@ printf 'new contents\n' > /workspace/project/src/main.txt
 	}
 	execute(target.Sandbox.ID, "verify-replay", `test "$(cat /workspace/project/src/main.txt)" = 'new contents'`)
 	save(target.Sandbox.ID)
+	if crossNode {
+		return
+	}
 
 	t.Run("missing checkpoint never activates", func(t *testing.T) {
 		stopped := time.Now()
@@ -245,12 +312,9 @@ printf 'new contents\n' > /workspace/project/src/main.txt
 			t.Fatal(err)
 		}
 		cleanupSandbox(target.ID)
-		shortProvider, err := NewProvider(K8sConfig{
-			Context:           cluster,
-			Namespace:         "sandbox-center",
-			GuardImage:        image,
-			ProvisionDeadline: 8 * time.Second,
-		})
+		shortConfig := providerConfig
+		shortConfig.ProvisionDeadline = 8 * time.Second
+		shortProvider, err := NewProvider(shortConfig)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -89,32 +89,32 @@ func authorizeRestore(tx *gorm.DB, in AcquireInput) error {
 	return nil
 }
 
-func resolveRestoreCheckpoint(tx *gorm.DB, in AcquireInput) (string, error) {
+func resolveRestoreCheckpoint(tx *gorm.DB, in AcquireInput) (checkpoint, directory string, err error) {
 	if in.RestoreFromSandboxID == "" {
-		return "", nil
+		return "", "", nil
 	}
 	var source Sandbox
-	err := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+	err = tx.Clauses(clause.Locking{Strength: "SHARE"}).
 		Where("id = ? AND tenant_id = ? AND owner_id = ?", in.RestoreFromSandboxID, in.TenantID, in.OwnerID).
 		First(&source).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", ErrNotFound
+		return "", "", ErrNotFound
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if source.ProfileID != in.ProfileID || source.ProfileRevision != in.ProfileRevision ||
 		source.Status != SandboxStatusDestroyed || !source.RequiredSave || source.StoppedAt == nil ||
 		source.PodUID == "" || source.WorkspaceUID == "" {
-		return "", fmt.Errorf(
+		return "", "", fmt.Errorf(
 			"%w: restore source has incompatible profile or unconfirmed destruction/save",
 			ErrConflict,
 		)
 	}
 	if err := validateCheckpointID(source.SavedCheckpoint); err != nil {
-		return "", fmt.Errorf("%w: restore source checkpoint is invalid", ErrConflict)
+		return "", "", fmt.Errorf("%w: restore source checkpoint is invalid", ErrConflict)
 	}
-	return source.SavedCheckpoint, nil
+	return source.SavedCheckpoint, checkpointDirectory(source), nil
 }
 
 const restoreWorkspaceScript = `
@@ -126,9 +126,10 @@ import pathlib
 import sys
 
 checkpoint = sys.argv[1]
+store = pathlib.Path("/checkpoints") / sys.argv[3]
 _, manifest_hex, layer_hex = checkpoint.split(":")
 manifest_digest = "sha256:" + manifest_hex
-manifest_path = pathlib.Path("/checkpoints") / manifest_hex
+manifest_path = store / manifest_hex
 if manifest_path.stat().st_size > 65536:
     raise ValueError("manifest too large")
 manifest_bytes = manifest_path.read_bytes()
@@ -142,7 +143,7 @@ if not os.path.lexists(destination):
     spec = importlib.util.spec_from_file_location("checkpoint", "/usr/local/bin/layerfs_checkpoint.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.restore("/checkpoints", manifest_digest, sys.argv[2], destination)
+    module.restore(store, manifest_digest, sys.argv[2], destination)
 elif destination.is_symlink() or not destination.is_dir():
     raise ValueError("invalid restored workspace")
 `
@@ -158,6 +159,7 @@ func restoreInitContainer(sb Sandbox, cfg CheckpointConfig) map[string]any {
 			restoreWorkspaceScript,
 			sb.ResumeCheckpoint,
 			checkpointEmptyBase,
+			sb.ResumeCheckpointDir,
 		},
 		"securityContext": map[string]any{
 			"runAsUser":                int64(0),
