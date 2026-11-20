@@ -55,6 +55,9 @@ GuardImage = "${env:SANDBOX_GUARD_IMAGE:}"
 RuntimeClassName = "${env:SANDBOX_RUNTIME_CLASS:}"
 CheckpointImage = "${env:SANDBOX_CHECKPOINT_IMAGE:}"
 CheckpointStoreHostPath = "${env:SANDBOX_CHECKPOINT_STORE_HOST_PATH:}"
+CheckpointStorePVC = "${env:SANDBOX_CHECKPOINT_STORE_PVC:}"
+WorkspaceStorageClass = "${env:SANDBOX_WORKSPACE_STORAGE_CLASS:}"
+WorkspaceAccessMode = "${env:SANDBOX_WORKSPACE_ACCESS_MODE:ReadWriteOnce}"
 
 [Callback]
 # Enabling requires SigningSecret and both nonempty allowlists.

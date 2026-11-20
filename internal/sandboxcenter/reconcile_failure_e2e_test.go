@@ -30,11 +30,12 @@ func TestReconcileFailurePathsE2E(t *testing.T) {
 			"SANDBOX_E2E_SAVER_IMAGE",
 		),
 		StoreHostPath: os.Getenv("SANDBOX_E2E_CHECKPOINT_HOST_PATH"),
+		StorePVC:      os.Getenv("SANDBOX_E2E_CHECKPOINT_PVC"),
 	}
 	if checkpoints.Image == "" {
 		checkpoints.Image = "agentic-sandbox-saver:v1"
 	}
-	if checkpoints.StoreHostPath == "" {
+	if checkpoints.StoreHostPath == "" && checkpoints.StorePVC == "" {
 		checkpoints.StoreHostPath = "/private/tmp/sandbox-center-checkpoints"
 	}
 	store := testStore(t)
@@ -53,7 +54,7 @@ func TestReconcileFailurePathsE2E(t *testing.T) {
 	cleanupSandbox := func(id string) {
 		cleanup, stop := context.WithTimeout(context.Background(), 90*time.Second)
 		defer stop()
-		for _, pod := range []string{saverPodPrefix + id, "sandbox-" + id} {
+		for _, pod := range []string{saverPodPrefix + id, "verify-" + id, "sandbox-" + id} {
 			if _, err := provider.kubectl(cleanup, nil, "delete", "pod", pod,
 				"--ignore-not-found", "--wait", "--timeout=30s"); err != nil {
 				t.Error(err)
@@ -83,81 +84,57 @@ func TestReconcileFailurePathsE2E(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if operation, err := service.ExecCommand(ctx, sandbox.ID, "seed",
+		if operation, err := service.ExecCommand(ctx, sandbox.ID, "seed-failed-saver",
 			"echo still-here > /workspace/marker.txt"); err != nil ||
 			operation == nil || operation.Status != OpStatusSucceeded {
 			t.Fatalf("seed workspace: %+v %v", operation, err)
 		}
-		if _, err := service.Release(ctx, sandbox.ID); err != nil {
-			t.Fatal(err)
-		}
-		waitForCondition(t, ctx, "save blocked and stopped", func() bool {
-			reconciler.Sweep(ctx)
-			current, err := store.GetSandbox(ctx, sandbox.ID)
-			return err == nil && current.Status == SandboxStatusSaveBlocked && current.StoppedAt != nil
-		})
-
-		// Replace the PVC with a directory the saver cannot read. The next
-		// sweep recreates the saver on it and the pod must fail.
-		fake, err := json.Marshal(map[string]any{
-			"apiVersion": "v1",
-			"kind":       "Pod",
-			"metadata": map[string]any{
-				"name":   "fake-" + sandbox.ID,
-				"labels": map[string]string{"app.kubernetes.io/managed-by": "sandbox-center-e2e"},
-			},
-			"spec": map[string]any{
-				"restartPolicy": "Never",
-				"containers": []any{
-					map[string]any{
-						"name":  "busybox",
-						"image": image,
-						"command": []string{
-							"python3",
-							"-c",
-							"import os; os.chmod('/workspace', 0o000)",
-						},
-						"securityContext": map[string]any{
-							"runAsUser":                0,
-							"allowPrivilegeEscalation": false,
-						},
-						"volumeMounts": []any{
-							map[string]any{"name": "workspace", "mountPath": "/workspace"},
-						},
-					},
-				},
-				"volumes": []any{map[string]any{
-					"name":                  "workspace",
-					"persistentVolumeClaim": map[string]any{"claimName": "workspace-" + sandbox.ID},
-				}},
-			},
-		})
+		released, err := service.Release(ctx, sandbox.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := provider.kubectl(ctx, fake, "apply", "-f", "-"); err != nil {
+		if released.Status != SandboxStatusSaveBlocked || released.StoppedAt == nil {
+			t.Fatalf("release must stop the save-blocked sandbox: %+v", released)
+		}
+
+		// A workspace permission fault cannot stop the real saver: it runs as
+		// root with DAC_OVERRIDE so it can read a mode-000 directory. Inject a
+		// failing saver pod with the exact identity Save validates instead.
+		if checkpoints.StorePVC != "" {
+			if err := service.Save(ctx, *released); err != ErrNotReady {
+				t.Fatalf("register save attempt: %v", err)
+			}
+			released, err = store.GetSandbox(ctx, sandbox.ID)
+			if err != nil || released.CheckpointAttempt == "" {
+				t.Fatalf("save attempt not recorded: %+v %v", released, err)
+			}
+		}
+		failedSaver := saverPodManifest(*released, checkpoints)
+		container := failedSaver["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+		container["command"] = []string{"python3", "-c", "import sys; sys.exit(42)"}
+		if checkpoints.StorePVC != "" {
+			container["command"] = []string{"python3", "-c", `
+import pathlib, sys
+pathlib.Path("/checkpoints", sys.argv[1]).mkdir(parents=True)
+sys.exit(42)
+`}
+		}
+		failedSaverManifest, err := json.Marshal(failedSaver)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := provider.kubectl(ctx, nil, "wait", "--for=jsonpath={.status.phase}=Succeeded",
-			"pod/fake-"+sandbox.ID, "--timeout=60s"); err != nil {
-			logs, _ := provider.kubectl(ctx, nil, "logs", "fake-"+sandbox.ID)
-			t.Fatalf("chmod workspace failed: %s %v", logs, err)
+		if _, err := provider.kubectl(ctx, failedSaverManifest, "apply", "-f", "-"); err != nil {
+			t.Fatal(err)
 		}
-		t.Cleanup(func() {
-			cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
-			defer stop()
-			if _, err := provider.kubectl(cleanup, nil, "delete", "pod", "fake-"+sandbox.ID,
-				"--ignore-not-found", "--wait", "--timeout=20s"); err != nil {
-				t.Error(err)
-			}
-		})
 
 		waitForCondition(t, ctx, "failed saver pod", func() bool {
-			reconciler.Sweep(ctx)
 			out, err := provider.kubectl(ctx, nil, "get", "pod", saverPodPrefix+sandbox.ID,
 				"-o", "jsonpath={.status.phase}", "--ignore-not-found")
 			return err == nil && strings.TrimSpace(string(out)) == "Failed"
 		})
+		// One sweep must observe the failed saver and keep it for diagnosis:
+		// no checkpoint may be published and the pod must not be replaced.
+		reconciler.Sweep(ctx)
 		current, err := store.GetSandbox(ctx, sandbox.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -165,76 +142,54 @@ func TestReconcileFailurePathsE2E(t *testing.T) {
 		if current.Status != SandboxStatusSaveBlocked || current.SavedCheckpoint != "" {
 			t.Fatalf("failed save must keep the sandbox blocked without checkpoint: %+v", current)
 		}
-
-		reconciler.Sweep(ctx)
-		out, err := provider.kubectl(ctx, nil, "get", "pod", saverPodPrefix+sandbox.ID,
-			"--ignore-not-found", "-o", "name")
+		failedPhase, err := provider.kubectl(ctx, nil, "get", "pod", saverPodPrefix+sandbox.ID,
+			"-o", "jsonpath={.status.phase}", "--ignore-not-found")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(out) != 0 {
-			t.Fatalf("failed saver pod was not destroyed on the next sweep: %s", out)
+		if strings.TrimSpace(string(failedPhase)) != "Failed" {
+			t.Fatalf("failed saver pod must be retained for diagnosis, got phase %q", failedPhase)
 		}
 
-		// Restore read access so the retried save succeeds end to end.
-		fix, err := json.Marshal(map[string]any{
-			"apiVersion": "v1",
-			"kind":       "Pod",
-			"metadata": map[string]any{
-				"name":   "fix-" + sandbox.ID,
-				"labels": map[string]string{"app.kubernetes.io/managed-by": "sandbox-center-e2e"},
-			},
-			"spec": map[string]any{
-				"restartPolicy": "Never",
-				"containers": []any{
-					map[string]any{
-						"name":  "busybox",
-						"image": image,
-						"command": []string{
-							"python3",
-							"-c",
-							"import os; os.chmod('/workspace', 0o750); os.chown('/workspace', 65534, 65534)",
-						},
-						"securityContext": map[string]any{
-							"runAsUser":                0,
-							"allowPrivilegeEscalation": false,
-						},
-						"volumeMounts": []any{
-							map[string]any{"name": "workspace", "mountPath": "/workspace"},
-						},
-					},
-				},
-				"volumes": []any{map[string]any{
-					"name":                  "workspace",
-					"persistentVolumeClaim": map[string]any{"claimName": "workspace-" + sandbox.ID},
-				}},
-			},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := provider.kubectl(ctx, fix, "apply", "-f", "-"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := provider.kubectl(ctx, nil, "wait", "--for=jsonpath={.status.phase}=Succeeded",
-			"pod/fix-"+sandbox.ID, "--timeout=60s"); err != nil {
-			logs, _ := provider.kubectl(ctx, nil, "logs", "fix-"+sandbox.ID)
-			t.Fatalf("restore workspace access failed: %s %v", logs, err)
-		}
-		t.Cleanup(func() {
-			cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
-			defer stop()
-			if _, err := provider.kubectl(cleanup, nil, "delete", "pod", "fix-"+sandbox.ID,
-				"--ignore-not-found", "--wait", "--timeout=20s"); err != nil {
-				t.Error(err)
+		if checkpoints.StorePVC == "" {
+			failedSaverUID, err := provider.observeIdentity(ctx, sandbox.ID, "pods",
+				saverPodPrefix+sandbox.ID, "")
+			if err != nil {
+				t.Fatal(err)
 			}
-		})
+			if err := provider.destroyObject(ctx, "pods", saverPodPrefix+sandbox.ID,
+				failedSaverUID); err != nil {
+				t.Fatal(err)
+			}
+		}
 
 		waitForCondition(t, ctx, "save retry destroys the sandbox", func() bool {
 			reconciler.Sweep(ctx)
 			current, err := store.GetSandbox(ctx, sandbox.ID)
 			return err == nil && current.Status == SandboxStatusDestroyed && current.SavedCheckpoint != ""
 		})
+		if checkpoints.StorePVC != "" {
+			current, err := store.GetSandbox(ctx, sandbox.ID)
+			if err != nil || current.CheckpointRetryCount != 1 ||
+				current.CheckpointAttempt == released.CheckpointAttempt {
+				t.Fatalf("incomplete save was not retried in a new directory: %+v %v", current, err)
+			}
+		}
+		for _, resource := range []string{
+			"pod/" + saverPodPrefix + sandbox.ID,
+			"pod/verify-" + sandbox.ID,
+			"pod/sandbox-" + sandbox.ID,
+			"pvc/workspace-" + sandbox.ID,
+		} {
+			out, err := provider.kubectl(ctx, nil, "get", resource,
+				"--ignore-not-found", "-o", "name")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(out) != 0 {
+				t.Errorf("saved sandbox resource %s was not reclaimed: %s", resource, out)
+			}
+		}
 	})
 
 	t.Run("restore stuck provisioning loses pod and pvc", func(t *testing.T) {
@@ -255,7 +210,7 @@ func TestReconcileFailurePathsE2E(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if operation, err := service.ExecCommand(ctx, source.ID, "seed",
+		if operation, err := service.ExecCommand(ctx, source.ID, "seed-restore-source",
 			"echo source-data > /workspace/data.txt"); err != nil ||
 			operation == nil || operation.Status != OpStatusSucceeded {
 			t.Fatalf("seed source workspace: %+v %v", operation, err)
@@ -291,21 +246,47 @@ func TestReconcileFailurePathsE2E(t *testing.T) {
 		if restored.ResumeCheckpoint != saved.SavedCheckpoint {
 			t.Fatalf("restore did not freeze the source checkpoint: %+v", restored)
 		}
-		// Record identity without ever activating: the pod is mid-restore when
-		// the worker disappears, so the lease fact never commits.
-		if err := store.recordPhysicalIdentity(ctx, restored.ID, "pod-stuck", "pvc-stuck"); err != nil {
-			t.Fatal(err)
-		}
+		// A stuck restore never activates: no lease fact commits and the row
+		// keeps no physical identity. Push it past the provisioning grace
+		// window and materialize the pod and PVC it would have provisioned so
+		// the reconciler observes, abandons and reclaims both.
 		if err := store.db.Model(&Sandbox{}).Where("id = ?", restored.ID).
 			Update("created_at", time.Now().Add(-time.Hour)).Error; err != nil {
+			t.Fatal(err)
+		}
+		workspacePVC := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "PersistentVolumeClaim",
+			"metadata": map[string]any{
+				"name": "workspace-" + restored.ID,
+				"labels": map[string]string{
+					"app.kubernetes.io/managed-by": "sandbox-center",
+					"sandbox-center/id":            restored.ID,
+				},
+			},
+			"spec": map[string]any{
+				"accessModes": []string{"ReadWriteOnce"},
+				"resources": map[string]any{
+					"requests": map[string]string{"storage": "1Gi"},
+				},
+			},
+		}
+		pvcManifest, err := json.Marshal(workspacePVC)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := provider.kubectl(ctx, pvcManifest, "apply", "-f", "-"); err != nil {
 			t.Fatal(err)
 		}
 		pod := map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Pod",
 			"metadata": map[string]any{
-				"name":   "sandbox-" + restored.ID,
-				"labels": map[string]string{"app.kubernetes.io/managed-by": "sandbox-center-e2e"},
+				"name": "sandbox-" + restored.ID,
+				"labels": map[string]string{
+					"app.kubernetes.io/managed-by": "sandbox-center",
+					"sandbox-center/id":            restored.ID,
+				},
 			},
 			"spec": map[string]any{
 				"restartPolicy": "Never",
@@ -334,25 +315,13 @@ func TestReconcileFailurePathsE2E(t *testing.T) {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
 			defer stop()
-			if _, err := provider.kubectl(cleanup, nil, "delete", "pod", "sandbox-"+restored.ID,
-				"--ignore-not-found", "--wait", "--timeout=20s"); err != nil {
-				t.Error(err)
+			for _, resource := range []string{"pod/sandbox-" + restored.ID, "pvc/workspace-" + restored.ID} {
+				if _, err := provider.kubectl(cleanup, nil, "delete", resource,
+					"--ignore-not-found", "--wait", "--timeout=20s"); err != nil {
+					t.Error(err)
+				}
 			}
 		})
-		// recordPhysicalIdentity stored a placeholder; observe the real pod UID
-		// so the reconciler deletes this exact pod.
-		podUID, err := provider.observeIdentity(ctx, restored.ID, "pods", "sandbox-"+restored.ID, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		pvcUID, err := provider.observeIdentity(ctx, restored.ID, "persistentvolumeclaims",
-			"workspace-"+restored.ID, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := store.recordPhysicalIdentity(ctx, restored.ID, podUID, pvcUID); err != nil {
-			t.Fatal(err)
-		}
 
 		waitForCondition(t, ctx, "stuck restore marked lost", func() bool {
 			reconciler.Sweep(ctx)

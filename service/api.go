@@ -106,10 +106,12 @@ func NewWithSandbox(
 	var provider *sandboxcenter.Provider
 	if cfg.Sandbox.K8sContext != "" {
 		provider, err = sandboxcenter.NewProvider(sandboxcenter.K8sConfig{
-			Context:          cfg.Sandbox.K8sContext,
-			Namespace:        cfg.Sandbox.K8sNamespace,
-			GuardImage:       cfg.Sandbox.GuardImage,
-			RuntimeClassName: cfg.Sandbox.RuntimeClassName,
+			Context:               cfg.Sandbox.K8sContext,
+			Namespace:             cfg.Sandbox.K8sNamespace,
+			GuardImage:            cfg.Sandbox.GuardImage,
+			RuntimeClassName:      cfg.Sandbox.RuntimeClassName,
+			WorkspaceStorageClass: cfg.Sandbox.WorkspaceStorageClass,
+			WorkspaceAccessMode:   cfg.Sandbox.WorkspaceAccessMode,
 		})
 		if err != nil {
 			return nil, err
@@ -135,7 +137,9 @@ func NewWithSandbox(
 	if provider != nil && cfg.Sandbox.CheckpointImage != "" {
 		checkpoints := sandboxcenter.NewService(sandboxStore, provider).
 			WithCheckpoints(sandboxcenter.CheckpointConfig{
-				Image: cfg.Sandbox.CheckpointImage, StoreHostPath: cfg.Sandbox.CheckpointStoreHostPath,
+				Image:         cfg.Sandbox.CheckpointImage,
+				StoreHostPath: cfg.Sandbox.CheckpointStoreHostPath,
+				StorePVC:      cfg.Sandbox.CheckpointStorePVC,
 			})
 		a.routes.sandbox = sandboxcenter.NewController(checkpoints)
 		a.reconciler.WithCheckpoints(checkpoints)

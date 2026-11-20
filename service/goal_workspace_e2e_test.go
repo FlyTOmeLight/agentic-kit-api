@@ -134,11 +134,12 @@ func TestGoalWorkspaceWorkerKubernetesE2E(t *testing.T) {
 			"SANDBOX_E2E_SAVER_IMAGE",
 		),
 		StoreHostPath: os.Getenv("SANDBOX_E2E_CHECKPOINT_HOST_PATH"),
+		StorePVC:      os.Getenv("SANDBOX_E2E_CHECKPOINT_PVC"),
 	}
 	if checkpoints.Image == "" {
 		checkpoints.Image = "agentic-sandbox-saver:v1"
 	}
-	if checkpoints.StoreHostPath == "" {
+	if checkpoints.StoreHostPath == "" && checkpoints.StorePVC == "" {
 		checkpoints.StoreHostPath = "/private/tmp/sandbox-center-checkpoints"
 	}
 	centerStore := sandboxcenter.NewStore(store.DB())
@@ -159,7 +160,10 @@ func TestGoalWorkspaceWorkerKubernetesE2E(t *testing.T) {
 		}
 		for _, sandbox := range sandboxes {
 			for _, resource := range []struct{ kind, name string }{
-				{kind: "pod", name: "saver-" + sandbox.ID}, {kind: "pod", name: "sandbox-" + sandbox.ID}, {kind: "pvc", name: "workspace-" + sandbox.ID},
+				{kind: "pod", name: "saver-" + sandbox.ID},
+				{kind: "pod", name: "verify-" + sandbox.ID},
+				{kind: "pod", name: "sandbox-" + sandbox.ID},
+				{kind: "pvc", name: "workspace-" + sandbox.ID},
 			} {
 				command := exec.CommandContext(
 					cleanup,
@@ -433,7 +437,10 @@ TokenEnv = "SANDBOX_CENTER_TOKEN"
 			t.Fatalf("checkpoint lineage mismatch: %+v", sandbox)
 		}
 		for _, resource := range []struct{ kind, name string }{
-			{kind: "pod", name: "sandbox-" + sandbox.ID}, {kind: "pod", name: "saver-" + sandbox.ID}, {kind: "pvc", name: "workspace-" + sandbox.ID},
+			{kind: "pod", name: "sandbox-" + sandbox.ID},
+			{kind: "pod", name: "saver-" + sandbox.ID},
+			{kind: "pod", name: "verify-" + sandbox.ID},
+			{kind: "pvc", name: "workspace-" + sandbox.ID},
 		} {
 			output, err := exec.CommandContext(
 				ctx,

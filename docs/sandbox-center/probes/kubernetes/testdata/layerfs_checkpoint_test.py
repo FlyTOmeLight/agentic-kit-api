@@ -7,6 +7,7 @@ import stat
 import tarfile
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 import layerfs_checkpoint as checkpoint
@@ -85,6 +86,40 @@ class CheckpointTest(unittest.TestCase):
                 filename.write_bytes(content)
                 self.assert_rejected(result, "digest mismatch")
                 filename.unlink()
+
+    def test_save_attempt_is_exclusive_and_recoverable_without_writer(self):
+        identity = {"sandbox": "sb-1", "generation": 2, "attempt": "attempt"}
+        (self.upper / "marker").write_text("original")
+        self.assertEqual(checkpoint.verify_attempt(self.store, self.base_digest, identity), "absent")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writes = [pool.submit(checkpoint.save_attempt, self.upper, self.store, self.base_digest, identity)
+                      for _ in range(2)]
+        self.assertEqual(sum(result.exception() is None for result in writes), 1)
+        self.assertEqual(sum(isinstance(result.exception(), FileExistsError) for result in writes), 1)
+        original = checkpoint.verify_attempt(self.store, self.base_digest, identity)
+        self.assertTrue(original.startswith("checkpoint: sha256:"))
+        (self.upper / "marker").write_text("changed")
+        with self.assertRaises(FileExistsError):
+            checkpoint.save_attempt(self.upper, self.store, self.base_digest, identity)
+        self.assertEqual(checkpoint.verify_attempt(self.store, self.base_digest, identity), original)
+        with self.assertRaisesRegex(ValueError, "another save attempt"):
+            checkpoint.verify_attempt(self.store, self.base_digest, dict(identity, generation=3))
+
+    def test_save_attempt_rejects_incomplete_or_damaged_objects(self):
+        identity = {"sandbox": "sb-1", "generation": 2, "attempt": "attempt"}
+        self.store.mkdir()
+        self.assertEqual(checkpoint.verify_attempt(self.store, self.base_digest, identity), "incomplete")
+        self.store.rmdir()
+        checkpoint.save_attempt(self.upper, self.store, self.base_digest, identity)
+        result = checkpoint.verify_attempt(self.store, self.base_digest, identity)
+        _, manifest, layer = result.removeprefix("checkpoint: ").split(":")
+        for filename in (self.store / manifest, self.store / layer):
+            with self.subTest(filename=filename):
+                content = filename.read_bytes()
+                filename.write_bytes(bytes((content[0] ^ 1,)) + content[1:])
+                with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                    checkpoint.verify_attempt(self.store, self.base_digest, identity)
+                filename.write_bytes(content)
 
     def test_wrong_base_is_rejected(self):
         self.assert_rejected(self.create(), "base digest mismatch", "sha256:" + "2" * 64)
