@@ -30,9 +30,10 @@ import (
 )
 
 type submissionRecaller struct {
-	query  string
-	filter memory.RecallFilter
-	calls  int
+	query       string
+	filter      memory.RecallFilter
+	calls       int
+	readGranted bool
 }
 
 func TestApplicationActorPrivateRecall(t *testing.T) {
@@ -279,14 +280,16 @@ func TestApplicationActorProjectRecall(t *testing.T) {
 }
 
 func (recaller *submissionRecaller) RecallTx(
-	_ context.Context,
+	ctx context.Context,
 	_ *gorm.DB,
-	_ memory.Scope,
+	scope memory.Scope,
 	_ memory.OutputAudience,
 	_ string,
 	query string,
 	filter memory.RecallFilter,
 ) ([]memory.Entry, error) {
+	request, verified := access.FromContext(ctx)
+	recaller.readGranted = verified && access.HasProjectRead(ctx, scope.Owner, request)
 	recaller.query = query
 	recaller.filter = filter
 	recaller.calls++
@@ -352,6 +355,9 @@ func TestProjectChatRecallChecksSessionAndCurrentGrant(t *testing.T) {
 	}
 	if recaller.calls != 1 {
 		t.Fatalf("recall calls=%d, want 1", recaller.calls)
+	}
+	if !recaller.readGranted {
+		t.Fatalf("recall did not receive the project read grant: %+v", recaller)
 	}
 }
 

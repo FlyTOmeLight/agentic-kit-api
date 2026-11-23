@@ -60,7 +60,7 @@ func (s *Service) SubmitChat(
 	memorySelection memory.Selection,
 	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
-	cmd, prepare, replay, err := s.prepareChat(
+	ctx, cmd, prepare, replay, err := s.prepareChat(
 		ctx, identity, owner, session, key, query, ttl, maxAttempts, memorySelection, filter,
 	)
 	if err != nil || replay != nil {
@@ -77,48 +77,48 @@ func (s *Service) prepareChat(
 	maxAttempts int,
 	memorySelection memory.Selection,
 	filter memory.RecallFilter,
-) (execpkg.SubmitCommand, durable.PrepareSubmission, *execpkg.Run, error) {
+) (context.Context, execpkg.SubmitCommand, durable.PrepareSubmission, *execpkg.Run, error) {
 	var conversation table.Session
 	if memorySelection == memory.SelectionRecall {
 		scope, verified := access.FromContext(ctx)
 		if !verified || scope.TenantID == "" || owner == "" {
-			return execpkg.SubmitCommand{}, nil, nil, memory.ErrForbidden
+			return ctx, execpkg.SubmitCommand{}, nil, nil, memory.ErrForbidden
 		}
 		var err error
 		ctx, err = s.authorizeProjectRecall(ctx, owner, scope)
 		if err != nil {
-			return execpkg.SubmitCommand{}, nil, nil, err
+			return ctx, execpkg.SubmitCommand{}, nil, nil, err
 		}
 		conversation, err = table.GetSession(s.store.DB().WithContext(ctx), owner, session)
 		if err != nil {
-			return execpkg.SubmitCommand{}, nil, nil, recordError(err)
+			return ctx, execpkg.SubmitCommand{}, nil, nil, recordError(err)
 		}
 		if conversation.ProjectID != scope.ProjectID {
-			return execpkg.SubmitCommand{}, nil, nil, memory.ErrForbidden
+			return ctx, execpkg.SubmitCommand{}, nil, nil, memory.ErrForbidden
 		}
 	}
 	hash := chatRequestHash(session, query, memorySelection, filter)
 	if run, err := s.replay(ctx, owner, key, hash); err != nil || run != nil {
-		return execpkg.SubmitCommand{}, nil, run, err
+		return ctx, execpkg.SubmitCommand{}, nil, run, err
 	}
 	db := s.store.DB().WithContext(ctx)
 	if conversation.ID == "" {
 		var err error
 		conversation, err = table.GetSession(db, owner, session)
 		if err != nil {
-			return execpkg.SubmitCommand{}, nil, nil, recordError(err)
+			return ctx, execpkg.SubmitCommand{}, nil, nil, recordError(err)
 		}
 	}
 	agentRow, err := table.GetAgent(db, owner, conversation.AgentID)
 	if err != nil {
-		return execpkg.SubmitCommand{}, nil, nil, recordError(err)
+		return ctx, execpkg.SubmitCommand{}, nil, nil, recordError(err)
 	}
 	if agentRow.PublishedVersion == 0 {
-		return execpkg.SubmitCommand{}, nil, nil, agent.ErrConflict
+		return ctx, execpkg.SubmitCommand{}, nil, nil, agent.ErrConflict
 	}
 	config, err := s.publishedConfig(ctx, identity, agentRow.ID, agentRow.PublishedVersion)
 	if err != nil {
-		return execpkg.SubmitCommand{}, nil, nil, err
+		return ctx, execpkg.SubmitCommand{}, nil, nil, err
 	}
 	cmd := execpkg.SubmitCommand{
 		Owner:        owner,
@@ -134,9 +134,14 @@ func (s *Service) prepareChat(
 	}
 	cmd.PricingSnapshot, err = s.pricing.Freeze(config.Model)
 	if err != nil {
-		return execpkg.SubmitCommand{}, nil, nil, err
+		return ctx, execpkg.SubmitCommand{}, nil, nil, err
 	}
-	return cmd, durable.PrepareChatSubmission(config, agentRow.ID, agentRow.PublishedVersion, s.recaller), nil, nil
+	return ctx, cmd, durable.PrepareChatSubmission(
+		config,
+		agentRow.ID,
+		agentRow.PublishedVersion,
+		s.recaller,
+	), nil, nil
 }
 
 func (s *Service) SubmitApplication(
