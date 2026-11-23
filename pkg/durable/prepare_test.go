@@ -34,10 +34,10 @@ func TestFreezeContextDefaultAndModelWindowBudgets(t *testing.T) {
 	if decodedDefault.Budget.MaxInputBytes != 128*1024 || decodedDefault.Budget.MaxToolResultBytes != 16*1024 {
 		t.Fatalf("unexpected default budget: %+v", decodedDefault.Budget)
 	}
-	if decodedDefault.Policy.Version != contextbuilder.PolicyVersionV3 ||
+	if decodedDefault.Policy.Version != contextbuilder.PolicyVersionV4 ||
+		decodedDefault.Policy.KeepFullToolResults != contextbuilder.DefaultKeepFullToolResults ||
 		decodedDefault.Policy.KeepRecentToolResults != contextbuilder.DefaultKeepRecentToolResults {
-		t.Fatalf("new run policy = %+v, want context-v3 with %d recent results",
-			decodedDefault.Policy, contextbuilder.DefaultKeepRecentToolResults)
+		t.Fatalf("new run policy = %+v, want context-v4 with default keep counts", decodedDefault.Policy)
 	}
 
 	maxTokens := 1000
@@ -64,9 +64,9 @@ func TestFreezeContextDefaultAndModelWindowBudgets(t *testing.T) {
 	}
 	if decodedWindow.Budget.ContextWindow != 5000 ||
 		decodedWindow.Budget.OutputReserve != 1000 ||
-		decodedWindow.Budget.CounterVersion != contextbuilder.ByteEstimateVersion ||
+		decodedWindow.Budget.CounterVersion != contextbuilder.CJKWeightedCounterVersion ||
 		decodedWindow.Budget.ProtocolOverheadTokens != 256 ||
-		decodedWindow.Budget.MaxToolResultBytes != 1000 {
+		decodedWindow.Budget.MaxToolResultBytes != 2000 {
 		t.Fatalf("unexpected model window budget: %+v", decodedWindow.Budget)
 	}
 }
@@ -100,7 +100,7 @@ func TestSubmitBudgetFailureLeavesNoRunOrMessages(t *testing.T) {
 		"owner",
 		session.ID,
 		"budget-key",
-		strings.Repeat("large", 300),
+		strings.Repeat("large", 600),
 		time.Hour,
 		3,
 		cfg,
@@ -133,11 +133,11 @@ func TestHistoryToolIDsAreScopedByRun(t *testing.T) {
 		{Role: "tool", ToolCallID: "turn_1_tool_0", Content: "result"},
 		{Role: "assistant", Content: "answer"},
 	}
-	first, ok := completeHistoryGroup("first", messages)
+	first, ok := completeHistoryGroup("first", messages, false)
 	if !ok {
 		t.Fatal("first group rejected")
 	}
-	second, ok := completeHistoryGroup("second", messages)
+	second, ok := completeHistoryGroup("second", messages, false)
 	if !ok {
 		t.Fatal("second group rejected")
 	}
@@ -155,7 +155,7 @@ func TestHistoryToolIDsAreScopedByRun(t *testing.T) {
 			},
 			{Role: contextbuilder.RoleTool, ToolCallID: "turn_1_tool_0", Content: "current result"},
 		},
-		Policy: contextbuilder.Policy{Version: contextbuilder.PolicyVersionV2},
+		Policy: contextbuilder.Policy{Version: contextbuilder.PolicyVersionV4},
 	})
 	if err != nil {
 		t.Fatalf("repeated step IDs across turns: %v", err)

@@ -7,16 +7,18 @@ import (
 )
 
 type Session struct {
-	ID         string    `gorm:"type:text;primaryKey;not null"`
-	TenantID   string    `gorm:"type:text;not null;index:session_owner,priority:1"`
-	ProjectID  string    `gorm:"type:text;not null"`
-	OwnerID    string    `gorm:"type:text;not null;index:session_owner,priority:2"`
-	AgentID    string    `gorm:"type:text;not null;index"`
-	Title      string    `gorm:"type:text;not null"`
-	MessageSeq int64     `gorm:"not null;default:0"`
-	CreatedAt  time.Time `gorm:"not null"`
-	UpdatedAt  time.Time `gorm:"not null"`
-	Agent      *Agent    `gorm:"foreignKey:AgentID;references:ID"`
+	ID                  string    `gorm:"type:text;primaryKey;not null"`
+	TenantID            string    `gorm:"type:text;not null;index:session_owner,priority:1"`
+	ProjectID           string    `gorm:"type:text;not null"`
+	OwnerID             string    `gorm:"type:text;not null;index:session_owner,priority:2"`
+	AgentID             string    `gorm:"type:text;not null;index"`
+	Title               string    `gorm:"type:text;not null"`
+	MessageSeq          int64     `gorm:"not null;default:0"`
+	CompactedSummary    string    `gorm:"type:text;not null;default:''"`
+	CompactedThroughSeq int64     `gorm:"type:bigint;not null;default:0"`
+	CreatedAt           time.Time `gorm:"not null"`
+	UpdatedAt           time.Time `gorm:"not null"`
+	Agent               *Agent    `gorm:"foreignKey:AgentID;references:ID"`
 }
 
 func (Session) TableName() string { return "agent_session" }

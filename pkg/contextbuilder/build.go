@@ -2,18 +2,13 @@ package contextbuilder
 
 import "sort"
 
-// Build selects complete history groups and whole memory entries under the
-// frozen policy and budget. Required input is the system instruction, tool
-// definitions and protocol overhead, and the current turn. Under context-v3,
-// when reduction is still needed after history is exhausted, older current-turn
-// tool results are projected while the newest KeepRecentToolResults stay full.
+// Build composes model input from frozen materials and the current turn,
+// reducing it toward the requested target before checking the hard limits.
 func Build(in BuildInput) (BuildResult, error) {
-	switch in.Policy.Version {
-	case PolicyVersionV1, PolicyVersionV2, PolicyVersionV3:
-	default:
+	if in.Policy.Version != PolicyVersionV4 {
 		return BuildResult{}, ErrUnsupportedPolicy
 	}
-	if in.Policy.KeepRecentToolResults < 0 {
+	if in.Policy.KeepFullToolResults < 0 || in.Policy.KeepRecentToolResults < 0 {
 		return BuildResult{}, ErrInvalidInput
 	}
 	if err := validateBudget(in.Budget); err != nil {
@@ -22,9 +17,10 @@ func Build(in BuildInput) (BuildResult, error) {
 	if len(in.CurrentTurn) == 0 {
 		return BuildResult{}, ErrInvalidInput
 	}
-	tokenLimit := in.Budget.InputTokenLimit()
-	byteLimit := in.Budget.InputByteLimit()
-	if tokenLimit > 0 {
+	tokenLimit, byteLimit := in.Budget.InputTokenLimit(), in.Budget.InputByteLimit()
+	tokenTarget := minPositive(tokenLimit, in.TargetInputTokens)
+	byteTarget := minPositive(byteLimit, in.TargetInputBytes)
+	if tokenTarget > 0 {
 		if in.Counter == nil {
 			return BuildResult{}, ErrCounterRequired
 		}
@@ -32,160 +28,158 @@ func Build(in BuildInput) (BuildResult, error) {
 			return BuildResult{}, ErrCounterVersionRequired
 		}
 	}
+	overTarget := func(m measurement) bool { return overBudget(m, tokenTarget, byteTarget) }
 
+	materials := in.FrozenMaterials
+	summary := materials.BaseSummary
+	if in.CompactedSummary != "" {
+		summary = in.CompactedSummary
+		materials.History = nil
+	}
+	preamble := renderContext(summary, in.PinnedBlocks)
 	seenCalls := make(map[string]bool)
-	if err := validateMaterials(in.FrozenMaterials, seenCalls); err != nil {
+	if err := validateMaterials(materials, seenCalls); err != nil {
 		return BuildResult{}, err
 	}
-	if err := validateTurn(in.CurrentTurn, seenCalls); err != nil {
-		return BuildResult{}, err
-	}
-
-	history := append([]MessageGroup(nil), in.FrozenMaterials.History...)
-	historyMeasures := make([]measurement, len(history))
-	for i, group := range history {
-		history[i].Messages = previewToolMessages(group.Messages, in.Budget.MaxToolResultBytes)
-		for _, message := range history[i].Messages {
-			historyMeasures[i].add(measureText(in.Counter, messageText(message)))
+	originalTurn := append([]Message(nil), in.CurrentTurn...)
+	for _, steer := range in.Steers {
+		if steer != "" {
+			originalTurn = append(originalTurn, Message{Role: RoleUser, Content: steer})
 		}
 	}
+	if err := validateTurn(originalTurn, seenCalls); err != nil {
+		return BuildResult{}, err
+	}
+	currentTurn := previewToolMessages(appendMessages(nil, originalTurn), in.Budget.MaxToolResultBytes)
 
-	memory := append([]ContextBlock(nil), in.FrozenMaterials.Memory...)
+	memory := append([]ContextBlock(nil), materials.Memory...)
 	sort.SliceStable(memory, func(i, j int) bool {
 		if memory[i].Priority != memory[j].Priority {
 			return memory[i].Priority > memory[j].Priority
 		}
 		return memory[i].Source.ID < memory[j].Source.ID
 	})
-
-	var toolsMeasure measurement
-	for _, tool := range in.FrozenMaterials.Tools {
-		toolsMeasure.add(measureText(in.Counter, toolText(tool)))
-	}
-
-	var currentMeasure measurement
-	currentTurn := previewToolMessages(in.CurrentTurn, in.Budget.MaxToolResultBytes)
-	for _, message := range currentTurn {
-		currentMeasure.add(measureText(in.Counter, messageText(message)))
-	}
-	var foldedTurn []Message
-	var foldedMeasure measurement
-	projectedCount := 0
-	if in.Policy.Version == PolicyVersionV3 {
-		keep := in.Policy.KeepRecentToolResults
-		if keep == 0 {
-			keep = DefaultKeepRecentToolResults
-		}
-		foldedTurn, projectedCount = projectToolResults(currentTurn, keep)
-		for _, message := range foldedTurn {
-			foldedMeasure.add(measureText(in.Counter, messageText(message)))
-		}
-	}
-
-	systemMeasure := measureText(in.Counter, renderSystem(in.FrozenMaterials.SystemInstruction, memory))
-	required := measurement{tokens: in.Budget.ProtocolOverheadTokens}
-	required.add(measureText(in.Counter, renderSystem(in.FrozenMaterials.SystemInstruction, nil)))
-	required.add(toolsMeasure)
-	required.add(currentMeasure)
-	if overBudget(required, tokenLimit, byteLimit) {
-		if projectedCount == 0 {
-			return BuildResult{}, exceeded(required, tokenLimit, byteLimit)
-		}
-		required.sub(currentMeasure)
-		required.add(foldedMeasure)
-		if overBudget(required, tokenLimit, byteLimit) {
-			return BuildResult{}, exceeded(required, tokenLimit, byteLimit)
-		}
-	}
+	system := renderSystem(materials.SystemInstruction, memory)
+	systemMeasure := measureText(in.Counter, system)
 
 	total := measurement{tokens: in.Budget.ProtocolOverheadTokens}
+	for _, tool := range materials.Tools {
+		total.add(measureText(in.Counter, toolText(tool)))
+	}
+	if preamble.Content != "" {
+		total.add(measureText(in.Counter, messageText(preamble)))
+	}
+	total.add(measureMessages(in.Counter, currentTurn))
 	total.add(systemMeasure)
-	total.add(toolsMeasure)
-	total.add(currentMeasure)
-	for _, measure := range historyMeasures {
-		total.add(measure)
+
+	history := append([]MessageGroup(nil), materials.History...)
+	historyMeasures := make([]measurement, len(history))
+	for i := range history {
+		history[i].Messages = previewToolMessages(history[i].Messages, in.Budget.MaxToolResultBytes)
+		historyMeasures[i] = measureMessages(in.Counter, history[i].Messages)
+		total.add(historyMeasures[i])
 	}
 
-	omitted := make([]OmittedSource, 0)
-	collapsed := make([]bool, len(history))
-	for overBudget(total, tokenLimit, byteLimit) && len(memory) > 0 {
+	var result BuildResult
+	for overTarget(total) && len(memory) > 0 {
 		removed := memory[len(memory)-1]
 		memory = memory[:len(memory)-1]
 		total.sub(systemMeasure)
-		systemMeasure = measureText(in.Counter, renderSystem(in.FrozenMaterials.SystemInstruction, memory))
+		system = renderSystem(materials.SystemInstruction, memory)
+		systemMeasure = measureText(in.Counter, system)
 		total.add(systemMeasure)
-		omitted = append(omitted, OmittedSource{Source: removed.Source, Reason: OmitBudget})
+		result.OmittedSources = append(
+			result.OmittedSources,
+			OmittedSource{Source: removed.Source, Reason: OmitBudget},
+		)
 	}
-	if in.Policy.Version == PolicyVersionV2 || in.Policy.Version == PolicyVersionV3 {
-		for index := range history {
-			if !overBudget(total, tokenLimit, byteLimit) {
-				break
-			}
-			messages := collapseHistory(history[index].Messages)
-			if messages == nil {
-				continue
-			}
-			var reduced measurement
-			for _, message := range messages {
-				reduced.add(measureText(in.Counter, messageText(message)))
-			}
-			total.sub(historyMeasures[index])
-			total.add(reduced)
-			history[index].Messages = messages
-			historyMeasures[index] = reduced
-			collapsed[index] = true
+
+	collapsed := make([]bool, len(history))
+	for i := range history {
+		if !overTarget(total) {
+			break
 		}
+		messages := collapseHistory(history[i].Messages)
+		if messages == nil {
+			continue
+		}
+		total.sub(historyMeasures[i])
+		history[i].Messages = messages
+		historyMeasures[i] = measureMessages(in.Counter, messages)
+		total.add(historyMeasures[i])
+		collapsed[i] = true
 	}
-	for overBudget(total, tokenLimit, byteLimit) && len(history) > 0 {
-		removed := history[0]
-		history = history[1:]
+	for overTarget(total) && len(history) > 0 {
+		result.OmittedSources = append(
+			result.OmittedSources,
+			OmittedSource{Source: history[0].Source, Reason: OmitBudget},
+		)
 		total.sub(historyMeasures[0])
+		history = history[1:]
 		historyMeasures = historyMeasures[1:]
 		collapsed = collapsed[1:]
-		omitted = append(omitted, OmittedSource{Source: removed.Source, Reason: OmitBudget})
 	}
-	appliedProjected := 0
-	if in.Policy.Version == PolicyVersionV3 && projectedCount > 0 &&
-		overBudget(total, tokenLimit, byteLimit) {
-		total.sub(currentMeasure)
-		total.add(foldedMeasure)
-		currentTurn = foldedTurn
-		currentMeasure = foldedMeasure
-		appliedProjected = projectedCount
+	result.LadderPreviewed, result.LadderStubbed = applyLadder(currentTurn, originalTurn, in, &total, overTarget)
+	result.ProjectedToolResults = result.LadderStubbed
+	if in.AllowDropCurrentRounds && overTarget(total) {
+		var droppedInitialQuery string
+		currentTurn, result.DroppedRounds, droppedInitialQuery = dropOldestRounds(
+			currentTurn,
+			in.Counter,
+			&total,
+			overTarget,
+		)
+		if droppedInitialQuery != "" && !hasPinnedQuery(in.PinnedBlocks, droppedInitialQuery) {
+			if preamble.Content != "" {
+				total.sub(measureText(in.Counter, messageText(preamble)))
+			}
+			pinned := append(append([]PinnedBlock(nil), in.PinnedBlocks...), PinnedBlock{
+				Label:   "query",
+				Content: droppedInitialQuery,
+			})
+			preamble = renderContext(summary, pinned)
+			total.add(measureText(in.Counter, messageText(preamble)))
+			if overTarget(total) {
+				var moreDropped int
+				currentTurn, moreDropped, _ = dropOldestRounds(
+					currentTurn,
+					in.Counter,
+					&total,
+					overTarget,
+				)
+				result.DroppedRounds += moreDropped
+			}
+		}
 	}
 	if overBudget(total, tokenLimit, byteLimit) {
 		return BuildResult{}, exceeded(total, tokenLimit, byteLimit)
 	}
 
-	messages := make([]Message, 0, 1+len(in.CurrentTurn))
-	var collapsedSources []Source
-	for index, group := range history {
-		messages = appendMessages(messages, group.Messages)
-		if collapsed[index] {
-			collapsedSources = append(collapsedSources, group.Source)
+	if system != "" {
+		result.Messages = append(result.Messages, Message{Role: RoleSystem, Content: system})
+	}
+	if summary != "" {
+		result.Messages = append(result.Messages, preamble)
+	}
+	for i, group := range history {
+		result.Messages = appendMessages(result.Messages, group.Messages)
+		if collapsed[i] {
+			result.CollapsedSources = append(result.CollapsedSources, group.Source)
 		}
 	}
-	messages = appendMessages(messages, currentTurn)
-	if in.FrozenMaterials.SystemInstruction != "" || len(memory) > 0 {
-		messages = append([]Message{{
-			Role:    RoleSystem,
-			Content: renderSystem(in.FrozenMaterials.SystemInstruction, memory),
-		}}, messages...)
+	if summary == "" && preamble.Content != "" {
+		result.Messages = append(result.Messages, preamble)
 	}
-
-	return BuildResult{
-		Messages: messages,
-		Usage: Usage{
-			InputTokens:   total.tokens,
-			InputBytes:    total.bytes,
-			TokenLimit:    tokenLimit,
-			ByteLimit:     byteLimit,
-			OutputReserve: in.Budget.OutputReserve,
-		},
-		OmittedSources:       omitted,
-		CollapsedSources:     collapsedSources,
-		ProjectedToolResults: appliedProjected,
-	}, nil
+	result.Messages = append(result.Messages, currentTurn...)
+	result.Usage = Usage{
+		InputTokens:   total.tokens,
+		InputBytes:    total.bytes,
+		TokenLimit:    tokenLimit,
+		ByteLimit:     byteLimit,
+		OutputReserve: in.Budget.OutputReserve,
+	}
+	result.TargetMet = !overTarget(total)
+	return result, nil
 }
 
 func collapseHistory(messages []Message) []Message {

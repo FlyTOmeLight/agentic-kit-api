@@ -61,7 +61,7 @@ func TestBuildTrimsOldestCompleteGroup(t *testing.T) {
 			History:           []MessageGroup{first, second, third},
 		},
 		CurrentTurn: []Message{{Role: RoleUser, Content: "question four"}},
-		Policy:      Policy{Version: PolicyVersionV1},
+		Policy:      Policy{Version: PolicyVersionV4},
 		Budget:      Budget{CounterVersion: "test-v1"},
 		Counter:     byteTokenCounter{},
 	}
@@ -104,7 +104,7 @@ func TestBuildTrimsLowestPriorityMemoryFirst(t *testing.T) {
 			Memory:            []ContextBlock{low, high},
 		},
 		CurrentTurn: []Message{{Role: RoleUser, Content: "question"}},
-		Policy:      Policy{Version: PolicyVersionV1},
+		Policy:      Policy{Version: PolicyVersionV4},
 		Budget:      Budget{CounterVersion: "test-v1"},
 		Counter:     byteTokenCounter{},
 	}
@@ -138,7 +138,7 @@ func TestBuildRejectsRequiredInputOverBudget(t *testing.T) {
 			}},
 		},
 		CurrentTurn: []Message{{Role: RoleUser, Content: "question"}},
-		Policy:      Policy{Version: PolicyVersionV1},
+		Policy:      Policy{Version: PolicyVersionV4},
 		Budget:      Budget{CounterVersion: "test-v1"},
 		Counter:     byteTokenCounter{},
 	}
@@ -185,7 +185,7 @@ func TestBuildRejectsIncompleteToolPairing(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			in := BuildInput{
 				CurrentTurn: test.messages,
-				Policy:      Policy{Version: PolicyVersionV1},
+				Policy:      Policy{Version: PolicyVersionV4},
 				Budget:      Budget{CounterVersion: "test-v1"},
 				Counter:     byteTokenCounter{},
 			}
@@ -198,7 +198,7 @@ func TestBuildRejectsIncompleteToolPairing(t *testing.T) {
 
 func TestBuildRejectsEmptyCurrentTurn(t *testing.T) {
 	in := BuildInput{
-		Policy: Policy{Version: PolicyVersionV1},
+		Policy: Policy{Version: PolicyVersionV4},
 	}
 	if _, err := Build(in); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("error %v, want ErrInvalidInput", err)
@@ -217,7 +217,7 @@ func TestBuildRejectsDuplicateToolCallIDs(t *testing.T) {
 			History: []MessageGroup{group("run-1"), group("run-2")},
 		},
 		CurrentTurn: []Message{{Role: RoleUser, Content: "question"}},
-		Policy:      Policy{Version: PolicyVersionV1},
+		Policy:      Policy{Version: PolicyVersionV4},
 		Budget:      Budget{CounterVersion: "test-v1"},
 		Counter:     byteTokenCounter{},
 	}
@@ -237,7 +237,7 @@ func TestBuildDoesNotMutateInputs(t *testing.T) {
 	in := BuildInput{
 		FrozenMaterials: FrozenMaterials{Memory: []ContextBlock{low, high}, History: []MessageGroup{group}},
 		CurrentTurn:     []Message{{Role: RoleUser, Content: "next"}},
-		Policy:          Policy{Version: PolicyVersionV1},
+		Policy:          Policy{Version: PolicyVersionV4},
 		Budget:          Budget{CounterVersion: "test-v1"},
 		Counter:         byteTokenCounter{},
 	}
@@ -279,7 +279,7 @@ func TestBuildHonorsByteLimitWithoutTokenCounter(t *testing.T) {
 	in := BuildInput{
 		FrozenMaterials: FrozenMaterials{SystemInstruction: "system", History: []MessageGroup{first, second}},
 		CurrentTurn:     []Message{{Role: RoleUser, Content: "next"}},
-		Policy:          Policy{Version: PolicyVersionV1},
+		Policy:          Policy{Version: PolicyVersionV4},
 	}
 	all := mustBuild(t, in)
 	in.Budget.MaxInputBytes = all.Usage.InputBytes - messagesMeasure(first.Messages).bytes
@@ -296,7 +296,7 @@ func TestBuildHonorsByteLimitWithoutTokenCounter(t *testing.T) {
 func TestBuildCounterRequirements(t *testing.T) {
 	base := BuildInput{
 		CurrentTurn: []Message{{Role: RoleUser, Content: "question"}},
-		Policy:      Policy{Version: PolicyVersionV1},
+		Policy:      Policy{Version: PolicyVersionV4},
 		Budget:      Budget{MaxInputTokens: 100},
 	}
 	if _, err := Build(base); !errors.Is(err, ErrCounterRequired) {
@@ -334,7 +334,7 @@ func TestBuildIsDeterministic(t *testing.T) {
 			History:           []MessageGroup{group},
 		},
 		CurrentTurn: []Message{{Role: RoleUser, Content: "next"}},
-		Policy:      Policy{Version: PolicyVersionV1},
+		Policy:      Policy{Version: PolicyVersionV4},
 		Budget:      Budget{MaxInputTokens: 200, CounterVersion: "test-v1"},
 		Counter:     byteTokenCounter{},
 	}
@@ -364,11 +364,11 @@ func TestBuildPreviewsOversizedToolResults(t *testing.T) {
 			History:           []MessageGroup{historyTurn},
 		},
 		CurrentTurn: currentTurn,
-		Policy:      Policy{Version: PolicyVersionV1},
+		Policy:      Policy{Version: PolicyVersionV4},
 		Budget: Budget{
 			MaxInputTokens:     900,
 			MaxToolResultBytes: 200,
-			CounterVersion:     ByteEstimateVersion,
+			CounterVersion:     CJKWeightedCounterVersion,
 		},
 		Counter: byteTokenCounter{},
 	}
@@ -399,19 +399,5 @@ func TestBuildPreviewsOversizedToolResults(t *testing.T) {
 	}
 	if historyTurn.Messages[2].Content != largeOutput || currentTurn[2].Content != largeOutput {
 		t.Fatal("previewToolMessages mutated input slices")
-	}
-}
-
-func TestResolveCounter(t *testing.T) {
-	c, err := ResolveCounter("")
-	if err != nil || c != nil {
-		t.Fatalf("empty counter version: got (%v, %v), want (nil, nil)", c, err)
-	}
-	c, err = ResolveCounter(ByteEstimateVersion)
-	if err != nil || c == nil || c.Count("hello") != 5 {
-		t.Fatalf("ByteEstimateVersion: got (%v, %v)", c, err)
-	}
-	if _, err := ResolveCounter("unknown-v1"); !errors.Is(err, ErrUnsupportedCounter) {
-		t.Fatalf("unknown counter version: got %v, want ErrUnsupportedCounter", err)
 	}
 }

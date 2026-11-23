@@ -55,7 +55,7 @@ func TestBuildRejectsInvalidBudget(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			in := BuildInput{
 				CurrentTurn: []Message{{Role: RoleUser, Content: "question"}},
-				Policy:      Policy{Version: PolicyVersionV1},
+				Policy:      Policy{Version: PolicyVersionV4},
 				Budget:      test.budget,
 			}
 			if _, err := Build(in); !errors.Is(err, ErrInvalidBudget) {

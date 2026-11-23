@@ -123,3 +123,40 @@ func renderSystem(instruction string, memory []ContextBlock) string {
 	}
 	return b.String()
 }
+
+func minPositive(limit, target int64) int64 {
+	if target > 0 && (limit == 0 || target < limit) {
+		return target
+	}
+	return limit
+}
+
+func measureMessages(counter Counter, messages []Message) measurement {
+	var total measurement
+	for _, message := range messages {
+		total.add(measureText(counter, messageText(message)))
+	}
+	return total
+}
+
+func renderContext(summary string, pinned []PinnedBlock) Message {
+	if summary == "" && len(pinned) == 0 {
+		return Message{}
+	}
+	var b strings.Builder
+	b.WriteString("[Conversation context]\n")
+	if summary != "" {
+		b.WriteString("[Summary]\n")
+		b.WriteString(summary)
+		b.WriteString("\n[/Summary]\n")
+	}
+	for _, block := range pinned {
+		b.WriteString("[Pinned label=")
+		b.WriteString(strconv.Quote(block.Label))
+		b.WriteString("]\n")
+		b.WriteString(block.Content)
+		b.WriteString("\n[/Pinned]\n")
+	}
+	b.WriteString("[/Conversation context]")
+	return Message{Role: RoleUser, Content: b.String()}
+}

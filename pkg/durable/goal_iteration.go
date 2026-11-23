@@ -146,7 +146,7 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 	if err = tx.Where("goal_id = ? AND run_id = ?", goal.ID, previous.ID).Take(&receipt).Error; err != nil {
 		return nil, err
 	}
-	history, err := loadConversationHistory(tx, goal.OwnerID, goal.SessionID)
+	history, baseSummary, err := loadConversationHistory(tx, goal.OwnerID, goal.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 		receipt.Output,
 	)
 	spec.History = nil
-	snapshot, err := freezeContextWithoutRecall(spec, history, memory.SelectionOff)
+	snapshot, err := freezeContextMaterials(spec, history, baseSummary, memory.SelectionOff, nil)
 	if err != nil {
 		return nil, err
 	}

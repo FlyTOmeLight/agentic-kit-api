@@ -58,12 +58,12 @@ func PrepareChatSubmission(
 		}
 		spec := execution.CompileRunSpec(config, agentID, version, facts.Query, nil, nil)
 		spec.PricingSnapshot = facts.PricingSnapshot
-		history, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
+		history, baseSummary, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
 		if err != nil {
 			return execution.PreparedSubmission{}, err
 		}
 		spec.History = legacyHistory(history)
-		snapshot, err := freezeContext(ctx, tx, recaller, facts, spec, history)
+		snapshot, err := freezeContext(ctx, tx, recaller, facts, spec, history, baseSummary)
 		if err != nil {
 			return execution.PreparedSubmission{}, err
 		}
@@ -108,12 +108,12 @@ func PrepareApplicationSubmission(
 		} else if spec.Filesystem != nil {
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
-		history, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
+		history, baseSummary, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
 		if err != nil {
 			return execution.PreparedSubmission{}, err
 		}
 		spec.History = legacyHistory(history)
-		snapshot, err := freezeContext(ctx, tx, recaller, facts, spec, history)
+		snapshot, err := freezeContext(ctx, tx, recaller, facts, spec, history, baseSummary)
 		if err != nil {
 			return execution.PreparedSubmission{}, err
 		}
@@ -128,29 +128,45 @@ func PrepareApplicationSubmission(
 // loadConversationHistory returns complete stored turns oldest first. A Run is
 // one turn: its User message, assistant decisions and paired tool results stay
 // together. Incomplete turns are omitted rather than injecting orphan calls.
-func loadConversationHistory(tx *gorm.DB, owner, session string) ([]contextbuilder.MessageGroup, error) {
+func loadConversationHistory(tx *gorm.DB, owner, session string) ([]contextbuilder.MessageGroup, string, error) {
+	var sessionRow table.Session
+	ctx := tx.Statement.Context
+	if err := table.TenantQuery(ctx, tx).
+		Select("compacted_summary", "compacted_through_seq").
+		Where("id = ? AND owner_id = ?", session, owner).
+		Take(&sessionRow).Error; err != nil {
+		return nil, "", recordError(err)
+	}
+
 	var runs []table.Run
-	if err := table.TenantQuery(tx.Statement.Context, tx).Model(&table.Run{}).
+	if err := table.TenantQuery(ctx, tx).Model(&table.Run{}).
 		Select("id").
 		Where("owner_id = ? AND session_id = ?", owner, session).
 		Order("created_at, id").
 		Find(&runs).
 		Error; err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if len(runs) == 0 {
-		return nil, nil
+		return nil, sessionRow.CompactedSummary, nil
 	}
 	ids := make([]string, len(runs))
 	for i := range runs {
 		ids[i] = runs[i].ID
 	}
 	var stored []table.Message
-	if err := tx.Where("session_id = ? AND run_id IN ?", session, ids).
+	if err := tx.Where("session_id = ? AND run_id IN ? AND seq > ?", session, ids, sessionRow.CompactedThroughSeq).
 		Order("seq").
 		Find(&stored).
 		Error; err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	var boundaryRun string
+	if sessionRow.CompactedThroughSeq > 0 && len(stored) > 0 &&
+		stored[0].Seq == sessionRow.CompactedThroughSeq+1 {
+		// CompactRun keeps an assistant boundary, including the final answer
+		// appended at completion when the earlier turn was fully compacted.
+		boundaryRun = stored[0].RunID
 	}
 	byRun := make(map[string][]execution.Message, len(runs))
 	for _, message := range stored {
@@ -158,15 +174,23 @@ func loadConversationHistory(tx *gorm.DB, owner, session string) ([]contextbuild
 	}
 	groups := make([]contextbuilder.MessageGroup, 0, len(runs))
 	for _, run := range runs {
-		if group, ok := completeHistoryGroup(run.ID, byRun[run.ID]); ok {
+		if group, ok := completeHistoryGroup(run.ID, byRun[run.ID], run.ID == boundaryRun); ok {
 			groups = append(groups, group)
 		}
 	}
-	return groups, nil
+	return groups, sessionRow.CompactedSummary, nil
 }
 
-func completeHistoryGroup(runID string, messages []execution.Message) (contextbuilder.MessageGroup, bool) {
-	if len(messages) == 0 || messages[0].Role != "user" {
+func completeHistoryGroup(
+	runID string,
+	messages []execution.Message,
+	allowAssistantStart bool,
+) (contextbuilder.MessageGroup, bool) {
+	if len(messages) == 0 {
+		return contextbuilder.MessageGroup{}, false
+	}
+	role := messages[0].Role
+	if role != "user" && !(allowAssistantStart && role == "assistant") {
 		return contextbuilder.MessageGroup{}, false
 	}
 	group := contextbuilder.MessageGroup{
@@ -240,7 +264,7 @@ func freezeContextWithoutRecall(
 	history []contextbuilder.MessageGroup,
 	selection memory.Selection,
 ) (execution.ContextSnapshot, error) {
-	return freezeContextMaterials(spec, history, selection, nil)
+	return freezeContextMaterials(spec, history, "", selection, nil)
 }
 
 func freezeContext(
@@ -250,12 +274,13 @@ func freezeContext(
 	facts execution.SubmissionFacts,
 	spec execution.Spec,
 	history []contextbuilder.MessageGroup,
+	baseSummary string,
 ) (execution.ContextSnapshot, error) {
 	materials, err := recallMaterials(ctx, tx, recaller, facts)
 	if err != nil {
 		return execution.ContextSnapshot{}, err
 	}
-	return freezeContextMaterials(spec, history, facts.Memory, materials)
+	return freezeContextMaterials(spec, history, baseSummary, facts.Memory, materials)
 }
 
 // recallMaterials reads the active projection for a Recall submission inside
@@ -360,6 +385,7 @@ func memoryPriority(kind memory.Kind) int {
 func freezeContextMaterials(
 	spec execution.Spec,
 	history []contextbuilder.MessageGroup,
+	baseSummary string,
 	selection memory.Selection,
 	materials []contextbuilder.ContextBlock,
 ) (execution.ContextSnapshot, error) {
@@ -372,19 +398,21 @@ func freezeContextMaterials(
 		budget.OutputReserve = int64(*spec.Model.MaxTokens)
 		budget.MaxInputBytes = 0
 		budget.ProtocolOverheadTokens = 256
-		budget.CounterVersion = contextbuilder.ByteEstimateVersion
-		budget.MaxToolResultBytes = max(128, min(budget.MaxToolResultBytes, budget.InputTokenLimit()/4))
+		budget.CounterVersion = contextbuilder.CJKWeightedCounterVersion
+		budget.MaxToolResultBytes = max(128, min(budget.MaxToolResultBytes, budget.InputTokenLimit()/2))
 	}
 	snapshot := contextbuilder.Snapshot{
 		MemoryMode: memoryModeFromSelection(selection, materials),
 		Materials: contextbuilder.FrozenMaterials{
 			SystemInstruction: spec.SystemPrompt,
+			BaseSummary:       baseSummary,
 			Tools:             contextTools(spec.Tools),
 			Memory:            materials,
 			History:           history,
 		},
 		Policy: contextbuilder.Policy{
-			Version:               contextbuilder.PolicyVersionV3,
+			Version:               contextbuilder.PolicyVersionV4,
+			KeepFullToolResults:   contextbuilder.DefaultKeepFullToolResults,
 			KeepRecentToolResults: contextbuilder.DefaultKeepRecentToolResults,
 		},
 		Budget: budget,

@@ -2,7 +2,7 @@
 
 状态：部分实施，2026-11-17 按当前工作树更新。本地人工 Memory、召回冻结和上下文构建已有实现，本次新增可选 artifact 归档与后台 Pending 恢复；完整访问模型、目录重组及下文其余目标尚未全部落地。范围和决策见第14节，第10节仍为目标文件地图；当前行为以代码、[HTTP契约](api.md)、[恢复设计](design.md)和[布局约束](layout.md)为准。
 
-当前进度：`pkg/contextbuilder` 已实现完整消息组、预算预检、工具结果预览、历史裁剪和 `context-v3` 当前轮工具结果投影；模型窗口与输出预留随 Run 冻结，配套 worker 每轮调用模型前执行 `Build`。本地 OwnerPrivate 人工创建、读取、纠正、停用、显式 Restore、版本历史查询和 `RecallTx` 已有，显式 Recall 在接受事务内冻结完整材料。artifact 归档使用 artifact-go `v0.5.0`、server-go `v0.13.0`，通过持久回执连接远端发布与本地 CAS 生效；配置归档时 API 后台会继续未完成的 Create/Update/Restore。本地真实 artifact HTTP 服务与 PostgreSQL 已完成认证、隔离和代理故障恢复联调；外部部署验收和自动提炼尚未完成，详见 [Memory设计](memory-design.md)。
+当前进度：`pkg/contextbuilder` 已实现完整消息组、预算预检、工具结果预览、历史裁剪和 `context-v4` 工具结果压缩/整轮淘汰；模型窗口与输出预留随 Run 冻结，配套 worker 每轮调用模型前执行 `Build`。本地 OwnerPrivate 人工创建、读取、纠正、停用、显式 Restore、版本历史查询和 `RecallTx` 已有，显式 Recall 在接受事务内冻结完整材料。artifact 归档使用 artifact-go `v0.5.0`、server-go `v0.13.0`，通过持久回执连接远端发布与本地 CAS 生效；配置归档时 API 后台会继续未完成的 Create/Update/Restore。本地真实 artifact HTTP 服务与 PostgreSQL 已完成认证、隔离和代理故障恢复联调；外部部署验收和自动提炼尚未完成，详见 [Memory设计](memory-design.md)。
 
 原始设计基线：2026-10-14 的工作树，Go 1.27.1、server-go v0.9.0。下文保留当时的目标结构与问题分析；当前依赖及实现状态以上述进度和代码为准，不把本地框架 main 的接口当作发布版能力。
 
@@ -253,7 +253,7 @@ func Build(in BuildInput) (BuildResult, error)
 // BuildResult: Messages、Usage、OmittedSources、CollapsedSources；消息含role和tool call关联。
 ```
 
-当前实现范围：`pkg/contextbuilder`提供`Build`、`ValidateGroup`、`EncodeSnapshot`和`DecodeSnapshot`；`pkg/durable/prepare.go`按Run聚合完整历史组，把系统指令、工具定义、历史组、策略与预算编码进`ContextSnapshot`，并与Run、User消息和事件同事务提交。`Spec.History`保持旧的User/Final扁平视图，工具链保存在快照中。接受前已做预算预检；配套worker每次调用模型前使用构建器，按实际工具schema计数。新Run冻结`context-v3`；历史`context-v1`、`context-v2`快照仍可执行，保留各自旧裁剪顺序。Memory默认Off，显式Recall通过注入的`RecallTx`在接受事务内查询本地生效投影并冻结。worker正式依赖已固定到含`context-v3`的API提交。
+当前实现范围：`pkg/contextbuilder`提供`Build`、`ValidateGroup`、`EncodeSnapshot`和`DecodeSnapshot`；`pkg/durable/prepare.go`按Run聚合完整历史组，把系统指令、工具定义、历史组、策略与预算编码进`ContextSnapshot`，并与Run、User消息和事件同事务提交。`Spec.History`保持旧的User/Final扁平视图，工具链保存在快照中。接受前已做预算预检；配套worker每次调用模型前使用构建器，按实际工具schema计数。新Run冻结`context-v4`，构建器和快照编码、解码统一使用该策略版本。Memory默认Off，显式Recall通过注入的`RecallTx`在接受事务内查询本地生效投影并冻结。
 
 执行核心在durable/context.go中保存带格式/策略版本及digest的ContextSnapshot信封，payload由上下文模块编码与解释；durable不导入Memory或builder实现。Run与快照同事务提交，回放读取原记录。Memory、context_builder、execution之间不双向导入；类型转换集中在准备编排和worker adapter，后续更换检索或构建策略不重写租约、步骤和状态协议。
 
@@ -261,15 +261,13 @@ func Build(in BuildInput) (BuildResult, error)
 
 启用Memory但没有匹配项时保存明确的空快照；召回失败使整次接受事务失败，不能静默把失败当空记忆。快照同时保存检索/构建策略版本和预算参数，恢复不套用最新策略；worker不支持所需版本时明确报告无法执行，不重召回或替换材料。首版范围与这条冻结规则见 [ADR-0005](adr/0005-context-and-memory-foundation.md)。
 
-预算由context_builder统筹，token与字节明确区分。`ModelSpec.ContextWindow`非零时必须提供正数且小于窗口的`MaxTokens`，分别冻结为窗口和输出预留；当前采用`utf8-byte-estimate-v1`（每UTF-8字节估算一个token）及256 token协议预留，`Usage.InputTokens`表示估算值，不是模型真实计费token数，也不承诺适配所有供应商协议。窗口未配置时冻结128 KiB输入字节上限。工具定义参与每轮计数，worker按实际绑定工具替换定义后复检；API无法在接受期核算尚未装配的动态工具schema。不在事务中请求模型元信息或调用LLM摘要。
+预算由context_builder统筹，token与字节明确区分。`ModelSpec.ContextWindow`非零时必须提供正数且小于窗口的`MaxTokens`，分别冻结为窗口和输出预留；当前采用`cjk-weighted-v1`（CJK 字符权重为 2，其余字符权重为 1，合计权重除以 3 后向上取整）及256 token协议预留，`Usage.InputTokens`表示估算值，不是模型真实计费token数，也不承诺适配所有供应商协议。窗口未配置时冻结128 KiB输入字节上限。工具定义参与每轮计数，worker按实际绑定工具替换定义后复检；API无法在接受期核算尚未装配的动态工具schema。不在事务中请求模型元信息或调用LLM摘要。
 
 worker每次请求模型前，将冻结材料与本轮Eino消息映射为规范输入，再使用同一Policy/Budget构建；检查范围包含动态工具输出，不能只在接受Run时检查一次。构建器不修改checkpoint或原消息切片，裁剪不破坏tool call/result配对。缺失结果的历史组不注入，当前工具链不作为已完成历史删除。
 
-2026-11-09按确认的阶段一、阶段二扩展Q16：模型输入允许对过大的工具结果保留首尾预览，并插入明确的省略提示；默认单条16 KiB，配置窗口时取16 KiB与输入预算四分之一中的较小值，最低128字节，按UTF-8边界截取。完整工具正文仍保存于步骤和消息。`context-v1`/`context-v2`的必需输入包含system instructions、实际工具定义/协议开销、当前用户输入及本轮全部assistant/tool关联；本轮消息不能作为历史轮次淘汰。
+单条工具结果默认限制为 16 KiB。配置模型窗口时，使用 16 KiB 与输入 token 预算一半中的较小值，最低 128 字节；初始预览沿 UTF-8 边界保留首尾。软目标低于硬上限时，构建器按软目标推进。超过目标时先移除最低优先级 Memory，再从旧到新折叠历史工具过程、保留问答，然后从旧到新移除完整历史组。缺少最终答复或包含额外 User 输入的历史组保留到整组移除阶段。
 
-`context-v2`超预算时先移除最低优先级Memory，再从旧到新折叠历史工具过程，只保留首条User和最终无工具调用的Assistant；没有最终答复或包含额外User输入的组不折叠，避免丢掉人工补充。折叠后仍超限，再从旧到新删除整轮。`context-v1`保持Memory后直接整轮删除的规则。构建过程不调用模型生成摘要、不修改输入材料；相同材料/Policy/Budget/Counter产生相同结果。`OmittedSources`只记录完整删除的来源，`CollapsedSources`只记录最终保留但已折叠的历史来源，二者不重叠。
-
-`context-v3`沿用`context-v2`的Memory与历史裁剪顺序；当历史已耗尽仍超预算时，再把当前轮较旧的工具结果替换为投影标记，保留最近`Policy.KeepRecentToolResults`条完整结果（默认3条）。投影不删除assistant/tool关联，不修改checkpoint或原消息，`BuildResult.ProjectedToolResults`记录实际投影条数；投影后仍超限才返回`ContextBudgetExceeded`。`context-v1`/`context-v2`不投影当前工具链。
+历史耗尽后，当前工具结果按顺序缩为预览、成功结果存根、失败结果存根。默认保护最近 1 条免于预算预览，最近 3 条免于存根替换，免裁剪结果跳过两种操作。可选择移除较早的完整当前轮次，至少保留最新一轮。摘要、固定块及最新转向指令参与预算计算。压缩只改变模型投影，模型调用参数中的大字段预览和工具正文存根均保留工具配对。会话水位、恢复记录及工具结果读取见[恢复设计](design.md#会话摘要与上下文恢复)。
 
 必需输入在工具结果预览及适用的当前轮折叠后仍超限时返回明确的ContextBudgetExceeded，不调用模型，也不以同样输入自动Retry。接受前对可确定材料预检，超限则提交失败、不创建Run，HTTP返回400与`ContextBudgetExceeded`；worker以实际工具定义和当前模型输入再次检查，运行中仍超限则保留已存步骤与checkpoint，按Fail边界结束该Run。单条工具预览和当前轮折叠都不能保证调用参数、结果及用户输入永不超限。调用方可调整输入或预算后重新提交。
 
