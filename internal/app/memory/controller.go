@@ -52,6 +52,7 @@ func (h *Controller) RegisterRoutes(v1 *core.RouterGroup) {
 // @Success 200 {object} memory.VersionPage
 // @Failure 400 {object} serrors.Error "参数无效"
 // @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 503 {object} serrors.Error "项目权限检查暂不可用"
 // @Router /v1/memories/{id}/versions [get]
 func (h *Controller) listVersions(c *core.Context) {
 	var after int64
@@ -112,6 +113,7 @@ func (h *Controller) getVersion(c *core.Context) {
 // @Success 201 {object} agenticv1.MemoryEntry "成功"
 // @Failure 400 {object} serrors.Error "参数无效"
 // @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "记忆作用域不匹配或缺少项目写权限"
 // @Failure 409 {object} serrors.Error "状态或幂等冲突"
 // @Failure 503 {object} serrors.Error "本地生效结果不明、归档版本或依赖暂不可用"
 // @Failure 500 {object} serrors.Error "内部错误"
@@ -142,6 +144,7 @@ func (h *Controller) create(c *core.Context) {
 // @Param id path string true "id"
 // @Success 200 {object} agenticv1.MemoryEntry "成功"
 // @Failure 404 {object} serrors.Error "资源不存在"
+// @Failure 503 {object} serrors.Error "项目权限检查暂不可用"
 // @Router /v1/memories/{id} [get]
 func (h *Controller) get(c *core.Context) {
 	owner := auth.UserID(c)
@@ -161,6 +164,8 @@ func (h *Controller) get(c *core.Context) {
 // @Param after query string false "游标"
 // @Param limit query int false "数量" default(50)
 // @Success 200 {array} agenticv1.MemoryEntry "成功"
+// @Failure 403 {object} serrors.Error "缺少项目读权限"
+// @Failure 503 {object} serrors.Error "项目权限检查暂不可用"
 // @Router /v1/memories [get]
 func (h *Controller) list(c *core.Context) {
 	owner := auth.UserID(c)
@@ -192,6 +197,7 @@ func (h *Controller) list(c *core.Context) {
 // @Param request body agenticv1.UpdateMemoryRequest true "JSON 请求"
 // @Success 200 {object} agenticv1.MemoryEntry "成功"
 // @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 403 {object} serrors.Error "记忆作用域不匹配或缺少项目写权限"
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 409 {object} serrors.Error "状态、修订或幂等冲突"
 // @Failure 503 {object} serrors.Error "本地生效结果不明、归档版本或依赖暂不可用"
@@ -248,6 +254,7 @@ func (h *Controller) update(c *core.Context) {
 // @Param request body agenticv1.RetireMemoryRequest true "JSON 请求"
 // @Success 200 {object} agenticv1.MemoryEntry "成功"
 // @Failure 400 {object} serrors.Error "参数无效"
+// @Failure 403 {object} serrors.Error "缺少项目写权限"
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 409 {object} serrors.Error "状态或修订冲突"
 // @Failure 503 {object} serrors.Error "本地生效结果不明或依赖暂不可用"

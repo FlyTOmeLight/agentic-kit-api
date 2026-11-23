@@ -30,9 +30,10 @@ import (
 )
 
 type submissionRecaller struct {
-	query  string
-	filter memory.RecallFilter
-	calls  int
+	query       string
+	filter      memory.RecallFilter
+	calls       int
+	readGranted bool
 }
 
 func TestApplicationActorPrivateRecall(t *testing.T) {
@@ -213,6 +214,7 @@ func TestApplicationActorProjectRecall(t *testing.T) {
 		ctx,
 		store.DB(),
 		scope,
+		memory.AudienceProject,
 		createdAgent.ID,
 		"editor",
 		memory.RecallFilter{},
@@ -278,17 +280,85 @@ func TestApplicationActorProjectRecall(t *testing.T) {
 }
 
 func (recaller *submissionRecaller) RecallTx(
-	_ context.Context,
+	ctx context.Context,
 	_ *gorm.DB,
-	_ memory.Scope,
+	scope memory.Scope,
+	_ memory.OutputAudience,
 	_ string,
 	query string,
 	filter memory.RecallFilter,
 ) ([]memory.Entry, error) {
+	request, verified := access.FromContext(ctx)
+	recaller.readGranted = verified && access.HasProjectRead(ctx, scope.Owner, request)
 	recaller.query = query
 	recaller.filter = filter
 	recaller.calls++
 	return nil, nil
+}
+
+func TestProjectChatRecallChecksSessionAndCurrentGrant(t *testing.T) {
+	const tenant, project, owner = "tenant", "project", "owner"
+	store := durableTestStore(t)
+	artifactServer, _ := newFakeArtifact(t)
+	artifact := newArtifactClient(t, artifactServer)
+	agents := appagent.NewService(store.DB(), artifact)
+	scope := access.Scope{TenantID: tenant, ProjectID: project}
+	ctx := access.WithScope(context.Background(), scope)
+	identity := client.Identity{TenantID: tenant, ProjectID: &scope.ProjectID, PropagatedUserID: owner}
+	createdAgent, err := agents.CreateAgent(ctx, owner, "recall", agent.AgentConfig{
+		Model: agent.ModelSpec{Name: "test", BaseURL: "http://model.test/v1"}, MaxTurns: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agents.PublishAgent(ctx, identity, owner, createdAgent.ID, createdAgent.Revision); err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.CreateSession(ctx, owner, createdAgent.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectReadAllowed := true
+	recaller := &submissionRecaller{}
+	submissions := appexec.NewService(store, artifact).WithMemoryRecaller(recaller).
+		WithProjectReadCheck(func(context.Context, string, access.Scope) (bool, error) {
+			return projectReadAllowed, nil
+		})
+	submit := func(ctx context.Context, key string) (*execution.Run, bool, error) {
+		return submissions.SubmitChat(
+			ctx, identity, owner, session.ID, key, "editor",
+			time.Hour, 3, memory.SelectionRecall, memory.RecallFilter{},
+		)
+	}
+	first, created, err := submit(ctx, "recall")
+	if err != nil || !created {
+		t.Fatalf("submit: created=%v err=%v", created, err)
+	}
+	replayed, created, err := submit(ctx, "recall")
+	if err != nil || created || replayed.ID != first.ID {
+		t.Fatalf("replay: run=%+v created=%v err=%v", replayed, created, err)
+	}
+	if _, _, err := submit(context.Background(), "recall"); !errors.Is(err, memory.ErrForbidden) {
+		t.Fatalf("replay without a verified scope: %v", err)
+	}
+	for _, projectID := range []string{"", "other-project"} {
+		other := access.WithScope(ctx, access.Scope{TenantID: tenant, ProjectID: projectID})
+		if _, _, err := submit(other, "recall"); !errors.Is(err, memory.ErrForbidden) {
+			t.Fatalf("replay from project %q: %v", projectID, err)
+		}
+	}
+	projectReadAllowed = false
+	for _, key := range []string{"recall", "new-recall"} {
+		if _, _, err := submit(ctx, key); !errors.Is(err, memory.ErrForbidden) {
+			t.Fatalf("submit after revocation for key %q: %v", key, err)
+		}
+	}
+	if recaller.calls != 1 {
+		t.Fatalf("recall calls=%d, want 1", recaller.calls)
+	}
+	if !recaller.readGranted {
+		t.Fatalf("recall did not receive the project read grant: %+v", recaller)
+	}
 }
 
 func TestSubmissionRecallQueryAndFilterReplay(t *testing.T) {

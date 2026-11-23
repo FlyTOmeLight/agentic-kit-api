@@ -24,7 +24,7 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | POST /v1/runs/{id}/resolve | 提交人工确认的工具结果 | stepID、result |
 | POST /v1/runs/{id}/unblock | 接受未知消费并授权重新派发，返回 204 | epoch、reason |
 | GET /v1/runs/{id}/events | SSE 回放及订阅 | Last-Event-ID header 或 after query，格式 runID:seq |
-| POST /v1/memories | 创建 OwnerPrivate 或 ActorPrivate 记忆，返回 201 | document；Idempotency-Key header 必填 |
+| POST /v1/memories | 创建 OwnerPrivate、ActorPrivate 或 ActorProject 记忆，返回 201 | document；Idempotency-Key header 必填 |
 | GET /v1/memories | 列出当前身份可访问的私人记忆 | after、limit |
 | GET /v1/memories/{id} | 读取当前生效投影 | 无 |
 | GET /v1/memories/{id}/versions | 分页列出已生效归档版本 | afterRevision、limit |
@@ -70,9 +70,11 @@ SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payloa
 
 ## Memory
 
-HTTP 维护入口开放 OwnerPrivate 和租户级 ActorPrivate。服务从 Forge 验证结果确定租户、项目和 owner，写入文档的 `scope.tenant`、`scope.project` 必须与验证结果一致。ActorPrivate 要求请求处于租户级且 `scope.project` 为空。`scope.actor` 可省略或填写当前用户，服务保存核验后的用户 ID。`outputVisibility` 省略时默认 `Private`，ActorPrivate 只接受 `Private`。项目请求及其他租户或用户看不到该条目及其版本历史。
+HTTP 维护入口开放 OwnerPrivate、租户级 ActorPrivate 和项目内的 ActorProject。服务从 Forge 验证结果确定租户、项目和 owner，写入文档的 `scope.tenant`、`scope.project` 必须与验证结果一致。ActorPrivate 要求请求处于租户级且 `scope.project` 为空。`scope.actor` 可省略或填写当前用户，服务保存核验后的用户 ID。`outputVisibility` 省略时默认 `Private`，ActorPrivate 只接受 `Private`。
 
-应用执行显式指定 `memory=Recall` 时，`spec.scope.actorID` 必须等于 Forge 核验的用户 ID，否则返回 403，包括幂等重放。带项目的执行还会在首次提交和重放前检查当前用户的项目读权限。无权限返回 403，Forge 权限检查失败返回 503 `MemoryUnavailable`。项目执行只召回同一租户、项目和用户下标记为 `Project` 的 ActorProject 投影。成功接受的 Run 冻结当时选中的本地投影。
+ActorProject 要求请求处于项目级，`scope.actor` 可省略或填写当前用户，`outputVisibility` 可为默认的 `Private` 或显式的 `Project`。项目请求仅访问同一租户、同一项目下本人的 ActorProject 和 OwnerPrivate 条目。读取条目和历史检查 Forge 的项目 `read` 权限，缺少该权限时列表返回 403，详情和历史返回 404。创建、更新、恢复、停用及其同键重放检查 `write` 权限，缺少该权限返回 403；权限检查失败返回 503 `MemoryUnavailable`。后台恢复也检查当前写权限，失去写权限的 Pending 操作等授权恢复后才能继续。
+
+`memory=Recall` 的输出受众由入口确定。聊天使用同一租户、项目和用户下的 OwnerPrivate，受众为 `Private`。租户级应用执行使用 ActorPrivate，受众为 `Private`。项目应用执行按 `Project` 受众处理，只召回同一租户、项目和用户下标记为 `Project` 的 ActorProject。应用执行的 `spec.scope.actorID` 必须等于 Forge 核验的当前用户。项目聊天和应用执行均在首次提交和重放前检查项目 `read` 权限。缺少权限返回 403，权限检查失败返回 503 `MemoryUnavailable`。成功接受的 Run 继续使用当时选中的冻结投影。
 
 Create 返回 201，其余 Memory 维护操作成功返回 200。Entry 的 `revision` 表示当前投影修订，启用归档时还返回固定的 `activeVersionRef`。
 

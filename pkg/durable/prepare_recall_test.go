@@ -16,24 +16,27 @@ import (
 )
 
 type stubRecaller struct {
-	entries []memory.Entry
-	err     error
-	called  bool
-	scope   memory.Scope
-	agentID string
-	filter  memory.RecallFilter
+	entries  []memory.Entry
+	err      error
+	called   bool
+	scope    memory.Scope
+	audience memory.OutputAudience
+	agentID  string
+	filter   memory.RecallFilter
 }
 
 func (s *stubRecaller) RecallTx(
 	_ context.Context,
 	_ *gorm.DB,
 	scope memory.Scope,
+	audience memory.OutputAudience,
 	agentID string,
 	_ string,
 	filter memory.RecallFilter,
 ) ([]memory.Entry, error) {
 	s.called = true
 	s.scope = scope
+	s.audience = audience
 	s.agentID = agentID
 	s.filter = filter
 	return s.entries, s.err
@@ -286,14 +289,16 @@ func publishTestAgent(t *testing.T, s *Store, owner string) string {
 
 func TestApplicationRecallDerivesScopeFromTrustedWorkspace(t *testing.T) {
 	tests := []struct {
-		name  string
-		scope Scope
-		want  memory.Scope
+		name     string
+		scope    Scope
+		want     memory.Scope
+		audience memory.OutputAudience
 	}{
 		{
-			name:  "tenant and actor select actor private",
-			scope: Scope{TenantID: "t", ActorID: "u"},
-			want:  memory.Scope{Kind: memory.ScopeActorPrivate, Owner: "app", Tenant: "t", Actor: "u"},
+			name:     "tenant and actor select actor private",
+			scope:    Scope{TenantID: "t", ActorID: "u"},
+			want:     memory.Scope{Kind: memory.ScopeActorPrivate, Owner: "app", Tenant: "t", Actor: "u"},
+			audience: memory.AudiencePrivate,
 		},
 		{
 			name:  "tenant project and actor select actor project",
@@ -305,6 +310,7 @@ func TestApplicationRecallDerivesScopeFromTrustedWorkspace(t *testing.T) {
 				Project: "p",
 				Actor:   "u",
 			},
+			audience: memory.AudienceProject,
 		},
 	}
 	for _, tc := range tests {
@@ -327,6 +333,9 @@ func TestApplicationRecallDerivesScopeFromTrustedWorkspace(t *testing.T) {
 			if recaller.scope != tc.want {
 				t.Fatalf("recall scope = %+v, want %+v", recaller.scope, tc.want)
 			}
+			if recaller.audience != tc.audience {
+				t.Fatalf("recall audience = %q, want %q", recaller.audience, tc.audience)
+			}
 			if recaller.agentID != agentID {
 				t.Fatalf("recall agentID = %q, want %q", recaller.agentID, agentID)
 			}
@@ -341,7 +350,7 @@ func TestChatRecallStaysOwnerPrivate(t *testing.T) {
 	recaller := &stubRecaller{}
 	submitWithMemory(t, s, session.ID, memory.SelectionRecall, recaller)
 	want := memory.Scope{Kind: memory.ScopeOwnerPrivate, Owner: "owner"}
-	if recaller.scope != want {
-		t.Fatalf("recall scope = %+v, want %+v", recaller.scope, want)
+	if recaller.scope != want || recaller.audience != memory.AudiencePrivate {
+		t.Fatalf("recall scope/audience = %+v/%q, want %+v/Private", recaller.scope, recaller.audience, want)
 	}
 }

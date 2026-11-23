@@ -1,6 +1,6 @@
 # Agentic Kit 通用 Agent Memory 技术设计
 
-状态：本地 OwnerPrivate 和租户级 ActorPrivate 的人工维护、显式 Restore、生效投影、操作回执和生效版本历史 API 已实现。`RecallTx` 已接入 Run 接受事务并冻结完整材料。ActorProject 只召回项目可见的本地投影，授权、幂等重放和撤权已在 [OrbStack](verification.md#2026-11-18-orbstack-actorproject-授权联调) 用真实 Forge 验证。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.1`、server-go `v0.13.0`。配置归档时，API 后台能继续未完成的 Create/Update/Restore。服务凭据、固定版本、幂等、作用域隔离及代理故障下的 Pending 恢复见[验证记录](verification.md#memory-真实-artifact-联合验证)。ActorProject 维护入口、ProjectShared、自动提炼、语义检索及版本删除/回收待实施。
+状态：OwnerPrivate、租户级 ActorPrivate 和项目内 ActorProject 已支持人工维护、生效版本历史和显式召回。项目范围的维护和召回使用精确身份与当前项目权限，召回在 Run 接受事务中按受众过滤后冻结材料。当前 HTTP 把 Forge 用户同时用作 owner 和 actor。开放 ProjectShared 还需要可信的共享 owner 和成员维护授权。可选 artifact 归档与固定绑定依赖 artifact-go `v0.5.1`、server-go `v0.13.0`，项目 Pending 操作在后台核验写权限后继续。联调与历史证据见[验证记录](verification.md)。自动提炼、语义检索及版本删除/回收待实施。
 
 本文替代 2026-10-13 草案中的自建版本表与首期自动提炼方案，沿用 [框架设计 §6.6](refactoring-design.md#66-上下文管线与-memory-基础版) 和 [ADR-0005](adr/0005-context-and-memory-foundation.md) 的范围。版本服务分工见 [ADR-0008](adr/0008-memory-artifact-versions.md)。
 
@@ -52,7 +52,9 @@ flowchart LR
 
 ### 2.3 数据隔离与接入约束
 
-artifact `v0.5.0` 提供 `(tenant_id, project_id, user_id)` 三元数据隔离与集合幂等创建契约，project 为空表示该租户内该用户的非项目数据。适配层通过 `WithRequestIdentity` 传递 tenant、精确 project 和 ResourceUserID，并随 Entry/Operation 固定绑定；启用 Endpoint 时要求配置服务 BearerToken，集合创建、版本发布与固定版本读取都携带该凭据。artifact 身份解析器必须核验凭据对应的作用域授权，不能仅信任请求头。本地联调使用测试授权表验证三元组隔离，实际部署的凭据签发、身份解析器和业务授权仍需验收。
+artifact `v0.5.0` 提供 `(tenant_id, project_id, user_id)` 三元数据隔离与集合幂等创建契约，project 为空表示该租户内该用户的非项目数据。适配层通过 `WithRequestIdentity` 透传固定绑定的 tenant、project 和 user，绑定用户也用作 `ResourceUserID`。集合创建、版本发布和固定版本读取都携带服务 BearerToken。部署时须在 Artifact 的 Forge 身份解析器中允许 `agentic-kit-api` 透传身份。
+
+项目撤权由 Memory API 执行。部署须使用包含 `agent-memory` 服务鉴权的 Artifact 构建，由 Artifact 在所有集合与子资源入口验证调用方。经过 Forge 认证且获准透传的 `agentic-kit-api` 才能访问归档，同时仍须符合固定的存储归属。普通用户从 Artifact 列表看不到归档，按 ID 或 URI 访问返回 `404`，直接创建该类型返回 `403`。Artifact `v0.5.1` 镜像未包含类型鉴权，当前 SDK 无需变更。实际部署检查见 [验证记录](verification.md)。
 
 Memory核验业务访问权后，由适配层提供可信的存储归属上下文。存储user_id与真实维护者可以不同：它随ArtifactBinding固定，真实维护者保存在Memory操作回执和payload中。接入只要求能够传递已核验的三元组；账号、凭据治理及部署身份形式不在本设计范围。
 
@@ -60,7 +62,7 @@ MemoryScope包含owner、actor等业务约束，不能直接等同artifact三元
 
 | MemoryScope | artifact存储归属 | 约束 |
 | --- | --- | --- |
-| OwnerPrivate | 服务端为该owner确定的tenant/user，project为空 | 无业务tenant时使用明确的存储归属映射；映射缺失则拒绝创建，不能以空user或任意公共tenant兜底 |
+| OwnerPrivate | 已核验的 tenant、可选 project、user=owner | 无业务 tenant 时使用明确的存储归属映射，project 为空；映射缺失时拒绝创建 |
 | ActorPrivate | 已核验tenant、project为空、user=actor | 不同actor不能共用一个存储user |
 | ActorProject | 已核验tenant/project、user=actor | 同actor不同项目仍隔离 |
 | ProjectShared | 已核验tenant/project、user=创建时核验的归属用户（首版取创建者actor） | 后续成员通过Memory当前项目权限访问，远端仍使用原固定归属 |
@@ -76,6 +78,7 @@ ProjectShared的存储user不授予其独占的Memory业务权限；创建者离
 | 项目 | artifact-go负责的交付 | Memory消费约束 |
 | --- | --- | --- |
 | 三元数据隔离 | tenant、精确project、user共同限定集合、子资源、Resolve、游标与名称唯一性 | 固定ArtifactBinding，业务共享与访问政策由Memory授权 |
+| 归档访问 | `agent-memory` 仅向经认证且获准透传的 `agentic-kit-api` 服务开放 | 用户从 Memory API 访问，项目读写权限在 Memory 执行 |
 | 集合幂等创建 | 可选requestKey，集合行保存成功创建事实；首次201、重放200，SDK返回类型不变 | Memory必填由entryID稳定派生的64字符内键；同三元组同键同参返回同一集合，合法异参409，不同键同名不接管 |
 | 正式发布与兼容验证 | 部署服务与 SDK 契约一致 | 已固定发布依赖；真实部署仍需联合验证 |
 
@@ -111,7 +114,7 @@ Memory 不再建立保存所有正文的 `memory_version` 表，也不实现另�
 
 | MemoryScope | 精确身份键 | 用途 |
 | --- | --- | --- |
-| OwnerPrivate | owner | 无独立业务 Scope 的普通调用 |
+| OwnerPrivate | owner + 已核验的 tenant 和可选 project | 普通聊天中的私人记忆 |
 | ActorPrivate | owner + tenant + actor | 应用中的个人偏好和方法 |
 | ActorProject | owner + tenant + project + actor | 项目中的个人经验 |
 | ProjectShared | owner + tenant + project | 有权限成员维护的项目共享经验 |
@@ -175,6 +178,8 @@ MemoryOperation 既是跨服务恢复记录，也是幂等成功回执和生效�
 
 ActorPrivate 维护使用 Forge 核验的租户和当前用户。请求与文档的 project 皆为空，服务将 owner 和 actor 都绑定到当前用户，输出可见性固定为 `Private`。读取、版本历史、更新、停用、恢复及停用回执重放均受该范围约束。启用归档时，存储绑定使用核验后的 tenant 和 actor，project 为空。
 
+当前 HTTP 的 OwnerPrivate 投影也保留已校验的租户和可选项目分区。项目内的 OwnerPrivate 和 ActorProject 均须从同一项目访问。读取和历史检查 `read`，创建、更新、停止、恢复和重放检查 `write`。ActorProject 的可见性默认 `Private`，维护者可以显式指定 `Project`。
+
 ### 6.1 本地准备 → 远端发布 → 本地生效
 
 1. **准备短事务。** 核验当前用户写权限，按规范化请求命名空间和 requestKey 查回执。同键异意图返回 Conflict；Applied 返回原结果，Rejected 返回原拒绝。同键 Pending 继续原操作。新操作核对 expectedRevision、条目状态和文档，按§5的唯一约束保存稳定 operationID、EntryID、完整意图及远端参数；并发输家加载赢家回执，不能另起操作。Update要求条目启用；显式Restore要求条目停用。事务提交后才允许远端调用。
@@ -190,7 +195,7 @@ ActorPrivate 维护使用 Forge 核验的租户和当前用户。请求与文档
 
 两个基于 revision=4 的纠正可能都在 artifact 存档，但只有一个能把 Memory 更新到 revision=5。另一操作终结为 Rejected/RevisionConflict，其存档版本保持未采用，不能成为Memory生效版本或被下一次召回选中；artifact latest仍可能指向它，Memory不据此选用。新建主题冲突采用相同规则。实现必须持久保存Rejected与已存档版本引用；可用条件插入（ON CONFLICT DO NOTHING）或条件更新检查影响行数，在同一可提交事务内记录拒绝，不能依赖触发唯一异常后已被中止的事务继续写回执。自动删除这类受保护版本不属于首版。
 
-artifact 已发布而本地提交前进程退出时，后台恢复或原键重试在持久 claim 过期后继续；已保存版本引用时复用该引用，否则以原远端键确认同一版本，再尝试原 CAS。条目修订变化或状态不再满足本次Update/Restore意图则记录冲突。发布超时/结果不明时保留 Pending，不能当成确定失败或创建新版本。完整权限撤销检查仍依赖后续访问模型接入。
+artifact 已发布而本地提交前进程退出时，后台恢复或原键重试在持久 claim 过期后继续。已保存版本引用时复用该引用，否则以原远端键确认同一版本，再尝试原 CAS。条目修订变化或状态不再满足本次 Update/Restore 意图则记录冲突。发布超时或结果不明时保留 Pending。对项目操作，后台在归档前核验原操作者的 `write` 权限，所有路径在生效前再核验一次。权限缺失或检查暂时失败时操作保持 Pending。
 
 本地生效提交结果不明时，按原键读取主库回执；仍不能确定则返回 503 `MemoryOperationOutcomeUnknown`，下次继续原键。同键 Applied 回放不回拨生效指针，不覆盖后来纠正，也不重新访问 artifact；返回原 appliedRevision/版本引用，当前 Entry 如另行返回必须明确标为当前状态。每次回放仍核验当前访问权限。
 
@@ -226,7 +231,7 @@ Agent 版本不因本设计增加自动开启学习的开关。服务端政策�
 
 将选中条目的完整正文、条件、来源、固定版本引用及顺序映射为 ContextBlock；与策略和预算一起编码到 ContextSnapshot，并与 Session/Run/用户消息/事件原子提交。无匹配保存 Recall/Empty，Off 保存明确关闭；本地读取或投影校验失败使接受事务回滚，不能静默降为 Empty。投影正常时 artifact 暂时离线不影响 Recall，这来自已完成的本地生效契约。
 
-普通聊天使用 OwnerPrivate，按 Forge 验证的租户、项目和当前 owner 查询。租户级应用执行使用 ActorPrivate，提交在幂等回放前核验 `spec.scope.actorID` 等于当前用户，并按租户及 `Private` 输出可见性查询。带项目的应用执行使用 ActorProject，并在幂等回放和接受事务之前用 Forge `CheckAccess` 检查当前用户对该项目的 `read` 权限。事务内的 `RecallTx` 要求本次检查与用户、租户和项目都匹配。执行请求尚无可信的私人结果受众字段，因此项目执行只召回显式标记为 `Project` 的条目。ActorProject 的维护入口留待后续开放。应用执行和聊天均接受 `memory`（Off/Recall）与 `memoryFilter`（同 §7.2），Off 携带 filter 报 400 Invalid。
+普通聊天使用 OwnerPrivate，按 Forge 验证的租户、项目和当前 owner 查询，受众为 `Private`。租户级应用执行使用 ActorPrivate，受众为 `Private`。项目应用执行使用 ActorProject，受众采用保守的 `Project`，只召回显式标记为 `Project` 的投影。`OutputAudience` 从接受路径传给 `RecallTx`，应用执行与聊天的请求体只有 `memory` 和 `memoryFilter`。应用执行必须核验 `spec.scope.actorID` 等于当前用户。项目聊天和应用执行在回放和接受事务前检查当前项目 `read` 权限，`RecallTx` 核对授权绑定的用户、租户和项目。Off 携带 filter 报 400 Invalid。
 
 同键已成功提交且当前请求通过授权时，直接读取原 Run。后续记忆更新、策略变化或 artifact 故障均不触发重新召回。未成功接受的请求可在重试时重新选择，以最终接受的快照为准。
 
@@ -258,7 +263,7 @@ API 本库与 artifact 库分别备份。跨库恢复后先核对 Pending 操作
 
 ## 9. API、模块与装配
 
-当前 HTTP/SDK 提供 OwnerPrivate 和租户级 ActorPrivate 的人工创建、读取、更新、Retire、显式 Restore 和版本历史查询，执行提交支持 Off/Recall。维护入口根据 Forge 验证的用户确定 owner，文档的租户和项目必须与验证结果一致。请求和响应见 [HTTP 契约](api.md)。
+当前 HTTP/SDK 提供 OwnerPrivate、租户级 ActorPrivate 和项目内 ActorProject 的人工创建、读取、更新、Retire、显式 Restore 和版本历史查询，执行提交支持 Off/Recall。维护入口根据 Forge 验证的用户确定 owner，文档的租户和项目必须与验证结果一致。Scope、Agent、Kind 和 SubjectKey 在纠正和恢复时保持原值。请求和响应见 [HTTP 契约](api.md)。
 
 | 操作 | 必需输入与结果 |
 | --- | --- |

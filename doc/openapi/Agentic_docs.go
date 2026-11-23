@@ -106,6 +106,12 @@ const docTemplateAgentic = `{
                         "schema": {
                             "$ref": "#/definitions/errors.Error"
                         }
+                    },
+                    "503": {
+                        "description": "记忆或依赖暂不可用",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
                     }
                 }
             }
@@ -1306,6 +1312,18 @@ const docTemplateAgentic = `{
                                 "$ref": "#/definitions/agenticv1.MemoryEntry"
                             }
                         }
+                    },
+                    "403": {
+                        "description": "缺少项目读权限",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "503": {
+                        "description": "项目权限检查暂不可用",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
                     }
                 }
             },
@@ -1360,6 +1378,12 @@ const docTemplateAgentic = `{
                     },
                     "401": {
                         "description": "身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "记忆作用域不匹配或缺少项目写权限",
                         "schema": {
                             "$ref": "#/definitions/errors.Error"
                         }
@@ -1420,6 +1444,12 @@ const docTemplateAgentic = `{
                         "schema": {
                             "$ref": "#/definitions/errors.Error"
                         }
+                    },
+                    "503": {
+                        "description": "项目权限检查暂不可用",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
                     }
                 }
             },
@@ -1475,6 +1505,12 @@ const docTemplateAgentic = `{
                     },
                     "400": {
                         "description": "参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "记忆作用域不匹配或缺少项目写权限",
                         "schema": {
                             "$ref": "#/definitions/errors.Error"
                         }
@@ -1557,6 +1593,12 @@ const docTemplateAgentic = `{
                             "$ref": "#/definitions/errors.Error"
                         }
                     },
+                    "403": {
+                        "description": "缺少项目写权限",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
                     "404": {
                         "description": "资源不存在",
                         "schema": {
@@ -1629,6 +1671,12 @@ const docTemplateAgentic = `{
                     },
                     "404": {
                         "description": "资源不存在",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "503": {
+                        "description": "项目权限检查暂不可用",
                         "schema": {
                             "$ref": "#/definitions/errors.Error"
                         }
@@ -2750,6 +2798,12 @@ const docTemplateAgentic = `{
                             "$ref": "#/definitions/errors.Error"
                         }
                     },
+                    "403": {
+                        "description": "召回作用域不匹配或缺少项目读权限",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
                     "404": {
                         "description": "资源不存在",
                         "schema": {
@@ -2770,6 +2824,12 @@ const docTemplateAgentic = `{
                     },
                     "500": {
                         "description": "内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "503": {
+                        "description": "记忆或依赖暂不可用",
                         "schema": {
                             "$ref": "#/definitions/errors.Error"
                         }

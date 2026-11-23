@@ -8,7 +8,7 @@ Agent 草稿保存在本地，已发布配置正文存入 artifact-go，本地�
 
 当前执行链路支持 worker 重启后接管已提交任务。上下文构建已实现预算预检、工具结果有界预览、历史两级裁剪和当前轮工具链折叠：Run 接受时冻结完整材料、策略与预算，配套 worker 每次模型调用前重新构建输入。新 Run 使用 `context-v3`，超限先移除低优先级 Memory，再从旧到新折叠历史工具过程、保留问答，仍超限才删除整轮；历史耗尽后仍超限时，把当前轮较旧的工具结果替换为投影标记，只保留最近 3 条完整结果。旧 `context-v1`、`context-v2` 快照保持各自原有裁剪规则。原始消息、工具结果和快照继续完整保存。
 
-Memory 支持 OwnerPrivate 和租户级 ActorPrivate 的人工创建、读取、纠正、停用、显式 Restore 和已生效版本历史查询。ActorPrivate 绑定到 Forge 核验的当前用户，供该用户在同一租户内显式召回。聊天与应用执行默认 Off，显式 Recall 时通过 `RecallTx` 在接受事务内读取本地生效投影，并将完整材料冻结进 Run。可选 artifact 适配使用 artifact-go `v0.5.0`、server-go `v0.13.0`，以持久操作回执连接远端存档与本地 CAS 生效；配置归档时，API 后台会继续未完成的 Create/Update/Restore。自动提炼、语义检索和版本删除/回收尚未实现，真实 artifact 部署尚未联合验证。范围和后续设计见 [Memory 设计](docs/memory-design.md)；[通用框架重构设计](docs/refactoring-design.md)的完整访问模型和目录重组仍未全部落地。
+Memory 支持 OwnerPrivate、租户级 ActorPrivate 和项目内 ActorProject 的人工创建、读取、纠正、停用、显式 Restore 和已生效版本历史查询。项目范围内的读取、召回和写入按同一租户、项目和用户隔离，并分别检查 Forge 的 `read` 或 `write` 权限。ActorProject 默认 `Private`，标为 `Project` 的条目可以进入项目应用执行。聊天与应用执行默认 Off，显式 Recall 时在 Run 接受事务内按输出受众过滤并冻结本地材料。可选 artifact 归档通过持久回执连接远端存档与本地生效，后台在核验项目写权限后继续未完成的操作。ProjectShared、自动提炼、语义检索和版本删除/回收仍待实施。详见 [Memory 设计](docs/memory-design.md)。
 
 Agent 的 `model.contextWindow` 可配置模型窗口；设置后必须同时设置正数 `model.maxTokens`，且小于窗口。输入预算取两者之差，使用版本化 UTF-8 字节估算与 256 token 协议预留；这是偏保守的估算，不是模型 tokenizer 的精确计数。不配置窗口时使用 128 KiB 输入字节上限。单条工具结果默认最多向模型展示 16 KiB，配置窗口时再限制为输入预算的四分之一（最低 128 字节）。提交期对已知材料预检，超限返回 HTTP 400 `ContextBudgetExceeded`；worker 按实际工具 schema 和当前工具链复检，必需内容仍超限则结束为 Failed。
 
@@ -21,7 +21,7 @@ Agent 的 `model.contextWindow` 可配置模型窗口；设置后必须同时设
 | Run / Execution | 提交、查询、取消、澄清回答、人工确认、执行权校验、trace 与 SSE 回放 |
 | Durable / Outbox | API 与 worker 共享执行事务、租约、步骤存档、状态与事件一致提交、通知投递 |
 | Context | 完整历史组与 Memory 材料的稳定选择、预算裁剪、版本化 `ContextSnapshot` 冻结 |
-| Memory | OwnerPrivate 与 ActorPrivate 人工维护与 Restore、操作回执、可选 artifact 存档、本地投影召回与 Run 冻结 |
+| Memory | OwnerPrivate、ActorPrivate 和 ActorProject 的人工维护与 Restore、操作回执、可选 artifact 存档、本地投影召回与 Run 冻结 |
 
 ```text
 agentic-kit-api/
@@ -73,9 +73,9 @@ GOWORK=off go run ./cmd/server -config conf/server/config.toml
 | `TimeoutSeconds` | `ARTIFACT_TIMEOUT_SECONDS` | `artifact.timeoutSeconds` | `30` |
 | `MaxPayloadBytes` | `ARTIFACT_MAX_PAYLOAD_BYTES` | `artifact.maxPayloadBytes` | `262144` |
 
-Endpoint 为空时保持本地模式，Memory 写入本地投影，不生成远端版本引用，其余 Artifact 字段不参与校验。配置 Endpoint 后，启动时要求绝对 HTTP(S) URL、非空 StoreID/TenantID/BearerToken、1–60 秒超时及 1–262144 字节 payload 上限；OwnerPrivate 使用配置的 tenant 与 owner 固定存储归属。timeout 是客户端请求超时，Archive 的集合创建与发布另受 1 分钟总预算约束。已有绑定不会因配置变化自动迁移，本地条目也不会自动补归档。Helm 将这些非敏感 values 渲染为显式 env，同名 `envFrom` Secret 值不会覆盖它们；BearerToken 不写入 values，由 `existingSecret` 以 `ARTIFACT_BEARER_TOKEN` 注入。
+Endpoint 为空时保持本地模式，Memory 写入本地投影，不生成远端版本引用，其余 Artifact 字段不参与校验。配置 Endpoint 后，启动时要求绝对 HTTP(S) URL、非空 StoreID/TenantID/BearerToken、1–60 秒超时及 1–262144 字节 payload 上限。HTTP 写入按已核验的 tenant、project 和用户固定存储归属。timeout 是客户端请求超时，Archive 的集合创建与发布另受 1 分钟总预算约束。已有绑定不会因配置变化自动迁移，本地条目也不会自动补归档。Helm 将这些非敏感 values 渲染为显式 env，同名 `envFrom` Secret 值不会覆盖它们；BearerToken 不写入 values，由 `existingSecret` 以 `ARTIFACT_BEARER_TOKEN` 注入。
 
-BearerToken 与存储作用域授权是两层检查。token 用于证明调用 artifact 服务的部署身份；tenant、project 和 resource-user 仍来自已校验的业务身份及持久化绑定，不能由 token 替代或放宽。token 不写入配置仓库、日志或 values。
+BearerToken 用于证明调用 artifact 服务的部署身份。集合创建、版本发布和历史读取使用持久化绑定的 tenant、project 与 user 进行可信透传。启用 Forge resolver 时，Artifact 的 `forgeTenant.allowedPropagationServices` 需要包含该凭据对应的服务名。`agent-memory` 归档通过受信服务入口访问，项目读权限由 Memory API 核验。token 不写入配置仓库、日志或 values。
 
 入站业务路由通过 Forge middleware 获取已验证的租户与用户身份，再检查对象归属。
 

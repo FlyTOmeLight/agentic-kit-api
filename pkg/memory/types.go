@@ -41,6 +41,13 @@ const (
 	OutputProject OutputVisibility = "Project"
 )
 
+type OutputAudience string
+
+const (
+	AudiencePrivate OutputAudience = "Private"
+	AudienceProject OutputAudience = "Project"
+)
+
 // SourceClass names how the content was confirmed.
 type SourceClass string
 

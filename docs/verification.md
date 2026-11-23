@@ -2,6 +2,37 @@
 
 本文件按日期保留历史检查结果，条目中的路径、版本和限制描述当时的实现。当前功能、布局和契约分别以 README、docs/layout.md 和 docs/api.md 为准；可复用经验见 docs/lessons/。
 
+## 2026-11-23 OrbStack Forge 网关归档撤权复测
+
+**联合验收通过。** OrbStack 的 `forge-artifact` 换用本地镜像 `artifact-go:memory-archive-scope-20261123`，健康检查返回 `200`。Forge Tenant API 仍为 `v0.13.0`。`TestOrbStackMemoryGatewayRevocation` 以 `go test -mod=readonly -race` 启动当前 Memory HTTP 路由，连接真实 Artifact 与 Forge，并经 `forge-web` 执行项目角色变更。原有网关转发出现请求超时，复测使用同一 `forge-web` Service 的独立本地端口转发。
+
+- `developer` 可以创建项目 Memory 并通过 Memory 读取固定版本。即使项目读写权限有效，普通用户也无法通过 Artifact 网关访问归档。降为 `reviewer` 后，Memory 正常读取，新键写入和同键重放都返回 `403`。
+- 完全撤权后，Memory 列表及写入重放返回 `403`，详情、历史列表及固定版本均返回 `404`。在 Forge 网关的 `/artifact`、`/storage` 及 Artifact Service 直连入口，归档集合、版本列表、固定版本及 URI 解析均返回 `404`，按 `agent-memory` 过滤的集合列表为空。普通用户创建该类型返回 `403`，普通 `agent` 列表返回 `200`。用用户凭据尝试服务透传返回 `401`。
+- 经过 Forge 认证的 `agentic-kit-api` 在撤权后仍能直连读取及解析同一固定版本，版本响应与撤权前一致。重新授权后，Memory 读取的条目修订和固定版本引用保持一致。
+- 测试结束后已归档测试集合、删除独立 PostgreSQL schema，并恢复专用项目无读写的基线。临时用户及服务凭据均已撤销，复查返回 `401`。当前验收范围为 OrbStack 本地镜像。
+
+Artifact 仓库的 `make check` 通过，覆盖 PostgreSQL、MySQL、竞态、构建、vet 和 OpenAPI 一致性。归档权限回归用例覆盖普通用户、另一已认证服务、可信归档服务和普通 Agent Artifact。
+
+## 2026-11-23 OrbStack Memory 项目维护联合验收
+
+在 `feat/memory-actor-project-maint` 上用临时探针 `TestOrbStackActorProjectMaintenance` 启动真实 Memory HTTP 路由，连接 OrbStack 的 Forge Tenant API `v0.13.0`、Artifact `v0.5.1` 和本机 PostgreSQL 的独立 schema。探针在 `go test -race` 下跑完两轮。第二轮增加了发布响应丢失后的 Pending 恢复，当时公开 Artifact 入口的撤权断言失败。修复后的结果见 [Forge 网关归档撤权复测](#2026-11-23-orbstack-forge-网关归档撤权复测)。
+
+- Forge 从无项目权限切换为 `developer` 后，Memory 创建、更新、停用和恢复成功，依次应用 revision 1 至 4。创建、更新和恢复复用同一个真实 Artifact 集合，各自固定到一个版本。同键创建复用原条目和版本，旧版本正文保持不变。仅选租户时，Memory 项目条目返回 `404`。Artifact 拒绝了测试账号选择其他存储用户的请求。
+- 降为 `reviewer` 后，详情和历史保留读权限，四类维护请求使用新键或原键都返回 `403`。完全撤权后，列表返回 `403`，详情、历史列表和单版本返回 `404`。重新授予 `developer` 后，先确认 revision 4 和固定版本未变。
+- 第二轮由代理丢弃真实 Artifact 已经成功发布的更新响应，Memory 返回 `503` 并保留 Pending。撤销写权限后，`ResumePending` 拒绝恢复，期间没有向 Artifact 发出发布请求。重新授予写权限后，恢复复用原发布结果，采用同一个 Version ID 并推进至 revision 5，HTTP 同键重放返回这个生效结果。
+- **部署隔离未通过。** 完全撤掉项目权限后，测试用户通过公开 Forge 网关的 Artifact 入口仍得到 `200` 和自己的 `agent-memory` 测试版本。直接请求 Artifact Service 也得到 `200`。现有 Artifact 用户接口按存储归属授权，公开网关放行了该接口。联合验收的通过条件是归档入口只接受受信服务，撤权后的普通用户请求无法读取归档正文。
+
+两轮完成后均将专用项目权限恢复为无读写、删除独立 schema，并归档本轮创建的测试 Artifact 集合。受保护版本随归档集合保留。临时用户凭据和两个服务凭据均已撤销，复测返回 `401`。Pending 验证使用故障注入代理，公开入口的结果来自实际部署。
+
+## 2026-11-23 Memory 项目身份与可见性
+
+在隔离 PostgreSQL、Redis 和 artifact-go `v0.5.1` HTTP 测试服务上，启用 `ARTIFACT_TEST_PG_DSN`，以 `GOWORK=off` 执行全仓 `go test -mod=readonly -race -json -count=1 -timeout=120s ./...`。1,013 项通过、18 项沙箱或 Kubernetes 环境用例跳过、0 项失败，计数包含子测试。`go vet ./...`、`go build ./...`、`make doc`、改动 Go 文件的 `gofmt` 检查和 `git diff --check` 通过。
+
+- Memory HTTP 与服务用例覆盖项目维护、本人及精确项目隔离、撤销读权限后的详情和历史、撤销写权限后的同键重放以及 Pending 恢复。
+- 聊天和应用执行用例覆盖项目召回重放、撤权和受众过滤。Artifact 联合用例覆盖项目归档的固定版本、出站身份头和撤权后的 Memory 历史读取。
+
+本轮 Forge 权限验证使用受控 HTTP 响应，Artifact 使用测试身份解析器。真实服务和公开入口的结果见 [OrbStack 联合验收](#2026-11-23-orbstack-memory-项目维护联合验收)。
+
 ## 2026-11-19 OrbStack Worker 冻结项目记忆与接管
 
 临时探针 `TestOrbStackWorkerFrozenProjectRecall` 使用 API `7ff5db4` 的应用执行提交路径、OrbStack PostgreSQL 的独立 schema，以及从 Worker `313aeb5` 构建的两个 `cmd/worker` 进程。Worker 按该提交的 `go.mod` 使用 API 模块 `976d526`，构建时设置 `GOWORK=off` 和 `-mod=readonly`。本次使用受控项目授权、Artifact、模型和工具响应。真实 Forge 和 Artifact 的提交授权验证见前一天的记录。

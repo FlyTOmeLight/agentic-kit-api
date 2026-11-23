@@ -418,6 +418,7 @@ func (s *MemoryArchive) identityFor(binding *memory.ArtifactBinding, requestID s
 	}
 	if binding.UserID != "" {
 		user := binding.UserID
+		identity.PropagatedUserID = user
 		identity.ResourceUserID = &user
 	}
 	return identity

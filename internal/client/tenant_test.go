@@ -32,6 +32,85 @@ func testTenant(t *testing.T, handler http.HandlerFunc) *Tenant {
 	return tenant
 }
 
+func TestTenantCanWriteProject(t *testing.T) {
+	for _, test := range []struct {
+		name, response, responseTenant, responseProject string
+		wantAllowed, wantError                          bool
+	}{
+		{name: "write action", wantAllowed: true},
+		{name: "write disabled"},
+		{name: "tenant mismatch", responseTenant: "other-tenant"},
+		{name: "project mismatch", responseProject: "other-project"},
+		{name: "upstream error", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tenant := testTenant(t, func(w http.ResponseWriter, request *http.Request) {
+				if request.Method != http.MethodPost ||
+					request.URL.Path != "/internal/v1/access/check" {
+					t.Errorf(
+						"unexpected Forge access request: %s %s",
+						request.Method,
+						request.URL.Path,
+					)
+				}
+				if request.Header.Get("Authorization") != "Bearer "+strings.Repeat("k", 32) {
+					t.Error("missing service credential")
+				}
+				var check struct {
+					UserID    string `json:"user_id"`
+					TenantID  string `json:"tenant_id"`
+					ProjectID string `json:"project_id"`
+					Action    string `json:"action"`
+				}
+				if err := json.NewDecoder(request.Body).Decode(&check); err != nil {
+					t.Error(err)
+				}
+				if check.UserID != "user" || check.TenantID != "tenant" ||
+					check.ProjectID != "project" || check.Action != "write" {
+					t.Errorf("unexpected Forge access request body: %+v", check)
+				}
+				if test.wantError {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = w.Write([]byte("forge unavailable"))
+					return
+				}
+				responseTenant := test.responseTenant
+				if responseTenant == "" {
+					responseTenant = "tenant"
+				}
+				responseProject := test.responseProject
+				if responseProject == "" {
+					responseProject = "project"
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"allowed":    test.wantAllowed,
+					"write":      test.wantAllowed,
+					"tenant_id":  responseTenant,
+					"project_id": responseProject,
+				})
+			})
+			allowed, err := tenant.CanWriteProject(t.Context(), "user", access.Scope{
+				TenantID: "tenant", ProjectID: "project",
+			})
+			if test.wantError {
+				if err == nil {
+					t.Fatal("expected upstream error to propagate")
+				}
+				if allowed {
+					t.Fatal("upstream error was allowed")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if allowed != test.wantAllowed {
+				t.Fatalf("allowed=%v want=%v", allowed, test.wantAllowed)
+			}
+		})
+	}
+}
+
 func TestTenantUserScope(t *testing.T) {
 	for _, test := range []struct {
 		name, tenant, project string
