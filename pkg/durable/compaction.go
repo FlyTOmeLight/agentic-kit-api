@@ -2,7 +2,10 @@ package durable
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+
+	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
@@ -19,7 +22,7 @@ func (s *Store) CompactionContext(ctx context.Context, l Lease) (ContextProjecti
 		return ContextProjection{}, err
 	}
 	defer tx.Rollback()
-	run, err := lockLease(ctx, tx, l)
+	run, err := lockLease(ctx, table.TenantQuery(ctx, tx), l)
 	if err != nil {
 		return ContextProjection{}, err
 	}
@@ -54,18 +57,42 @@ func (s *Store) CompactRun(ctx context.Context, l Lease, summary string, firstKe
 		return err
 	}
 	defer tx.Rollback()
-	run, err := lockLease(ctx, tx, l)
+	run, err := lockLease(ctx, table.TenantQuery(ctx, tx), l)
 	if err != nil {
 		return err
 	}
 	if firstKeptSeq == run.FirstKeptSeq && summary == run.CompactedSummary {
 		return tx.Commit().Error
 	}
-	if firstKeptSeq <= run.FirstKeptSeq {
+	if firstKeptSeq < run.FirstKeptSeq {
 		return ErrConflict
 	}
+	if firstKeptSeq > run.FirstKeptSeq {
+		if err = validateCompactionBoundary(tx, run, firstKeptSeq); err != nil {
+			return err
+		}
+	}
+	if err = table.TenantQuery(ctx, tx.Model(&table.Run{})).
+		Where("id = ?", l.RunID).
+		Updates(map[string]any{
+			"compacted_summary": summary,
+			"first_kept_seq":    firstKeptSeq,
+		}).
+		Error; err != nil {
+		return err
+	}
+	if err = emit(ctx, tx, l.RunID, "RunCompacted", map[string]any{
+		"firstKeptSeq":  firstKeptSeq,
+		"summaryLength": len(summary),
+	}); err != nil {
+		return err
+	}
+	return tx.Commit().Error
+}
+
+func validateCompactionBoundary(tx *gorm.DB, run *Run, firstKeptSeq int64) error {
 	var rows []table.Message
-	if err = tx.Where("run_id = ? AND session_id = ? AND seq >= ?", run.ID, run.SessionID, run.FirstKeptSeq).
+	if err := tx.Where("run_id = ? AND session_id = ? AND seq >= ?", run.ID, run.SessionID, run.FirstKeptSeq).
 		Order("seq").Find(&rows).Error; err != nil {
 		return err
 	}
@@ -103,22 +130,7 @@ func (s *Store) CompactRun(ctx context.Context, l Lease, summary string, firstKe
 	if len(pending) != 0 || (!boundaryFound && firstKeptSeq != rows[len(rows)-1].Seq+1) {
 		return ErrConflict
 	}
-	if err = tx.Model(&table.Run{}).
-		Where("id = ?", l.RunID).
-		Updates(map[string]any{
-			"compacted_summary": summary,
-			"first_kept_seq":    firstKeptSeq,
-		}).
-		Error; err != nil {
-		return err
-	}
-	if err = emit(ctx, tx, l.RunID, "RunCompacted", map[string]any{
-		"firstKeptSeq":  firstKeptSeq,
-		"summaryLength": len(summary),
-	}); err != nil {
-		return err
-	}
-	return tx.Commit().Error
+	return nil
 }
 
 // RecordCompactionFailure keeps a failed summarization observable without
@@ -132,11 +144,46 @@ func (s *Store) RecordCompactionFailure(ctx context.Context, l Lease, reason str
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := lockLease(ctx, tx, l); err != nil {
+	if _, err := lockLease(ctx, table.TenantQuery(ctx, tx), l); err != nil {
 		return err
 	}
 	if err := emit(ctx, tx, l.RunID, "CompactionFailed", map[string]any{
 		"reason": reason,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit().Error
+}
+
+// RecordModelOverflow saves the recovery checkpoint and its rejection event
+// together while the worker still owns the run.
+func (s *Store) RecordModelOverflow(
+	ctx context.Context,
+	l Lease,
+	attempt int,
+	detail string,
+	state json.RawMessage,
+) error {
+	if attempt < 1 || strings.TrimSpace(detail) == "" || !json.Valid(state) {
+		return ErrInvalid
+	}
+	tx := s.db.WithContext(ctx).Begin()
+	if err := tx.Error; err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := lockLease(ctx, table.TenantQuery(ctx, tx), l); err != nil {
+		return err
+	}
+	if err := table.TenantQuery(ctx, tx.Model(&table.Run{})).
+		Where("id = ?", l.RunID).
+		Updates(map[string]any{"state": string(state), "updated_at": gorm.Expr("clock_timestamp()")}).
+		Error; err != nil {
+		return err
+	}
+	if err := emit(ctx, tx, l.RunID, "ModelOverflowRejected", map[string]any{
+		"attempt": attempt,
+		"detail":  detail,
 	}); err != nil {
 		return err
 	}

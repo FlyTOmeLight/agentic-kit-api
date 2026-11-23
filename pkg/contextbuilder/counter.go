@@ -1,19 +1,30 @@
 package contextbuilder
 
-const ByteEstimateVersion = "utf8-byte-estimate-v1"
+import "unicode"
 
-type byteEstimateCounter struct{}
+const CJKWeightedCounterVersion = "cjk-weighted-v1"
 
-func (byteEstimateCounter) Count(text string) int64 {
-	return int64(len(text))
+type cjkWeightedCounter struct{}
+
+func (cjkWeightedCounter) Count(text string) int64 {
+	var weighted int64
+	for _, r := range text {
+		weighted++
+		if unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hangul, r) ||
+			unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hiragana, r) ||
+			(r >= 0x3000 && r <= 0x303f) || (r >= 0xff00 && r <= 0xffef) {
+			weighted++
+		}
+	}
+	return (weighted + 2) / 3
 }
 
 func ResolveCounter(version string) (Counter, error) {
 	switch version {
 	case "":
 		return nil, nil
-	case ByteEstimateVersion:
-		return byteEstimateCounter{}, nil
+	case CJKWeightedCounterVersion:
+		return cjkWeightedCounter{}, nil
 	default:
 		return nil, ErrUnsupportedCounter
 	}

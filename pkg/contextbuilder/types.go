@@ -6,15 +6,13 @@ package contextbuilder
 import "encoding/json"
 
 const (
-	PolicyVersionV1 = "context-v1"
-	PolicyVersionV2 = "context-v2"
-	PolicyVersionV3 = "context-v3"
+	PolicyVersionV4              = "context-v4"
+	DefaultKeepFullToolResults   = 1
+	DefaultKeepRecentToolResults = 3
+	DefaultLadderPreviewBytes    = 4096
+	DefaultStubHeadRunes         = 200
+	DefaultArgFieldPreviewBytes  = 1024
 )
-
-// DefaultKeepRecentToolResults is the number of newest tool results kept in
-// full when the current turn must be folded under budget. Older results remain
-// paired with their calls but are replaced by a short projection marker.
-const DefaultKeepRecentToolResults = 3
 
 type Role string
 
@@ -38,6 +36,9 @@ type Message struct {
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
 	ToolCallID string     `json:"toolCallID,omitempty"`
+	ToolName   string     `json:"toolName,omitempty"`
+	ToolFailed bool       `json:"toolFailed,omitempty"`
+	Exempt     bool       `json:"exempt,omitempty"`
 }
 
 // ToolDefinition is counted as required protocol input. It is not rendered
@@ -84,15 +85,16 @@ type MessageGroup struct {
 // ordered oldest to newest and each group is atomic.
 type FrozenMaterials struct {
 	SystemInstruction string           `json:"systemInstruction"`
+	BaseSummary       string           `json:"baseSummary,omitempty"`
 	Tools             []ToolDefinition `json:"tools,omitempty"`
 	Memory            []ContextBlock   `json:"memory,omitempty"`
 	History           []MessageGroup   `json:"history,omitempty"`
 }
 
-// Policy versions composition, ordering and omission rules. KeepRecentToolResults
-// applies to context-v3 and is frozen with the Run; zero means the default.
+// Policy versions composition and reduction rules. Zero keep counts use the defaults.
 type Policy struct {
 	Version               string `json:"version"`
+	KeepFullToolResults   int    `json:"keepFullToolResults,omitempty"`
 	KeepRecentToolResults int    `json:"keepRecentToolResults,omitempty"`
 }
 
@@ -128,12 +130,23 @@ type Counter interface {
 	Count(text string) int64
 }
 
+type PinnedBlock struct {
+	Label   string `json:"label"`
+	Content string `json:"content"`
+}
+
 type BuildInput struct {
-	FrozenMaterials FrozenMaterials
-	CurrentTurn     []Message
-	Policy          Policy
-	Budget          Budget
-	Counter         Counter
+	FrozenMaterials        FrozenMaterials
+	CurrentTurn            []Message
+	Policy                 Policy
+	Budget                 Budget
+	Counter                Counter
+	CompactedSummary       string
+	PinnedBlocks           []PinnedBlock
+	Steers                 []string
+	TargetInputTokens      int64
+	TargetInputBytes       int64
+	AllowDropCurrentRounds bool
 }
 
 type Usage struct {
@@ -158,4 +171,8 @@ type BuildResult struct {
 	OmittedSources       []OmittedSource `json:"omittedSources,omitempty"`
 	CollapsedSources     []Source        `json:"collapsedSources,omitempty"`
 	ProjectedToolResults int             `json:"projectedToolResults,omitempty"`
+	LadderPreviewed      int             `json:"ladderPreviewed,omitempty"`
+	LadderStubbed        int             `json:"ladderStubbed,omitempty"`
+	DroppedRounds        int             `json:"droppedRounds,omitempty"`
+	TargetMet            bool            `json:"targetMet"`
 }

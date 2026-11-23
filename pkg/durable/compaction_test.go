@@ -53,24 +53,14 @@ func TestCompactionBoundaryAndAudit(t *testing.T) {
 	if err = store.CompactRun(ctx, claimed.Lease(), "summary", 5); err != nil {
 		t.Fatalf("idempotent replay: %v", err)
 	}
-	for _, change := range []struct {
-		summary  string
-		boundary int64
-	}{{summary: "different", boundary: 5}, {summary: "summary", boundary: 2}} {
-		if err = store.CompactRun(
-			ctx,
-			claimed.Lease(),
-			change.summary,
-			change.boundary,
-		); !errors.Is(
-			err,
-			ErrConflict,
-		) {
-			t.Fatalf("changed or backward boundary accepted: %v", err)
-		}
+	if err = store.CompactRun(ctx, claimed.Lease(), "tighter summary", 5); err != nil {
+		t.Fatalf("same-boundary summary update: %v", err)
+	}
+	if err = store.CompactRun(ctx, claimed.Lease(), "summary", 2); !errors.Is(err, ErrConflict) {
+		t.Fatalf("backward boundary: %v", err)
 	}
 	projection, err := store.CompactionContext(ctx, claimed.Lease())
-	if err != nil || projection.FirstKeptSeq != 5 || projection.Summary != "summary" ||
+	if err != nil || projection.FirstKeptSeq != 5 || projection.Summary != "tighter summary" ||
 		len(projection.Messages) != 2 || projection.Messages[0].Seq != 5 {
 		t.Fatalf("projection = %+v, error %v", projection, err)
 	}
@@ -88,14 +78,14 @@ func TestCompactionBoundaryAndAudit(t *testing.T) {
 			count++
 		}
 	}
-	if count != 1 {
-		t.Fatalf("compaction events = %d, want 1", count)
+	if count != 2 {
+		t.Fatalf("compaction events = %d, want 2", count)
 	}
 	if err = store.RecordCompactionFailure(ctx, claimed.Lease(), "provider unavailable"); err != nil {
 		t.Fatal(err)
 	}
 	saved, err := store.Get(ctx, "owner", run.ID)
-	if err != nil || saved.CompactedSummary != "summary" || saved.FirstKeptSeq != 5 {
+	if err != nil || saved.CompactedSummary != "tighter summary" || saved.FirstKeptSeq != 5 {
 		t.Fatalf("failed summarization moved projection: %+v %v", saved, err)
 	}
 	if err = store.Cancel(ctx, "owner", run.ID); err != nil {

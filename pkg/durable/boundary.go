@@ -92,6 +92,17 @@ func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 			return err
 		}
 	}
+	if b.Kind == BoundaryComplete && run.CompactedSummary != "" && run.FirstKeptSeq > 0 {
+		through := run.FirstKeptSeq - 1
+		if err = table.TenantQuery(ctx, tx.Model(&table.Session{})).
+			Where("id = ? AND owner_id = ? AND compacted_through_seq <= ?", run.SessionID, run.OwnerID, through).
+			Updates(map[string]any{
+				"compacted_summary":     run.CompactedSummary,
+				"compacted_through_seq": through,
+			}).Error; err != nil {
+			return err
+		}
+	}
 	payload := map[string]any{
 		"status":      status,
 		"output":      b.Output,

@@ -29,7 +29,7 @@ func testSnapshot(mode MemoryMode) Snapshot {
 				},
 			}},
 		},
-		Policy: Policy{Version: PolicyVersionV1},
+		Policy: Policy{Version: PolicyVersionV4},
 		Budget: Budget{MaxInputBytes: 4096, CounterVersion: "test-v1"},
 	}
 	if mode == MemoryRecall {
@@ -49,7 +49,7 @@ func TestSnapshotRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if envelope.Format != SnapshotFormatV1 || envelope.PolicyVersion != PolicyVersionV1 ||
+			if envelope.Format != SnapshotFormatV1 || envelope.PolicyVersion != PolicyVersionV4 ||
 				envelope.Digest == "" {
 				t.Fatalf("bad envelope: %+v", envelope)
 			}
@@ -156,21 +156,22 @@ func TestSnapshotRejectsUnknownFormatAndPolicy(t *testing.T) {
 	}
 }
 
-func TestSnapshotRoundTripV3(t *testing.T) {
+func TestSnapshotRoundTripV4(t *testing.T) {
 	snapshot := testSnapshot(MemoryOff)
-	snapshot.Policy = Policy{Version: PolicyVersionV3, KeepRecentToolResults: 2}
+	snapshot.Materials.BaseSummary = "prior progress"
+	snapshot.Policy = Policy{Version: PolicyVersionV4, KeepFullToolResults: 1, KeepRecentToolResults: 2}
 	envelope, err := EncodeSnapshot(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if envelope.PolicyVersion != PolicyVersionV3 {
-		t.Fatalf("policy version %q, want %q", envelope.PolicyVersion, PolicyVersionV3)
+	if envelope.PolicyVersion != PolicyVersionV4 {
+		t.Fatalf("policy version %q, want %q", envelope.PolicyVersion, PolicyVersionV4)
 	}
 	decoded, err := DecodeSnapshot(envelope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Policy != snapshot.Policy {
+	if decoded.Policy != snapshot.Policy || decoded.Materials.BaseSummary != snapshot.Materials.BaseSummary {
 		t.Fatalf("policy %+v, want %+v", decoded.Policy, snapshot.Policy)
 	}
 }

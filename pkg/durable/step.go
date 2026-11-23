@@ -10,6 +10,31 @@ import (
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
+// ReadStepResult restores a completed tool result for the current run.
+func (s *Store) ReadStepResult(ctx context.Context, l Lease, stepID string) (string, error) {
+	if stepID == "" {
+		return "", ErrInvalid
+	}
+	tx := s.db.WithContext(ctx).Begin()
+	if err := tx.Error; err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if _, err := lockLease(ctx, table.TenantQuery(ctx, tx), l); err != nil {
+		return "", err
+	}
+	var step table.Step
+	if err := tx.Select("result").
+		Where("run_id = ? AND step_id = ? AND status = ?", l.RunID, stepID, "Completed").
+		Take(&step).Error; err != nil {
+		return "", recordError(err)
+	}
+	if err := tx.Commit().Error; err != nil {
+		return "", err
+	}
+	return step.Result, nil
+}
+
 // BeginStep records intent BEFORE invoking a remote tool. A repeated Unsafe
 // step whose outcome is unknown returns StepUncertain so the executor pauses
 // for review instead of repeating the call.

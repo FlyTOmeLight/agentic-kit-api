@@ -2,6 +2,20 @@
 
 本文件按日期保留历史检查结果，条目中的路径、版本和限制描述当时的实现。当前功能、布局和契约分别以 README、docs/layout.md 和 docs/api.md 为准；可复用经验见 docs/lessons/。
 
+## 2026-11-23 上下文压缩 v4 与溢出自愈
+
+在基于 `origin/main` 的隔离工作树 `feat/context-v4-compression`（API）与 `feat/context-v4-compression-worker`（Worker）完成移植与联合验证，保留上游 Memory 作用域隔离、PR #20 续跑快照与 PR #7 已计费摘要持久化及 `RecordDecision` 失败保护。
+
+- API 侧收敛到 `context-v4` 与 `cjk-weighted-v1`（配置窗口时 `MaxToolResultBytes` 上限为输入 token 预算的一半，最低 128 字节），实现历史两级裁剪 + 当前轮参数/结果分级压缩 + 可选整轮淘汰与固定初始问题、仅在 `BoundaryComplete` 推进的 Session 级摘要/水位（`compacted_summary` / `compacted_through_seq`）、`ModelOverflowRejected` 审计与租约保护的 `ReadStepResult`。
+- Worker 侧在 `boundaryModel` 统一经 `context-v4` 组装模型输入、保存 `UsageAnchor` 与连续 3 次摘要失败熔断计数、对明确零用量溢出错误做最多 5 次缩小重派发（耗尽进入 `Failed`，消费未知保持 `Blocked` 由 `Unblock` 恢复），并在启用工具或工具集时挂载只读 `read_step_result` 按 UTF-8 字节分页读取原始步骤结果。
+
+验证连接本地 PostgreSQL（`127.0.0.1:55432`）和 Redis（`127.0.0.1:56379`）：
+
+- API（`GOWORK=off`）：`go test -mod=readonly -race -count=1 -timeout=120s ./...`、`go vet -mod=readonly ./...`、`go build -mod=readonly ./...` 与 `make doc` 全部通过（退出码 `0`，`pkg/contextbuilder` 1.425s、`pkg/durable` 43.455s、`service` 13.567s、`internal/app/memory` 18.441s、`internal/sandboxcenter` 24.166s）；未设置 `SANDBOX_E2E_K8S_CONTEXT`、`ARTIFACT_TEST_PG_DSN` 或一次性探针开关的用例跳过。
+- Worker（临时 `go.work` 指向上述 API 工作树）：`go test -race -count=1 -timeout=180s ./...` 与 `go vet ./...` 全部通过（退出码 `0`，`internal/engine` 83.120s、`internal/adapters` 1.862s、`internal/adapters/aio` 1.602s、`internal/adapters/sandbox` 6.956s、`internal/config` 1.662s、`internal/service` 1.685s），覆盖 HTTP 400 恢复与耗尽、502/断连人工 `Unblock`、滚动分块摘要、熔断接管、父上下文取消后已计费摘要持久化（`TestBilledSummaryPersistsAfterParentCancel`）、`read_step_result` 分页与跨进程强杀接管；未设置 `SANDBOX_E2E_K8S_CONTEXT`、`SANDBOX_CENTER_URL`、`TEST_AIO_URL` 的用例跳过。
+
+未验证范围：本次使用受控 HTTP 模型与工具替身，未用真实在线 LLM 供应商检验实际 400 上下文溢出错误体覆盖度；API 合入前 Worker 通过未跟踪 `go.work` 联调，待 API 提交固定到 Worker `go.mod` 后仍需再执行一次 `GOWORK=off` 独立构建与集成测试。
+
 ## 2026-11-23 OrbStack Forge 网关归档撤权复测
 
 **联合验收通过。** OrbStack 的 `forge-artifact` 换用本地镜像 `artifact-go:memory-archive-scope-20261123`，健康检查返回 `200`。Forge Tenant API 仍为 `v0.13.0`。`TestOrbStackMemoryGatewayRevocation` 以 `go test -mod=readonly -race` 启动当前 Memory HTTP 路由，连接真实 Artifact 与 Forge，并经 `forge-web` 执行项目角色变更。原有网关转发出现请求超时，复测使用同一 `forge-web` Service 的独立本地端口转发。

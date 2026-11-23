@@ -114,6 +114,12 @@ type ContextInfo struct {
 	OmittedSources       []Source `json:"omittedSources,omitempty"`
 	CollapsedSources     []Source `json:"collapsedSources,omitempty"`
 	ProjectedToolResults int      `json:"projectedToolResults,omitempty"`
+	LadderPreviewed      int      `json:"ladderPreviewed,omitempty"`
+	LadderStubbed        int      `json:"ladderStubbed,omitempty"`
+	DroppedRounds        int      `json:"droppedRounds,omitempty"`
+	UsedUsageAnchor      bool     `json:"usedUsageAnchor,omitempty"`
+	ReactiveAttempt      int      `json:"reactiveAttempt,omitempty"`
+	SummaryBreakerOpen   bool     `json:"summaryBreakerOpen,omitempty"`
 }
 
 // Source identifies one frozen material for stable ordering and omission
