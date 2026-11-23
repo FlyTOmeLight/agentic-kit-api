@@ -23,11 +23,12 @@ import (
 var _ host.Service = (*API)(nil)
 
 type Authentication struct {
-	User        []core.HandlerFunc
-	Service     []core.HandlerFunc
-	Propagation []core.HandlerFunc
-	Callback    []core.HandlerFunc
-	ProjectRead access.ProjectReadCheck
+	User         []core.HandlerFunc
+	Service      []core.HandlerFunc
+	Propagation  []core.HandlerFunc
+	Callback     []core.HandlerFunc
+	ProjectRead  access.ProjectReadCheck
+	ProjectWrite access.ProjectWriteCheck
 }
 
 type API struct {

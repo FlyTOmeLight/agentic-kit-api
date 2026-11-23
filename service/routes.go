@@ -45,7 +45,9 @@ func newRoutes(
 	pricing execution.PricingCatalog,
 ) *routes {
 	exec := appexec.NewService(store, artifact).WithPricing(pricing)
-	memorySvc := appmemory.NewService(store.DB(), archive)
+	memorySvc := appmemory.NewService(store.DB(), archive).
+		WithProjectReadCheck(authentication.ProjectRead).
+		WithProjectWriteCheck(authentication.ProjectWrite)
 	exec = exec.WithMemoryRecaller(memorySvc).WithProjectReadCheck(authentication.ProjectRead)
 	r := &routes{
 		agent:           agent.NewController(agent.NewService(store.DB(), artifact)),

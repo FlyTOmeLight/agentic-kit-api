@@ -11,6 +11,8 @@ type scopeKey struct{}
 
 type ProjectReadCheck func(ctx context.Context, userID string, scope Scope) (bool, error)
 
+type ProjectWriteCheck func(ctx context.Context, userID string, scope Scope) (bool, error)
+
 type projectReadKey struct{}
 
 type projectRead struct {

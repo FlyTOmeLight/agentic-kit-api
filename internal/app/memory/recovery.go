@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/access"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
@@ -70,6 +71,19 @@ func (s *Service) ResumePending(ctx context.Context, limit int) (int, error) {
 			continue
 		}
 		opCtx, cancel := context.WithTimeout(ctx, resumeBudget)
+		if err := s.checkProjectWrite(opCtx, op.OwnerID, access.Scope{
+			TenantID: op.TenantID, ProjectID: doc.Scope.Project,
+		}); err != nil {
+			cancel()
+			errs = append(errs, fmt.Errorf("resume memory operation %s: %w", op.ID, err))
+			if touchErr := s.deferPendingOperation(ctx, op.ID); touchErr != nil {
+				errs = append(
+					errs,
+					fmt.Errorf("resume memory operation %s: defer receipt: %w", op.ID, touchErr),
+				)
+			}
+			continue
+		}
 		archived, err := s.Archive(opCtx, op)
 		if !archived {
 			cancel()

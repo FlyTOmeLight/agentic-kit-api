@@ -54,6 +54,17 @@ func (t *Tenant) CanReadProject(ctx context.Context, userID string, scope access
 		result.ProjectID == scope.ProjectID, nil
 }
 
+func (t *Tenant) CanWriteProject(ctx context.Context, userID string, scope access.Scope) (bool, error) {
+	result, err := t.client.CheckAccess(ctx, &tenantv1.CheckAccessRequest{
+		UserID: userID, TenantID: scope.TenantID, ProjectID: scope.ProjectID, Action: tenantv1.AccessWrite,
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.Allowed && result.Write && result.TenantID == scope.TenantID &&
+		result.ProjectID == scope.ProjectID, nil
+}
+
 func (t *Tenant) User() []core.HandlerFunc {
 	return []core.HandlerFunc{
 		tenantv1.MiddlewareAuthorization(tenantv1.AuthorizationConfig{

@@ -179,10 +179,12 @@ const (
 // @Success 200 {object} agenticv1.Run "幂等重放"
 // @Failure 400 {object} serrors.Error "参数无效"
 // @Failure 401 {object} serrors.Error "身份校验失败"
+// @Failure 403 {object} serrors.Error "召回作用域不匹配或缺少项目读权限"
 // @Failure 404 {object} serrors.Error "资源不存在"
 // @Failure 409 {object} serrors.Error "版本、任务状态、评测条件或幂等标识冲突"
 // @Failure 413 {object} serrors.Error "请求体超过限制"
 // @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "记忆或依赖暂不可用"
 // @Router /v1/sessions/{id}/messages [post]
 func (h *Controller) submitMessage(c *core.Context) {
 	var req sdk.SendMessageRequest

@@ -78,14 +78,36 @@ func (s *Service) prepareChat(
 	memorySelection memory.Selection,
 	filter memory.RecallFilter,
 ) (execpkg.SubmitCommand, durable.PrepareSubmission, *execpkg.Run, error) {
+	var conversation table.Session
+	if memorySelection == memory.SelectionRecall {
+		scope, verified := access.FromContext(ctx)
+		if !verified || scope.TenantID == "" || owner == "" {
+			return execpkg.SubmitCommand{}, nil, nil, memory.ErrForbidden
+		}
+		var err error
+		ctx, err = s.authorizeProjectRecall(ctx, owner, scope)
+		if err != nil {
+			return execpkg.SubmitCommand{}, nil, nil, err
+		}
+		conversation, err = table.GetSession(s.store.DB().WithContext(ctx), owner, session)
+		if err != nil {
+			return execpkg.SubmitCommand{}, nil, nil, recordError(err)
+		}
+		if conversation.ProjectID != scope.ProjectID {
+			return execpkg.SubmitCommand{}, nil, nil, memory.ErrForbidden
+		}
+	}
 	hash := chatRequestHash(session, query, memorySelection, filter)
 	if run, err := s.replay(ctx, owner, key, hash); err != nil || run != nil {
 		return execpkg.SubmitCommand{}, nil, run, err
 	}
 	db := s.store.DB().WithContext(ctx)
-	conversation, err := table.GetSession(db, owner, session)
-	if err != nil {
-		return execpkg.SubmitCommand{}, nil, nil, recordError(err)
+	if conversation.ID == "" {
+		var err error
+		conversation, err = table.GetSession(db, owner, session)
+		if err != nil {
+			return execpkg.SubmitCommand{}, nil, nil, recordError(err)
+		}
 	}
 	agentRow, err := table.GetAgent(db, owner, conversation.AgentID)
 	if err != nil {
@@ -133,26 +155,14 @@ func (s *Service) SubmitApplication(
 			return nil, false, agent.ErrInvalid
 		}
 	}
-	if memorySelection == memory.SelectionRecall && spec.Scope != nil {
-		if spec.Scope.ActorID != owner {
+	if memorySelection == memory.SelectionRecall {
+		if !verified || spec.Scope == nil || owner == "" || spec.Scope.ActorID != owner {
 			return nil, false, memory.ErrForbidden
 		}
-		if spec.Scope.ProjectID != "" {
-			if !verified || owner == "" || s.projectReadCheck == nil {
-				return nil, false, memory.ErrForbidden
-			}
-			allowed, err := s.projectReadCheck(ctx, owner, scope)
-			if err != nil {
-				return nil, false, fmt.Errorf(
-					"%w: Forge project read check: %w",
-					memory.ErrUnavailable,
-					err,
-				)
-			}
-			if !allowed {
-				return nil, false, memory.ErrForbidden
-			}
-			ctx = access.WithProjectRead(ctx, owner, scope)
+		var err error
+		ctx, err = s.authorizeProjectRecall(ctx, owner, scope)
+		if err != nil {
+			return nil, false, err
 		}
 	}
 	hash := applicationRequestHash(spec, ttl, memorySelection, filter)
@@ -190,6 +200,27 @@ func (s *Service) SubmitApplication(
 		cmd,
 		durable.PrepareApplicationSubmission(config, agentRow.ID, spec.AgentVersion, s.recaller),
 	)
+}
+
+func (s *Service) authorizeProjectRecall(
+	ctx context.Context,
+	owner string,
+	scope access.Scope,
+) (context.Context, error) {
+	if scope.ProjectID == "" {
+		return ctx, nil
+	}
+	if owner == "" || s.projectReadCheck == nil {
+		return nil, memory.ErrForbidden
+	}
+	allowed, err := s.projectReadCheck(ctx, owner, scope)
+	if err != nil {
+		return nil, fmt.Errorf("%w: Forge project read check: %w", memory.ErrUnavailable, err)
+	}
+	if !allowed {
+		return nil, memory.ErrForbidden
+	}
+	return access.WithProjectRead(ctx, owner, scope), nil
 }
 
 func normalizeMemorySelection(selection memory.Selection) memory.Selection {

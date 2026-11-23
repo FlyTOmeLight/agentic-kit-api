@@ -17,6 +17,7 @@ import (
 
 	artifactservice "github.com/FlyTOmeLight/artifact-go/service"
 	"github.com/FlyTOmeLight/artifact-go/tests/fixture"
+	"github.com/FlyTOmeLight/server-go/constants"
 	"github.com/FlyTOmeLight/server-go/db"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 
@@ -275,6 +276,7 @@ func TestArtifactIntegrationActorPrivate(t *testing.T) {
 		"authorized": {TenantID: tenant, UserID: owner},
 	})
 	svc, _ := testServiceWithArchive(t, realArtifactStore(t, server.URL, "authorized"))
+	svc.WithProjectReadCheck(allowMemoryProject)
 	ctx := access.WithScope(context.Background(), access.Scope{TenantID: tenant})
 	project := access.WithScope(ctx, access.Scope{TenantID: tenant, ProjectID: "project"})
 	doc := factDocument(memory.Scope{Kind: memory.ScopeActorPrivate, Tenant: tenant}, "editor", "first", "tabs")
@@ -380,6 +382,41 @@ func TestArtifactIntegrationActorPrivate(t *testing.T) {
 	}
 }
 
+func TestArtifactIntegrationActorProject(t *testing.T) {
+	const tenant, project, owner = "tenant", "project", "owner"
+	binding := memory.ArtifactBinding{TenantID: tenant, ProjectID: project, UserID: owner}
+	server := realArtifactServer(t, map[string]memory.ArtifactBinding{"authorized": binding})
+	svc, _ := testServiceWithArchive(t, realArtifactStore(t, server.URL, "authorized"))
+	readAllowed := true
+	svc.WithProjectReadCheck(func(_ context.Context, user string, scope access.Scope) (bool, error) {
+		return readAllowed && user == owner && scope.TenantID == tenant && scope.ProjectID == project, nil
+	}).WithProjectWriteCheck(allowMemoryProject)
+	ctx := access.WithScope(context.Background(), access.Scope{TenantID: tenant, ProjectID: project})
+	doc := factDocument(memory.Scope{
+		Kind: memory.ScopeActorProject, Tenant: tenant, Project: project,
+	}, "editor", "project preference", "tabs")
+	doc.OutputVisibility = memory.OutputProject
+	entry, err := svc.Create(ctx, owner, owner, "create", doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Binding == nil || entry.Binding.TenantID != tenant ||
+		entry.Binding.ProjectID != project || entry.Binding.UserID != owner ||
+		entry.ActiveVersionRef == nil {
+		t.Fatalf("project archive binding: %+v", entry)
+	}
+	versionID := entry.ActiveVersionRef.VersionID
+	version, err := svc.GetVersion(ctx, owner, entry.ID, versionID)
+	if err != nil || version.Document.Scope != entry.Scope ||
+		version.Document.OutputVisibility != memory.OutputProject {
+		t.Fatalf("project archive version: %+v, %v", version, err)
+	}
+	readAllowed = false
+	if _, err := svc.GetVersion(ctx, owner, entry.ID, versionID); !errors.Is(err, memory.ErrNotFound) {
+		t.Fatalf("revoked project history access: %v", err)
+	}
+}
+
 func realArtifactServer(t *testing.T, grants map[string]memory.ArtifactBinding) *httptest.Server {
 	t.Helper()
 	database := fixture.Open(t, db.DriverPostgreSQL)
@@ -395,7 +432,10 @@ func realArtifactServer(t *testing.T, grants map[string]memory.ArtifactBinding) 
 		}
 		if request.Header.Get("x-forge-tenant-id") != grant.TenantID ||
 			request.Header.Get("x-forge-project-id") != grant.ProjectID ||
-			request.Header.Get("X-Resource-User-ID") != grant.UserID {
+			request.Header.Get("X-Resource-User-ID") != grant.UserID ||
+			request.Header.Get(constants.HeaderImpersonateTenantID) != grant.TenantID ||
+			request.Header.Get(constants.HeaderImpersonateProjectID) != grant.ProjectID ||
+			request.Header.Get(constants.HeaderImpersonateUserID) != grant.UserID {
 			return artifactservice.RequestIdentity{}, serrors.NewError(
 				http.StatusForbidden,
 				"Forbidden",
@@ -403,7 +443,7 @@ func realArtifactServer(t *testing.T, grants map[string]memory.ArtifactBinding) 
 			)
 		}
 		identity := artifactservice.RequestIdentity{
-			UserID: "memory-service", TenantID: grant.TenantID,
+			UserID: grant.UserID, TenantID: grant.TenantID,
 			ResourceUserID: &grant.UserID, OwnershipState: artifactservice.OwnershipActive,
 		}
 		if grant.ProjectID != "" {

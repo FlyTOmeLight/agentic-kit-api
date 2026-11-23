@@ -51,6 +51,7 @@ func (h *Controller) health(c *core.Context) { c.JSON(200, map[string]string{"st
 // @Failure 409 {object} serrors.Error "版本、任务状态或幂等标识冲突"
 // @Failure 413 {object} serrors.Error "请求体超过限制"
 // @Failure 500 {object} serrors.Error "内部错误"
+// @Failure 503 {object} serrors.Error "记忆或依赖暂不可用"
 // @Router /internal/v1/executions [post]
 func (h *Controller) submitExecution(c *core.Context) {
 	var req sdk.SubmitExecutionRequest

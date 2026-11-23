@@ -22,6 +22,12 @@ handler 测试可以覆盖绑定和响应，但无法完整验证 app.Run 装配
 
 修复测试 transport 的空项目 Header 和假服务响应后，`TestAPIFrameworkLifecycle` 及全仓 race 测试通过。证据：[生命周期测试](../../service/api_test.go)、[共享请求 transport](../../service/router_test.go)；本次结果见[验证记录](../verification.md#2026-11-16-forge-鉴权与租户隔离)。
 
+## 项目记忆撤权还要检查公开归档入口
+
+启用 `ActorProject` 远端归档的部署需要同时验证 Memory HTTP 和用户可达的 Artifact 入口。用专用用户和项目发布测试条目，撤销项目读权限后，分别验证 Memory 隐藏详情和历史、公开 Artifact 无法返回该归档版本，以及受信服务还能访问归档。
+
+OrbStack 原先部署的 Artifact `v0.5.1` 按存储归属授权，测试用户撤权后仍能读取自己的归档版本。修复在 Artifact 验证 `agent-memory` 调用方并过滤查询，覆盖网关的 `/artifact`、`/storage` 和直接访问。验收时还要验证可信服务读取同一固定版本成功，以区分权限生效和服务故障。证据见 [Forge 网关归档撤权复测](../verification.md#2026-11-23-orbstack-forge-网关归档撤权复测)。
+
 ## 恢复承诺需要跨进程故障验证
 
 恢复行为涉及独立 API、数据库、worker 执行权和已提交工具结果。只重建内存对象，无法证明进程退出后这些信息还能被新执行者正确使用。

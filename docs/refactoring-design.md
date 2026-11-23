@@ -281,7 +281,7 @@ OutputAudience表示本次结果预期可见的人群/范围，由入口授权�
 
 Archive以数据库时钟领取2分钟持久claim，事务外集合创建与发布共用1分钟HTTP总预算，claim token保护绑定与版本写回；完成或出错时释放claim，崩溃后由原请求键在claim过期后重试，远端稳定键维持幂等。配置归档时，API启动后立即执行一轮后台Pending恢复，之后每30秒一轮，单轮最多20条、预算2分钟，单条90秒；恢复复用claim、Archive和activate，只处理Create/Update/Restore，不对Rejected自动重试，停机时未完成项保持Pending。当前不提供常驻运维Pending列表；`service.Build`拥有创建的archive，`service.New`借用调用方资源，关闭规则见[布局约束](layout.md)。真实artifact部署尚未联合验证。
 
-版本历史 API 以 Applied 内容操作为索引，仅展示生效过的版本。当前召回按范围、有效性和输出可见性过滤，再按词项和标签匹配并稳定排序。人工 HTTP 维护开放 OwnerPrivate 和租户级 ActorPrivate。ActorProject 与 ProjectShared 的授权边界见 [Memory 设计](memory-design.md)。模型没有自动写入、扩域或生效权限。
+版本历史 API 以 Applied 内容操作为索引，仅展示生效过的版本。当前召回按范围、有效性和输出可见性过滤，再按词项和标签匹配并稳定排序。人工 HTTP 维护开放 OwnerPrivate、租户级 ActorPrivate 和项目内 ActorProject；ActorProject 的写授权边界见 [Memory 设计](memory-design.md)。模型没有自动写入、扩域或生效权限。
 
 本轮不实现memory_job、自动轨迹提炼、自动候选晋升、记忆工具或LLM摘要调用；后续单独设计。builder首版实现明确排序、完整消息组选择与预算裁剪，不建立空Provider占位。预算单位与实际token核算按目标模型能力确认，不采用未经验证的字节→token换算。未来提取以这些契约与适配边界为依据，当前不增加新Memory仓库、go.mod或插件注册框架。
 

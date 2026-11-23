@@ -15,6 +15,7 @@
 | 数据库租约测试把过期时间设在宿主机过去，仍返回 Pending | [数据库租约时钟](database-lease-clock.md) |
 | 测试通过，但外部依赖用例被跳过，或未覆盖真实恢复 | [验证范围](verification.md) |
 | Forge 假服务缺少可空 project 字段，或空项目 Header 导致生命周期测试返回 503 | [Forge 测试契约](verification.md#forge-假服务需要保留可空的项目字段) |
+| Memory 已拒绝撤权用户，公开 Artifact 入口仍返回该用户的项目归档版本 | [项目记忆撤权验收](verification.md#项目记忆撤权还要检查公开归档入口) |
 | Steering 消费后进程退出丢指令，或签名正文被 Query 覆盖 | [长任务边界](long-task-boundaries.md) |
 | Goal 续跑时文件丢失，或 Release 成功被误认为保存完成 | [跨 Run 工作区恢复](long-task-boundaries.md#跨-run-续跑必须等待工作区保存确认) |
 | 只检查恢复参数或手动确认检查点，未覆盖真实 Worker 与文件继承 | [Goal 跨 Run 真实集群验收](long-task-boundaries.md#goal-跨-run-恢复要验证真实文件与自动状态推进) |

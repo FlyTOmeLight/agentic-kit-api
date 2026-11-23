@@ -24,6 +24,7 @@ type MemoryRecaller interface {
 		ctx context.Context,
 		tx *gorm.DB,
 		scope memory.Scope,
+		audience memory.OutputAudience,
 		agentID string,
 		query string,
 		filter memory.RecallFilter,
@@ -273,11 +274,19 @@ func recallMaterials(
 		return nil, ErrInvalid
 	}
 	agentID := facts.SessionAgentID
+	audience := memory.AudiencePrivate
 	if facts.Kind == execution.SubmitApplication {
+		if facts.ExecutionSpec.Scope == nil || facts.ExecutionSpec.Scope.TenantID == "" ||
+			facts.ExecutionSpec.Scope.ActorID == "" {
+			return nil, memory.ErrForbidden
+		}
 		agentID = facts.ExecutionSpec.AgentID
+		if facts.ExecutionSpec.Scope.ProjectID != "" {
+			audience = memory.AudienceProject
+		}
 	}
 	scope := memoryScopeFromFacts(ctx, facts)
-	entries, err := recaller.RecallTx(ctx, tx, scope, agentID, facts.Query, facts.MemoryFilter)
+	entries, err := recaller.RecallTx(ctx, tx, scope, audience, agentID, facts.Query, facts.MemoryFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -294,13 +303,10 @@ func memoryScopeFromFacts(ctx context.Context, facts execution.SubmissionFacts) 
 		Kind: memory.ScopeOwnerPrivate, Owner: facts.Owner,
 		Tenant: requestScope.TenantID, Project: requestScope.ProjectID,
 	}
-	if facts.Kind != execution.SubmitApplication || facts.ExecutionSpec.Scope == nil {
+	if facts.Kind != execution.SubmitApplication {
 		return ownerScope
 	}
 	scope := facts.ExecutionSpec.Scope
-	if scope.TenantID == "" || scope.ActorID == "" {
-		return ownerScope
-	}
 	if scope.ProjectID == "" {
 		return memory.Scope{
 			Kind:   memory.ScopeActorPrivate,

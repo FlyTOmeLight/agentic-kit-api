@@ -67,6 +67,49 @@ func newRouterWithCallback(
 	extra func(*gin.RouterGroup),
 ) http.Handler {
 	t.Helper()
+	return newRouterWithAuthentication(
+		t, store, redisClient, newTestAuthentication(tokens), callbackCfg, extra,
+	)
+}
+
+func newTestAuthentication(tokens map[string]string) Authentication {
+	identity := func(c *gin.Context) {
+		token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		if owner := tokens[token]; owner != "" {
+			c.Set(constants.KeyUserID, owner)
+			c.Set(constants.KeyTenantID, "tenant")
+			c.Set(constants.KeyProjectID, c.GetHeader(constants.HeaderProjectID))
+			c.Request = c.Request.WithContext(access.WithScope(c.Request.Context(), access.Scope{
+				TenantID: "tenant", ProjectID: c.GetHeader(constants.HeaderProjectID),
+			}))
+		}
+		c.Next()
+	}
+	projectWrite := access.ProjectWriteCheck(
+		func(_ context.Context, _ string, scope access.Scope) (bool, error) {
+			return scope.ProjectID != "" && !strings.HasPrefix(scope.ProjectID, "denied-"), nil
+		},
+	)
+	return Authentication{
+		User:        []gin.HandlerFunc{identity},
+		Propagation: []gin.HandlerFunc{identity},
+		Callback: []gin.HandlerFunc{
+			identity,
+		},
+		ProjectWrite: projectWrite,
+		ProjectRead:  access.ProjectReadCheck(projectWrite),
+	}
+}
+
+func newRouterWithAuthentication(
+	t *testing.T,
+	store *durable.Store,
+	redisClient redis.UniversalClient,
+	authentication Authentication,
+	callbackCfg config.CallbackConfig,
+	extra func(*gin.RouterGroup),
+) http.Handler {
+	t.Helper()
 	if store == nil {
 		// Validation-only tests never reach the database.
 		store = &durable.Store{}
@@ -86,22 +129,6 @@ func newRouterWithCallback(
 	}
 	t.Cleanup(log.Close)
 	artifactServer, _ := newFakeArtifact(t)
-	identity := func(c *gin.Context) {
-		token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-		if owner := tokens[token]; owner != "" {
-			c.Set(constants.KeyUserID, owner)
-			c.Set(constants.KeyTenantID, "tenant")
-			c.Set(constants.KeyProjectID, c.GetHeader(constants.HeaderProjectID))
-			c.Request = c.Request.WithContext(access.WithScope(c.Request.Context(), access.Scope{
-				TenantID: "tenant", ProjectID: c.GetHeader(constants.HeaderProjectID),
-			}))
-		}
-		c.Next()
-	}
-	authentication := Authentication{
-		User: []gin.HandlerFunc{identity}, Propagation: []gin.HandlerFunc{identity},
-		Callback: []gin.HandlerFunc{identity},
-	}
 	routes := newRoutes(
 		store, redisClient, newArtifactClient(t, artifactServer),
 		nil, nil, nil, callbackCfg, authentication, execution.PricingCatalog{},

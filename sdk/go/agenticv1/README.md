@@ -33,7 +33,7 @@ Run 因模型或摘要消费未知进入 Blocked 后，人工可调用 `client.R
 
 ## Memory
 
-`Client.Memories` 提供 Memory 的 Create、Get、List、Update、Retire、ListVersions 和 GetVersion，支持 OwnerPrivate 和租户级 ActorPrivate。ActorPrivate 请求使用租户级身份，文档的 actor 可留空或填写当前用户。更新和恢复共用一个方法：`UpdateMemoryRequest.Restore=false` 或省略字段时更新活跃条目，`Restore=true` 时显式恢复停用条目；两者都必须提供当前 `ExpectedRevision` 和完整 `Document`。
+`Client.Memories` 提供 Memory 的 Create、Get、List、Update、Retire、ListVersions 和 GetVersion，支持 OwnerPrivate、租户级 ActorPrivate 和项目内 ActorProject。ActorPrivate 使用租户级身份，ActorProject 使用项目级身份（`x-forge-project-id`）。文档的 actor 可留空或填写当前用户。项目级读取需要项目 `read` 权限，变更需要项目 `write` 权限。ActorProject 默认 `Private`，项目应用执行只召回标为 `Project` 的条目。`UpdateMemoryRequest.Restore=false` 或省略字段时更新活跃条目，`Restore=true` 时恢复停用条目；两种操作都需要当前 `ExpectedRevision` 和完整 `Document`。
 
 ```go
 restored, err := client.Memories.Update(ctx, entry.ID, &sdk.UpdateMemoryRequest{
