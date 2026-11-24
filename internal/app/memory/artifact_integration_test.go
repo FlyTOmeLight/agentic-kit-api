@@ -445,6 +445,7 @@ func realArtifactServer(t *testing.T, grants map[string]memory.ArtifactBinding) 
 		identity := artifactservice.RequestIdentity{
 			UserID: grant.UserID, TenantID: grant.TenantID,
 			ResourceUserID: &grant.UserID, OwnershipState: artifactservice.OwnershipActive,
+			PropagatingService: "agentic-kit-api",
 		}
 		if grant.ProjectID != "" {
 			identity.ProjectID = &grant.ProjectID

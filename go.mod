@@ -3,7 +3,7 @@ module github.com/FlyTOmeLight/agentic-kit-api
 go 1.27.1
 
 require (
-	github.com/FlyTOmeLight/artifact-go v0.5.1
+	github.com/FlyTOmeLight/artifact-go v0.5.2
 	github.com/FlyTOmeLight/forge-tenant-api v0.13.0
 	github.com/FlyTOmeLight/server-go v0.17.1
 	github.com/gin-gonic/gin v1.12.0

@@ -25,7 +25,7 @@
 flowchart LR
     Client["调用方应用 / 用户 (HTTP + Go SDK)"] -->|REST / SSE| API["agentic-kit-api (:8080)"]
     API <-->|鉴权与项目读写权限| Forge["forge-tenant-api (v0.13.0)"]
-    API <-->|Agent 版本 / 可选 Memory 归档| Artifact["artifact-go (v0.5.1)"]
+    API <-->|Agent 版本 / 可选 Memory 归档| Artifact["artifact-go (v0.5.2)"]
     API -->|事务写入 & Outbox| PG[("PostgreSQL (16 张权威表)")]
     API -->|异步中继 Stream| Redis[("Redis (加速通知，允许离线)")]
     Worker["agentic-kit-worker (:8081)"] <-->|SKIP LOCKED 领取 / Checkpoint / Step / Usage| PG
@@ -184,7 +184,7 @@ Worker 不使用 Redis、不访问 `artifact-go`，且配置中禁止出现带�
 
 #### Artifact 出站与可选 `[Artifact]`（Memory 归档）
 
-Agent 发布与版本读取使用 API 自身的 `Tenant.ServiceAPIKey` 出站访问 `artifact-go v0.5.1`，只传播 middleware 已核验的 `user/tenant/project`，并将 `X-Resource-User-ID` 固定为同一用户以保留个人归属；入站 Authorization、Cookie、CSRF、Origin 均不转发，缺 tenant 或 actor 时拒绝远端调用。`artifact-go` 部署须将该 key 对应的服务名加入其传播白名单（用户 API Key 联调范围见 [验证记录](docs/verification.md#2026-11-17-agent-版本发布与-run-快照)）。
+Agent 发布与版本读取使用 API 自身的 `Tenant.ServiceAPIKey` 出站访问 `artifact-go v0.5.2`，只传播 middleware 已核验的 `user/tenant/project`，并将 `X-Resource-User-ID` 固定为同一用户以保留个人归属；入站 Authorization、Cookie、CSRF、Origin 均不转发，缺 tenant 或 actor 时拒绝远端调用。`artifact-go` 部署须将该 key 对应的服务名加入其传播白名单（用户 API Key 联调范围见 [验证记录](docs/verification.md#2026-11-17-agent-版本发布与-run-快照)）。
 
 `[Artifact]` 用于可选的 `agent-memory` 远端归档，配置与 Helm values 对应如下：
 

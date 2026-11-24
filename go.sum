@@ -8,8 +8,8 @@ github.com/ClickHouse/ch-go v0.74.0 h1:uYs2m4wIt0ZHSM1E72rg0maCfzhR2V3xWb/vZEgpe
 github.com/ClickHouse/ch-go v0.74.0/go.mod h1:sZ/r+8ttZMjyrP9PuFbgoVbth1ywIu2LIQNA2vgko6M=
 github.com/ClickHouse/clickhouse-go/v2 v2.49.0 h1:HgiLTraLGgMe8kYivQ6RzMHDUkU/uFUpsWEAuhVk34Q=
 github.com/ClickHouse/clickhouse-go/v2 v2.49.0/go.mod h1:o8dSgGJGxY7CeWFNiKusF9a5RnLpgzuo7OaNyH0NQPE=
-github.com/FlyTOmeLight/artifact-go v0.5.1 h1:e8AL0/dB1pWTGIdKwD6DlND9HgwilhByAi+JbolosI4=
-github.com/FlyTOmeLight/artifact-go v0.5.1/go.mod h1:paQFSF0p0mQasQ7e9xRX7weq3d8jHJaRzhMvIj93Ac0=
+github.com/FlyTOmeLight/artifact-go v0.5.2 h1:lJaBoyLL3JBfJPSXAhG/bLLHUPHExuh5QUHSa7Amdts=
+github.com/FlyTOmeLight/artifact-go v0.5.2/go.mod h1:zlWIWgkGZvvUmjcc9aggF3Ab4nXmxvkqSC5QCmviDI4=
 github.com/FlyTOmeLight/forge-tenant-api v0.13.0 h1:UUaJfZwAzUWPSZ5ug/re3pWMWHsjz1hN9fc6uhewApg=
 github.com/FlyTOmeLight/forge-tenant-api v0.13.0/go.mod h1:ZyKWIbQ3srlv9Zbp+2TElbdamigIIhNgL00OZgUtBWU=
 github.com/FlyTOmeLight/server-go v0.17.1 h1:uUudcRNkqZzMomXcpmlhky5VXPy7S4UEB2wdF4L4C2M=

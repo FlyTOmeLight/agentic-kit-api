@@ -46,8 +46,8 @@ HTTP 用户与 propagation 请求通过已验证的 `access.Scope` 限制 tenant
 
 公开路径为 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`。SDK 提供通用 Agent、Session、Run、Execution、Memory 人工维护、版本历史与执行时显式召回选项，不包含 ProjectClient、workspace、dataset、评测及 Coding 专用发布类型，也不导入 internal、durable、Gin 或 GORM。
 
-普通操作接收标准 context 和请求指针，分别编码路径、Query、Header、JSON。客户端所有者负责 Close，流所有者关闭响应体。业务应用通过公开 API/SDK 组合通用能力。Forge 鉴权 SDK 仅在 `internal/client` 适配。`Build` 将 API 自身的 `Tenant.ServiceAPIKey` 注入 artifact 客户端，适配器使用它传播已核验的 user/tenant/project，个人归属固定为目标用户。缺少 tenant 或 actor 时拒绝远端调用。当前使用 artifact-go `v0.5.1`，独立构建及联调范围见 [验证记录](verification.md#2026-11-17-agent-版本发布与-run-快照)。
+普通操作接收标准 context 和请求指针，分别编码路径、Query、Header、JSON。客户端所有者负责 Close，流所有者关闭响应体。业务应用通过公开 API/SDK 组合通用能力。Forge 鉴权 SDK 仅在 `internal/client` 适配。`Build` 将 API 自身的 `Tenant.ServiceAPIKey` 注入 artifact 客户端，适配器使用它传播已核验的 user/tenant/project，个人归属固定为目标用户。缺少 tenant 或 actor 时拒绝远端调用。当前使用 artifact-go `v0.5.2`，独立构建及联调范围见 [验证记录](verification.md#2026-11-17-agent-版本发布与-run-快照)。
 
 临时 workspace 只用于联合开发；交付验证关闭 workspace 并使用 go.mod 中的正式依赖。共享包修改后按实际受影响契约验证 worker，不能把本地 workspace 测试当作公开依赖已经交付。
 
-当前 archive 适配使用 artifact-go `v0.5.0`，框架依赖 server-go `v0.17.1`。artifact SDK 仅允许 `internal/client` 引用；`pkg/memory`、durable、contextbuilder、worker 和公开 SDK 不暴露其类型。Memory 集成测试通过 artifact 的 `service` 与 `tests/fixture` 启动真实 HTTP 服务及隔离数据库；这些导入只用于测试。本地联合验证已覆盖认证、隔离与发布结果未知后的恢复，外部部署验收尚未完成，范围见[验证记录](verification.md#memory-真实-artifact-联合验证)。
+当前 archive 适配使用 artifact-go `v0.5.2`，框架依赖 server-go `v0.17.1`。artifact SDK 仅允许 `internal/client` 引用；`pkg/memory`、durable、contextbuilder、worker 和公开 SDK 不暴露其类型。Memory 集成测试通过 artifact 的 `service` 与 `tests/fixture` 启动真实 HTTP 服务及隔离数据库；这些导入只用于测试。本地联合验证已覆盖认证、隔离与发布结果未知后的恢复，外部部署验收尚未完成，范围见[验证记录](verification.md#memory-真实-artifact-联合验证)。
