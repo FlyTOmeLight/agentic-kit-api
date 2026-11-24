@@ -180,7 +180,7 @@ Worker 不使用 Redis、不访问 `artifact-go`，且配置中禁止出现带�
 * **内部执行 / Goal / Lease 路由（`/internal/v1/*`）**：仅在 `Tenant.AllowedPropagationServices` 非空时注册，使用 `MiddlewareInternalPropagation` 校验调用服务及白名单，并接收 `x-impersonate-target-tenant-id`、`x-impersonate-target-user-id` 与可选 `x-impersonate-target-project-id`；末端同样要求租户 scope。
 * **沙箱控制面路由（`/v1/sandboxes/*`）**：`Sandbox.AllowedServices` 为空时不注册；启用后使用独立服务认证与白名单，申请的 `tenantId`/`ownerId` 来自可信调用方请求体，不从 Forge 用户 scope 推导。
 * **外部回调路由（`/internal/v1/executions/{id}/callback`）**：默认不注册，仅在 `Callback.Enabled=true` 且已装配 callback 服务认证时注册；启动必须配置 `SigningSecret`、`AllowedSources`、`AllowedServices`，请求需同时通过服务认证、来源白名单与 HMAC-SHA256 校验。上述 HTTP 门槛不影响可信 Worker 直接调用 Store 时无 HTTP scope 的内部契约。
-* **内置探针与 SSE 要求**：server-go HTTPHost 自动提供免鉴权的 `/ping`、`/healthz`、`/version` 探针；开启 `HTTPServer.SwaggerEnable` 可访问 `/swagger/`。SSE 要求 `HTTPServer.WriteTimeout` 为负数（[conf/server/config.toml](conf/server/config.toml#L9) 默认 `-1`），`APIBasePath` 为空。
+* **内置探针与 SSE 要求**：server-go HTTPHost 自动提供免鉴权的 `/ping`、`/healthz`、`/livez`、`/readyz`、`/version` 探针；开启 `HTTPServer.SwaggerEnable` 可访问 `/swagger/`。`HTTPServer.WriteTimeout` 必须非负（[conf/server/config.toml](conf/server/config.toml#L9) 默认 `60000` 毫秒），SSE 端点通过 `stream.NewSSE` 清除单连接总写超时并按事件控制写期限，`APIBasePath` 为空。
 
 #### Artifact 出站与可选 `[Artifact]`（Memory 归档）
 

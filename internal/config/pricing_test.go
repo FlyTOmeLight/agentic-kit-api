@@ -13,7 +13,7 @@ Driver = "PostgreSQL"
 DSN = "postgres://localhost/test"
 [HTTPServer]
 Listen = "127.0.0.1:8080"
-WriteTimeout = -1
+WriteTimeout = 60000
 [Redis]
 Addrs = ["127.0.0.1:6379"]
 DB = 0

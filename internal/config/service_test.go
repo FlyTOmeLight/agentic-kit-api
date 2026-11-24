@@ -50,7 +50,7 @@ Driver = "PostgreSQL"
 DSN = "${env:DATABASE_URL:postgres://file:password@localhost/db}"
 [HTTPServer]
 ReadTimeout = 10000
-WriteTimeout = -1
+WriteTimeout = 60000
 Listen = "${env:LISTEN_ADDR:127.0.0.1:9000}"
 [Redis]
 Addrs = ["localhost:6379"]
@@ -117,7 +117,7 @@ Driver='PostgreSQL'
 DSN = "postgres://file:password@localhost/db"
 [HTTPServer]
 Listen = "127.0.0.1:9000"
-WriteTimeout = -1
+WriteTimeout = 60000
 [Redis]
 Addrs = ["localhost:6379"]
 [AgentArtifact]
@@ -167,7 +167,7 @@ func TestDatabaseConfigurationWithoutAPISettings(t *testing.T) {
 		"SERVER_CONFIG_PATH",
 		writeConfig(
 			t,
-			"[DB]\nDriver='PostgreSQL'\nDSN=\"${env:DATABASE_URL}\"\n[HTTPServer]\nListen=\"127.0.0.1:8080\"\nWriteTimeout=-1",
+			"[DB]\nDriver='PostgreSQL'\nDSN=\"${env:DATABASE_URL}\"\n[HTTPServer]\nListen=\"127.0.0.1:8080\"\nWriteTimeout=60000",
 		),
 	)
 	cfg, err := Load("")
@@ -198,7 +198,7 @@ func TestFrameworkSnapshot(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://localhost/db")
 	path := writeConfig(t, `[HTTPServer]
 ReadTimeout = 10000
-WriteTimeout = -1
+WriteTimeout = 60000
 Listen = "${env:LISTEN_ADDR:127.0.0.1:9000}"
 [DB]
 Driver = "PostgreSQL"
@@ -240,12 +240,18 @@ ServiceAPIKey = "test-service-key-at-least-32-characters"
 		t.Fatal(err)
 	}
 	server := host.NewHTTPServer(snapshot)
-	if server.WriteTimeout >= 0 || server.ReadHeaderTimeout != 10*time.Second {
-		t.Fatal("SSE or header timeout changed")
+	if server.WriteTimeout != 60*time.Second || server.ReadTimeout != 10*time.Second ||
+		server.ReadHeaderTimeout != 5*time.Second {
+		t.Fatalf(
+			"unexpected HTTP timeouts: read=%v readHeader=%v write=%v",
+			server.ReadTimeout,
+			server.ReadHeaderTimeout,
+			server.WriteTimeout,
+		)
 	}
 	for _, change := range []func(*Service){
 		func(c *Service) { c.HTTPServer.APIBasePath = "/prefix" },
-		func(c *Service) { c.HTTPServer.WriteTimeout = 0 },
+		func(c *Service) { c.HTTPServer.WriteTimeout = -1 },
 		func(c *Service) { c.Sandbox.CheckpointImage = "saver:v1" },
 		func(c *Service) {
 			c.Sandbox = SandboxConfig{K8sContext: "local", CheckpointStoreHostPath: "/checkpoints"}
@@ -326,7 +332,7 @@ Driver = "PostgreSQL"
 DSN = "postgres://localhost/db"
 [HTTPServer]
 Listen = "127.0.0.1:8080"
-WriteTimeout = -1
+WriteTimeout = 60000
 [Redis]
 Addrs = ["localhost:6379"]
 [AgentArtifact]

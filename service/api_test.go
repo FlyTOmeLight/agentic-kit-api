@@ -15,7 +15,6 @@ import (
 
 	"github.com/FlyTOmeLight/server-go/app"
 	frameworkdb "github.com/FlyTOmeLight/server-go/db"
-	"github.com/FlyTOmeLight/server-go/httpintegration"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
@@ -116,7 +115,7 @@ func TestAPIFrameworkLifecycle(t *testing.T) {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	finished := make(chan error, 1)
-	go func() { finished <- app.Run(runCtx, app.Options{Setup: httpintegration.Install}, Build) }()
+	go func() { finished <- app.Run(runCtx, app.Options{Setup: SetupHTTP}, Build) }()
 	defer func() {
 		stop()
 		select {

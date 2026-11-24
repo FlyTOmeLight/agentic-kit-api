@@ -3,11 +3,16 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/FlyTOmeLight/server-go/app"
 	"github.com/FlyTOmeLight/server-go/conf"
+	"github.com/FlyTOmeLight/server-go/console"
 	frameworkdb "github.com/FlyTOmeLight/server-go/db"
+	"github.com/FlyTOmeLight/server-go/httpintegration"
+	"github.com/FlyTOmeLight/server-go/middleware"
+	core "github.com/FlyTOmeLight/server-go/pkg"
 	"github.com/FlyTOmeLight/server-go/swagger"
 
 	_ "github.com/FlyTOmeLight/agentic-kit-api/doc/openapi"
@@ -139,6 +144,50 @@ func buildArchiver(cfg *Config) (*client.MemoryArchive, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+// SetupHTTP installs optional server-go HTTP features for the standalone API.
+// Business routes enforce Forge authentication per route group, so global
+// FakeAuth is never installed and authenticated static assets are rejected.
+func SetupHTTP(engine *core.Engine, cfg *conf.Config) error {
+	if engine == nil || cfg == nil {
+		return errors.New("HTTP integrations require an engine and config")
+	}
+	switch cfg.HTTPServer.AuthType {
+	case "":
+	case conf.AuthTypeFake:
+		if cfg.RunMode == conf.RunModeRelease {
+			return errors.New("fake authentication is not allowed in release mode")
+		}
+	default:
+		return fmt.Errorf("unsupported HTTP authentication mode: %q", cfg.HTTPServer.AuthType)
+	}
+	for _, asset := range cfg.HTTPServer.Assets {
+		if asset.AuthEnable {
+			return errors.New(
+				"authenticated static assets are unsupported; route groups enforce Forge authentication",
+			)
+		}
+	}
+	switch cfg.RunMode {
+	case conf.RunModeDebug, conf.RunModeTest:
+		engine.Use(
+			middleware.Debug(cfg.HTTPServer.Trace.PrefixFilters, cfg.HTTPServer.Trace.SuffixFilters),
+		)
+	}
+	if cfg.HTTPServer.AdminListen == "" {
+		httpCfg := cfg.HTTPServer
+		if httpCfg.SwaggerDocPrefix == "" {
+			httpCfg.SwaggerDocPrefix = "Agentic"
+		}
+		httpintegration.InstallDiagnostics(engine, httpCfg)
+	}
+	engine.GET("/feature", middleware.Feature(cfg.Feature))
+	middleware.Asset(cfg.HTTPServer.Assets, false, engine)
+	if cfg.HTTPServer.ConsoleEnable {
+		console.RegisterConsoleAPI(engine, cfg)
+	}
+	return nil
 }
 
 // Keep the public route contract when the framework rebuilds handlers on reload.

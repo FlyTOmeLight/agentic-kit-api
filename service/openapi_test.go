@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"github.com/FlyTOmeLight/server-go/conf"
-	"github.com/FlyTOmeLight/server-go/httpintegration"
-	"github.com/FlyTOmeLight/server-go/swagger"
 	"github.com/gin-gonic/gin"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/config"
@@ -166,8 +164,7 @@ func TestSwaggerServesGeneratedContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine := gin.New()
-	swagger.DocPrefix = "Agentic"
-	if err := httpintegration.Install(engine, settings); err != nil {
+	if err := SetupHTTP(engine, settings); err != nil {
 		t.Fatal(err)
 	}
 	response := httptest.NewRecorder()

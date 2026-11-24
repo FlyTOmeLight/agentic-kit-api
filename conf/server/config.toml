@@ -5,8 +5,8 @@ RunMode = "${env:GIN_MODE:release}"
 [HTTPServer]
 Listen = "${env:LISTEN_ADDR:127.0.0.1:8080}"
 ReadTimeout = 10000
-# SSE has no total response deadline. Request cancellation ends the stream.
-WriteTimeout = -1
+# Non-SSE requests use WriteTimeout; SSE clears the server write deadline via stream.NewSSE.
+WriteTimeout = 60000
 IdleTimeout = 60000
 
 [DB]

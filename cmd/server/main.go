@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"github.com/FlyTOmeLight/server-go/app"
-	"github.com/FlyTOmeLight/server-go/httpintegration"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/service"
 )
@@ -26,5 +25,5 @@ func run() error {
 	defer stop()
 	path := flag.String("config", os.Getenv("CONFIG_FILE"), "TOML configuration file")
 	flag.Parse()
-	return app.Run(ctx, app.Options{ConfigPath: *path, Setup: httpintegration.Install}, service.Build)
+	return app.Run(ctx, app.Options{ConfigPath: *path, Setup: service.SetupHTTP}, service.Build)
 }

@@ -136,10 +136,11 @@ func (cfg Service) ValidateAPI() error {
 	if err := validateAgentArtifact(cfg.AgentArtifact); err != nil {
 		return err
 	}
-	if cfg.HTTPServer.APIBasePath != "" || cfg.HTTPServer.WriteTimeout >= 0 {
-		return errors.New(
-			"HTTPServer requires an empty APIBasePath and negative WriteTimeout for the public API and SSE",
-		)
+	if cfg.HTTPServer.APIBasePath != "" {
+		return errors.New("HTTPServer.APIBasePath must be empty for the public API")
+	}
+	if cfg.HTTPServer.WriteTimeout < 0 {
+		return errors.New("HTTPServer.WriteTimeout must be non-negative")
 	}
 	_, port, err := net.SplitHostPort(cfg.HTTPServer.Listen)
 	number, portErr := strconv.Atoi(port)

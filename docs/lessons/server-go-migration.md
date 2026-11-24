@@ -22,6 +22,6 @@
 
 采用 `app.Run` 后，配置由框架读取，环境变量映射放入 TOML 占位符。迁移入口时需同步默认配置、部署模板和启动说明，不能继续按旧配置加载器的覆盖规则理解自定义 TOML。
 
-Swagger 等可选 HTTP 能力还需要入口通过 `Setup: httpintegration.Install` 安装。配置字段存在并不代表入口已接入相应能力，应验证实际 HTTP 响应。动态配置重建 handler 时也要保持公开路径；本项目拒绝添加 `HTTPServer.APIBasePath`。
+Swagger 等可选 HTTP 能力还需要入口通过 `Setup: service.SetupHTTP`（内部复用 `httpintegration.InstallDiagnostics`）安装；自 `server-go v0.17.1` 起，`httpintegration.Install` 在 `release` 模式下拒绝隐式或 `Fake` 鉴权，本项目各业务路由组由 Forge 中间件独立鉴权，因此通过 `service.SetupHTTP` 显式装配诊断、`/feature`、公开静态资源与 Console 代理，不安装全局 `FakeAuth`，并拒绝 `AuthEnable=true` 的静态资源与负值 `HTTPServer.WriteTimeout`（SSE 由 `stream.NewSSE` 清除单连接写超时）。配置字段存在并不代表入口已接入相应能力，应验证实际 HTTP 响应。动态配置重建 handler 时也要保持公开路径；本项目拒绝添加 `HTTPServer.APIBasePath`。
 
 证据：[服务入口](../../cmd/server/main.go)、[默认配置](../../conf/server/config.toml)、[配置更新约束](../../service/build.go)、[公开路径回归测试](../../service/build_test.go)、[OpenAPI 与 Swagger 测试](../../service/openapi_test.go)。
