@@ -14,6 +14,7 @@
 | 升级依赖、调整 binder、配置加载或框架生命周期 | [项目经验索引](docs/lessons/README.md)，再读取相关框架版本的说明 |
 | 实施首版 Memory 或上下文构建 | [框架设计](docs/refactoring-design.md#66-上下文管线与-memory-基础版)、[Memory设计](docs/memory-design.md)；涉及artifact接入先核对其中的权限、版本及跨服务提交前提 |
 | 实施 Agent 资产接入 artifact-go | [资产与artifact设计](docs/agent-asset-artifact-design.md) 与 [ADR-0009](docs/adr/0009-agent-versions-in-artifact.md)；先核对依赖版本、身份前提与发布时序 |
+| 对比或跟进 `~/Code/agentic-kit` 分支演进、能力差异与待补齐进度 | [与 agentic-kit 对比](docs/agentic-kit-comparison.md)；上游更新或内核补齐后按文档基线做只读增量对比，同步结论、进度表与记录 |
 | 查找历史验证证据 | [验证记录](docs/verification.md)，其中旧路径与版本不作为当前约定 |
 
 新增经验写入 `docs/lessons/`，附问题适用范围与代码/测试证据，并更新该目录索引。功能、契约和布局变化更新各自文档；本文件仅在文档职责或路由变化时更新。
