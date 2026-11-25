@@ -24,10 +24,17 @@ type ModelSpec struct {
 	Temperature   *float32 `json:"temperature,omitempty"`
 	TopP          *float32 `json:"topP,omitempty"`
 	MaxTokens     *int     `json:"maxTokens,omitempty"`
+	Stream        *bool    `json:"stream,omitempty"`
 	ContextWindow int64    `json:"contextWindow,omitempty"`
 	Name          string   `json:"name"`
 	BaseURL       string   `json:"baseURL"`
 	APIKeyEnv     string   `json:"apiKeyEnv"`
+}
+
+// Streaming reports whether model calls should use upstream SSE streaming.
+// A nil Stream defaults to true for backward compatibility with P0-1 live deltas.
+func (m ModelSpec) Streaming() bool {
+	return m.Stream == nil || *m.Stream
 }
 
 type ToolSpec struct {

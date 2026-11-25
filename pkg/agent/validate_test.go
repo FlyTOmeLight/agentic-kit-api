@@ -100,4 +100,36 @@ func TestModelSpecContextWindowJSON(t *testing.T) {
 	if _, ok := zeroFields["contextWindow"]; ok {
 		t.Fatalf("zero contextWindow must be omitted; JSON: %s", data)
 	}
+	if _, ok := zeroFields["stream"]; ok {
+		t.Fatalf("nil stream must be omitted; JSON: %s", data)
+	}
+}
+
+func TestModelSpecStreamJSON(t *testing.T) {
+	if !(ModelSpec{}).Streaming() {
+		t.Fatal("nil Stream must default to true")
+	}
+	disabled := false
+	spec := ModelSpec{Stream: &disabled}
+	if spec.Streaming() {
+		t.Fatal("explicit false Stream must return false")
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := fields["stream"].(bool); !ok || got {
+		t.Fatalf("stream = %#v, want false; JSON: %s", fields["stream"], data)
+	}
+	var decoded ModelSpec
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Stream == nil || *decoded.Stream {
+		t.Fatalf("decoded Stream = %v, want false", decoded.Stream)
+	}
 }

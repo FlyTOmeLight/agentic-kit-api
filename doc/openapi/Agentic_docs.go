@@ -2988,6 +2988,9 @@ const docTemplateAgentic = `{
                 "name": {
                     "type": "string"
                 },
+                "stream": {
+                    "type": "boolean"
+                },
                 "temperature": {
                     "type": "number"
                 },
