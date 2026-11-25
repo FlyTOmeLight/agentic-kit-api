@@ -132,6 +132,21 @@ type Event struct {
 	Payload   json.RawMessage `json:"payload"`
 }
 
+const (
+	EventModelReasoningDelta = "ModelReasoningDelta"
+	EventModelContentDelta   = "ModelContentDelta"
+)
+
+type StreamDelta struct {
+	RunID     string    `json:"runID"`
+	Kind      string    `json:"kind"`
+	Epoch     int64     `json:"epoch"`
+	Turn      int64     `json:"turn"`
+	Offset    int64     `json:"offset"`
+	Delta     string    `json:"delta"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 // RunTrace is a replayable page of public execution events, never a checkpoint.
 type RunTrace struct {
 	Run         Run     `json:"run"`

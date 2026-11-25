@@ -16,6 +16,7 @@ type Service interface {
 	SupplyExternalResult(ctx context.Context, owner, id, step, externalRef, result string) error
 	SupplyExternalResultByRunID(ctx context.Context, id, step, externalRef, result string) error
 	Events(ctx context.Context, owner, id string, after int64) ([]durable.Event, error)
+	LatestFinishedModelTurn(ctx context.Context, owner, id string) (int64, error)
 	CreateGoal(ctx context.Context, goal durable.Goal) (*durable.Goal, bool, error)
 	GetGoal(ctx context.Context, owner, id string) (*durable.Goal, error)
 	ListGoals(ctx context.Context, owner string, status durable.GoalStatus, limit int) ([]durable.Goal, error)

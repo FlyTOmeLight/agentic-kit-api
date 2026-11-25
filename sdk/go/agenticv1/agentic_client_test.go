@@ -164,6 +164,34 @@ func TestEventStream(t *testing.T) {
 	}
 }
 
+func TestEventStreamLiveQuery(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		live *bool
+		want string
+	}{
+		{name: "default", want: "after=run%3A2"},
+		{name: "enabled", live: new(true), want: "after=run%3A2&live=true"},
+		{name: "disabled", live: new(false), want: "after=run%3A2&live=false"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.RawQuery != test.want || r.Header.Get("Last-Event-ID") != "run:3" {
+					t.Errorf("query=%q headers=%v", r.URL.RawQuery, r.Header)
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+			})
+			body, err := client.Runs.OpenEvents(t.Context(), &sdk.OpenRunEventsRequest{
+				ID: "run", After: "run:2", LastEventID: "run:3", Live: test.live,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body.Close()
+		})
+	}
+}
+
 func TestRedirectNotFollowed(t *testing.T) {
 	client := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/runs/run" {

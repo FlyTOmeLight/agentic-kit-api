@@ -113,6 +113,12 @@ func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 	if b.Context != nil {
 		payload["context"] = b.Context
 	}
+	if b.Kind == BoundaryModelStarted {
+		payload["epoch"] = l.Epoch
+		if b.Turn != nil {
+			payload["turn"] = *b.Turn
+		}
+	}
 	if err = emit(ctx, tx, l.RunID, kind, payload); err != nil {
 		return err
 	}

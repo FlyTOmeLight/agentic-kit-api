@@ -17,6 +17,19 @@ import (
 // new model or tool work is dispatched.
 var ErrUsageBudgetExceeded = errors.New("goal usage budget exceeded")
 
+func (s *Store) LatestFinishedModelTurn(ctx context.Context, owner, id string) (int64, error) {
+	if _, err := s.Get(ctx, owner, id); err != nil {
+		return -1, err
+	}
+	var turn int64
+	if err := s.db.WithContext(ctx).Model(&table.Usage{}).
+		Select("COALESCE(MAX(turn), -1)").Where("run_id = ? AND call = 'model'", id).
+		Scan(&turn).Error; err != nil {
+		return -1, err
+	}
+	return turn, nil
+}
+
 // usageOverBudget reports whether the goal usage has reached a configured
 // budget.
 func usageOverBudget(goal *table.Goal) bool {

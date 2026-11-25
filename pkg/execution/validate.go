@@ -25,6 +25,9 @@ func (b Boundary) Validate() error {
 	if len(b.State) == 0 || !json.Valid(b.State) {
 		return ErrInvalid
 	}
+	if b.Turn != nil && (b.Kind != BoundaryModelStarted || *b.Turn < 0) {
+		return ErrInvalid
+	}
 	switch b.Kind {
 	case BoundaryModelStarted:
 		if b.Output != "" || b.Detail != "" || b.WaitingStep != "" {

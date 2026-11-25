@@ -1938,7 +1938,7 @@ const docTemplateAgentic = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "SSE id 为 runID:seq，event 为事件 kind，data 为 JSON Event；空闲时发送心跳。输出开始后的读取或写入错误关闭连接，客户端使用最后收到的 id 重连；终态事件回放完成后关闭连接。",
+                "description": "权威事件带 runID:seq 的 id，data 为 JSON Event；ModelReasoningDelta 和 ModelContentDelta 无 id，data 为 JSON StreamDelta。空闲时发送心跳，终态或 Blocked 的权威事件回放完成后关闭连接。",
                 "produces": [
                     "text/event-stream"
                 ],
@@ -1964,6 +1964,13 @@ const docTemplateAgentic = `{
                         "type": "string",
                         "description": "断点游标 runID:seq",
                         "name": "after",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "订阅瞬态模型增量",
+                        "name": "live",
                         "in": "query"
                     }
                 ],

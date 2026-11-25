@@ -127,7 +127,7 @@
 
 | 优先级 | 编号 | 待补齐能力 | 涉及端 | 当前状态 | 备注 / 验收证据 |
 | --- | --- | --- | --- | --- | --- |
-| **P0** | 1 | 逐 Token 与思考过程（Thinking）实时流式输出 | API + Worker | `待实施` | 需保持权威落库与瞬态流通道分离 |
+| **P0** | 1 | 逐 Token 与思考过程（Thinking）实时流式输出 | API + Worker | `已完成` | API `v0.7.0` + Worker `v0.2.0` 双仓落地双流 SSE（`ModelReasoningDelta`/`ModelContentDelta`、无 `id:` 帧、中途补发、`?live=false`）与 Worker 边界切流、空闲超时及可选 Redis 积压合批 |
 | **P0** | 2 | 厂商中立标准 MCP 工具协议支持 | API + Worker | `待实施` | 支持 Streamable HTTP MCP 发现与步骤策略映射 |
 | **P0** | 3 | Worker 侧子智能体（Sub-Agent / `ChildRun`）执行闭环 | API + Worker | `部分就绪` | API [pkg/durable/subtask.go](../pkg/durable/subtask.go) 已实现 `SpawnChildRun`、计价继承与级联收口；Worker 侧待接入委派工具与版本冻结 |
 | **P0** | 4 | 多模态附件输入与产物文件索引契约 | API + Worker + SDK | `待实施` | 复用 `artifact-go` 附件引用，补齐上下文文件索引块 |

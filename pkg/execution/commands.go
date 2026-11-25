@@ -100,6 +100,7 @@ type Boundary struct {
 	WaitingStep string
 	ExternalRef string
 	Context     *ContextInfo
+	Turn        *int64
 }
 
 // ContextInfo exposes the observable facts about model input construction.

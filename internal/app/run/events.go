@@ -14,21 +14,25 @@ import (
 	"github.com/FlyTOmeLight/server-go/pkg/binder"
 	frameworkredis "github.com/FlyTOmeLight/server-go/redis"
 	"github.com/FlyTOmeLight/server-go/stream"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/app/apperror"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
+const eventPollInterval = time.Second
+
 // events 订阅任务事件。
 // @Summary 订阅任务事件
 // @Tags Run
-// @Description SSE id 为 runID:seq，event 为事件 kind，data 为 JSON Event；空闲时发送心跳。输出开始后的读取或写入错误关闭连接，客户端使用最后收到的 id 重连；终态事件回放完成后关闭连接。
+// @Description 权威事件带 runID:seq 的 id，data 为 JSON Event；ModelReasoningDelta 和 ModelContentDelta 无 id，data 为 JSON StreamDelta。空闲时发送心跳，终态或 Blocked 的权威事件回放完成后关闭连接。
 // @Produce text/event-stream
 // @Security BearerAuth
 // @Param id path string true "id"
 // @Param Last-Event-ID header string false "断点游标 runID:seq，优先于 after"
 // @Param after query string false "断点游标 runID:seq"
+// @Param live query bool false "订阅瞬态模型增量" default(true)
 // @Success 200 {string} string "SSE 事件流"
 // @Failure 400 {object} serrors.Error "参数无效"
 // @Failure 401 {object} serrors.Error "身份校验失败"
@@ -61,7 +65,8 @@ func (h *Controller) events(c *core.Context) {
 			return
 		}
 	}
-	run, err := h.service.Get(r.Context(), auth.UserID(c), id)
+	ctx, owner := r.Context(), auth.UserID(c)
+	run, err := h.service.Get(ctx, owner, id)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
@@ -70,55 +75,152 @@ func (h *Controller) events(c *core.Context) {
 		serrors.Abort(c, http.StatusBadRequest, "InvalidCursor", "cursor is ahead of run")
 		return
 	}
+	liveEnabled := req.Live == nil || *req.Live
+	var filter *liveDeltaFilter
+	if liveEnabled && h.redis != nil && !eventReplayOnly(run.Status) {
+		finishedTurn, err := h.service.LatestFinishedModelTurn(ctx, owner, id)
+		if err != nil {
+			apperror.Respond(c, err)
+			return
+		}
+		filter = newLiveDeltaFilter(run, finishedTurn)
+	}
 	eventStream, err := stream.NewSSE(w, 10*time.Second)
 	if err != nil {
 		apperror.Respond(c, err)
 		return
 	}
-	for {
-		events, err := h.service.Events(r.Context(), auth.UserID(c), id, after)
-		if err != nil {
+	if err = eventStream.FlushHeaders(); err != nil {
+		return
+	}
+	lastWrite := time.Now()
+	replay := func() (done bool, err error) {
+		for {
+			events, err := h.service.Events(ctx, owner, id, after)
+			if err != nil {
+				return false, err
+			}
+			for _, event := range events {
+				if filter != nil {
+					filter.observe(event)
+				}
+				if err = eventStream.SendWithID(
+					fmt.Sprintf("%s:%d", id, event.Seq),
+					event.Kind,
+					event,
+				); err != nil {
+					return false, err
+				}
+				after = event.Seq
+				lastWrite = time.Now()
+			}
+			if len(events) == 200 {
+				continue
+			}
+			if !eventReplayOnly(run.Status) {
+				run, err = h.service.Get(ctx, owner, id)
+				if err != nil {
+					return false, err
+				}
+			}
+			if after >= run.EventSeq {
+				if filter != nil {
+					filter.observeRun(run)
+				}
+				return eventReplayOnly(run.Status), nil
+			}
+		}
+	}
+	if done, err := replay(); done || err != nil {
+		return
+	}
+	lastDBPoll := time.Now()
+	eventsKey, liveKey := durable.StreamKey(id), durable.LiveStreamKey(id)
+	liveCursor := "0-0"
+	sendDeltas := func(messages []redis.XMessage) error {
+		for _, message := range messages {
+			liveCursor = message.ID
+			data, _ := message.Values[durable.LiveStreamField].(string)
+			delta, err := durable.DecodeStreamDelta([]byte(data))
+			if err != nil || !filter.accept(delta) {
+				continue
+			}
+			if err = eventStream.Send(delta.Kind, delta); err != nil {
+				return err
+			}
+			lastWrite = time.Now()
+		}
+		return nil
+	}
+	if filter != nil {
+		messages, err := h.redis.XRange(ctx, liveKey, "-", "+").Result()
+		if err == nil && sendDeltas(messages) != nil {
 			return
 		}
-		for _, event := range events {
-			if err = eventStream.SendWithID(
-				fmt.Sprintf("%s:%d", id, event.Seq),
-				event.Kind,
-				event,
-			); err != nil {
+	}
+	splitStreams := false
+	for ctx.Err() == nil {
+		writeAtStart := lastWrite
+		pollAt := lastDBPoll.Add(eventPollInterval)
+		heartbeatAt := lastWrite.Add(eventPollInterval)
+		wakeAt := pollAt
+		if heartbeatAt.Before(wakeAt) {
+			wakeAt = heartbeatAt
+		}
+		var streams []redis.XStream
+		var readErr error
+		if h.redis != nil {
+			block := time.Until(wakeAt)
+			if block <= 0 {
+				block = -1
+			} else {
+				block = max(block, time.Millisecond)
+			}
+			args := frameworkredis.XReadArgs{
+				Streams: []string{eventsKey, fmt.Sprintf("%d-0", after)},
+				Count:   128,
+				Block:   block,
+			}
+			if filter != nil {
+				args.Streams = []string{eventsKey, liveKey, args.Streams[1], liveCursor}
+			}
+			streams, readErr = readRunStreams(ctx, h.redis, &args, &splitStreams)
+		}
+		if h.redis == nil || (len(streams) == 0 && readErr != nil && !errors.Is(readErr, frameworkredis.Nil)) {
+			timer := time.NewTimer(time.Until(wakeAt))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+		eventsReady := false
+		for _, entries := range streams {
+			switch entries.Stream {
+			case liveKey:
+				if filter != nil && sendDeltas(entries.Messages) != nil {
+					return
+				}
+			case eventsKey:
+				eventsReady = len(entries.Messages) > 0
+			}
+		}
+		if eventsReady || !time.Now().Before(pollAt) {
+			if done, err := replay(); done || err != nil {
 				return
 			}
-			after = event.Seq
+			lastDBPoll = time.Now()
 		}
-		if len(events) == 0 {
+		if lastWrite == writeAtStart && time.Since(lastWrite) >= eventPollInterval {
 			if err = eventStream.Heartbeat(); err != nil {
 				return
 			}
-		}
-		if len(events) == 200 {
-			continue
-		}
-		run, err = h.service.Get(r.Context(), auth.UserID(c), id)
-		if err != nil {
-			return
-		}
-		if (run.Status.Terminal() || run.Status == durable.Blocked) && after >= run.EventSeq {
-			return
-		}
-		// Redis is a wake-up accelerator. Database polling still serves committed events during a Redis outage.
-		if h.redis != nil {
-			_, err = h.redis.XRead(r.Context(), &frameworkredis.XReadArgs{Streams: []string{durable.StreamKey(id), fmt.Sprintf("%d-0", after)}, Count: 1, Block: time.Second}).
-				Result()
-			if err == nil || errors.Is(err, frameworkredis.Nil) {
-				continue
-			}
-		}
-		timer := time.NewTimer(time.Second)
-		select {
-		case <-r.Context().Done():
-			timer.Stop()
-			return
-		case <-timer.C:
+			lastWrite = time.Now()
 		}
 	}
+}
+
+func eventReplayOnly(status durable.Status) bool {
+	return status.Terminal() || status == durable.Blocked
 }

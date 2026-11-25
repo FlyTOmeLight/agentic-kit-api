@@ -23,7 +23,7 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | POST /v1/runs/{id}/answer | 回答澄清 | stepID、result |
 | POST /v1/runs/{id}/resolve | 提交人工确认的工具结果 | stepID、result |
 | POST /v1/runs/{id}/unblock | 接受未知消费并授权重新派发，返回 204 | epoch、reason |
-| GET /v1/runs/{id}/events | SSE 回放及订阅 | Last-Event-ID header 或 after query，格式 runID:seq |
+| GET /v1/runs/{id}/events | SSE 回放及订阅 | `Last-Event-ID` header 或 `after` query，格式 `runID:seq`。`live` 默认 `true` |
 | POST /v1/memories | 创建 OwnerPrivate、ActorPrivate 或 ActorProject 记忆，返回 201 | document；Idempotency-Key header 必填 |
 | GET /v1/memories | 列出当前身份可访问的私人记忆 | after、limit |
 | GET /v1/memories/{id} | 读取当前生效投影 | 无 |
@@ -62,11 +62,14 @@ artifact 出站请求统一使用 API 自身的 `Tenant.ServiceAPIKey` 作为 Be
 
 如果只恢复 child，父 Run 在 WaitingExternal 等待，child 完成后会按原子任务链路唤醒父 Run，但 Goal 仍保持 Blocked。完成相关人工核查后，还需调用 `POST /internal/v1/goals/{id}/resume`，才能继续 Goal 验收、收敛或自动续轮。父子均 Blocked 时，先恢复 child、再恢复当前根 Run，可由根 Run 的 unblock 自动恢复 Goal；顺序相反时仍需显式 ResumeGoal。调用方应查询 Goal 或审计事件的 goalResumed 确认结果。
 
-SSE 每条消息的 id 为 runID:seq，data 包含 runID、seq、kind 和 payload。客户端按该 id 去重。在终态或 Blocked 且已发送全部提交事件后关闭连接；Blocked 保持非终态，恢复后可用原游标重新订阅。WaitingClarification 和 NeedsReview 不是终态。重新连接不会启动新的任务。
+`GET /v1/runs/{id}/events` 按 SSE `event:` 字段区分两种消息。
 
-重要事件包括 RunQueued、RunStarted、ModelCompleted、ToolStarted、ToolCompleted、ClarificationRequested、RunNeedsReview、RunResumed、RunRetry、RunBlocked、RunUnblocked、RunCompleted、RunFailed、RunCanceled。RunRetry 的 payload.status 可能为 Failed，客户端以状态字段为准，不仅凭事件名称判断。
+- PostgreSQL 权威事件带 `id: runID:seq`，`data` 为 `Event`，包括 `runID`、`seq`、`kind`、`payload` 和 `createdAt`。客户端按 `id` 去重和续订。`Last-Event-ID` 优先于 `after`，重新订阅不会启动新任务。Run 进入终态或 `Blocked` 后，API 发完权威事件就关闭连接。`Blocked` 恢复后可用原游标重新订阅。
+- `ModelReasoningDelta` 和 `ModelContentDelta` 分别是模型生成时的思考和正文增量。帧没有 `id:` 行，`data` 为 `StreamDelta`，包括 `runID`、`kind`、`epoch`、`turn`、`offset`、`delta` 和 `createdAt`。`offset` 为该 `(epoch, turn, kind)` 内的 UTF-8 字节偏移。连接先回放权威事件，再补发 Redis 中仍保留的、尚未记账轮次的增量。客户端可按 `(runID, epoch, turn, kind, offset)` 去重，并通过比较 `offset` 是否衔接上一条结束位置发现丢弃缺口。传 `?live=false` 可只订阅权威事件。
 
-模型尚在生成时不会发逐 token delta；ModelCompleted 表示完整模型决策已经保存，RunCompleted 表示最终答案和完成事件已经同事务提交。
+权威事件包括 `RunQueued`、`RunStarted`、`ModelStarted`、`UsageRecorded`、`ModelCompleted`、`ToolStarted`、`ToolCompleted`、`ClarificationRequested`、`RunNeedsReview`、`RunResumed`、`RunRetry`、`RunBlocked`、`RunUnblocked`、`RunCompleted`、`RunFailed` 和 `RunCanceled`。`ModelStarted` 的 `payload.epoch` 由租约决定，调用方提供轮次时还有 `payload.turn`。`RunRetry` 的 `payload.status` 可能为 `Failed`。
+
+以 `ModelCompleted.payload.output` 校准该轮生成的正文，以 `RunCompleted.payload.output` 为最终答案。思考仅在瞬态流中传输；Worker 发布队列满时中间增量可能被丢弃，且轮次结束前的 Flush 有时间上限，尾部增量也可能截断。Redis 瞬态流在每次写入后续期一小时，按约 10,000 条裁剪。Redis 单节点和哨兵使用一次阻塞读取监听两个流。Redis Cluster 返回 `CROSSSLOT` 时分别读取两条流。Redis 不可用时，客户端仍能通过 PostgreSQL 轮询收到权威事件。
 
 ## Memory
 

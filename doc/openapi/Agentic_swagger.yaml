@@ -2292,8 +2292,8 @@ paths:
       - Run
   /v1/runs/{id}/events:
     get:
-      description: SSE id 为 runID:seq，event 为事件 kind，data 为 JSON Event；空闲时发送心跳。输出开始后的读取或写入错误关闭连接，客户端使用最后收到的
-        id 重连；终态事件回放完成后关闭连接。
+      description: 权威事件带 runID:seq 的 id，data 为 JSON Event；ModelReasoningDelta 和 ModelContentDelta
+        无 id，data 为 JSON StreamDelta。空闲时发送心跳，终态或 Blocked 的权威事件回放完成后关闭连接。
       parameters:
       - description: id
         in: path
@@ -2308,6 +2308,11 @@ paths:
         in: query
         name: after
         type: string
+      - default: true
+        description: 订阅瞬态模型增量
+        in: query
+        name: live
+        type: boolean
       produces:
       - text/event-stream
       responses:

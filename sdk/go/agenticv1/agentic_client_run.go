@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	framesdk "github.com/FlyTOmeLight/server-go/sdk"
 )
@@ -93,19 +94,25 @@ func (c *runClient) Resolve(ctx context.Context, req *ResolveRunRequest) error {
 }
 
 // OpenEvents returns the raw SSE body. The caller must close it, even when
-// stopping early. Parse it with an SSE consumer; Event is the JSON data schema.
-// Supply the last runID:seq in LastEventID to reconnect. No automatic retry is performed.
+// stopping early. Dispatch by SSE event type: model deltas have StreamDelta data
+// and no id, while durable events have Event data and a runID:seq id.
+// Pass Live=false to receive durable events only. Supply the last runID:seq in
+// LastEventID to reconnect. No automatic retry is performed.
 func (c *runClient) OpenEvents(ctx context.Context, req *OpenRunEventsRequest) (io.ReadCloser, error) {
 	path := "/v1/runs/" + url.PathEscape(req.ID) + "/events"
+	query := url.Values{}
 	if req.After != "" {
-		path = withQuery(path, url.Values{"after": {req.After}})
+		query.Set("after", req.After)
+	}
+	if req.Live != nil {
+		query.Set("live", strconv.FormatBool(*req.Live))
 	}
 	resp, err := c.transport.request(ctx).
 		SetHeader("Accept", "text/event-stream").
 		SetHeader("Last-Event-ID", req.LastEventID).
 		SetResponseDoNotParse(true).
 		SetTimeout(0).
-		Get(path)
+		Get(withQuery(path, query))
 	if err != nil {
 		return nil, err
 	}

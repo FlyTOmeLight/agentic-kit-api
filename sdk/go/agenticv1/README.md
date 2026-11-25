@@ -61,7 +61,9 @@ Update 和 Restore 的 revision 不匹配、恢复活跃条目、更新停用条
 
 `sdk.ModelSpec.ContextWindow`配置模型窗口；大于零时同时设置正数且小于窗口的`MaxTokens`，作为输出预留。未配置窗口时使用128 KiB输入字节上限，配置窗口时当前仍采用保守字节估算而非精确token计数。提交期已知输入超限返回HTTP 400、`Code == "ContextBudgetExceeded"`，不会创建Run；worker仍会按实际工具定义和当前消息再次检查。
 
-`client.Runs.OpenEvents(ctx, &sdk.OpenRunEventsRequest{ID: runID, LastEventID: after})` 返回原始 SSE `io.ReadCloser`。调用方使用 SSE 消费器读取事件，并负责调用 Close；提前结束也必须关闭。`sdk.Event` 定义每条事件 data 的 JSON 结构。断线后使用最后收到的 `runID:seq` 再次调用；SDK 不自动解析 SSE 或重连。事件订阅应使用独立的 context，按业务需要设置订阅时长。
+`client.Runs.OpenEvents(ctx, &sdk.OpenRunEventsRequest{ID: runID, LastEventID: after})` 返回原始 SSE `io.ReadCloser`。调用方负责读取、关闭、解析和重连，建议使用独立的 context 控制订阅时长。
+
+按 SSE `event:` 字段分派。`sdk.EventModelReasoningDelta` 和 `sdk.EventModelContentDelta` 的 `data` 解码为 `sdk.StreamDelta`，帧无 `id:` 行。权威事件的 `data` 解码为 `sdk.Event`，以最后一条权威事件的 `id: runID:seq` 重连。`OpenRunEventsRequest.Live` 默认 `nil`，开启瞬态增量。将其设为指向 `false` 的指针即可只接收权威事件。正文以权威 `ModelCompleted` 和 `RunCompleted` 的 `payload.output` 为准。
 
 列表方法返回 `sdk.Page[T]`。ID 列表用最后一项 ID 作为下一次的 `After`，消息列表用最后一项 `Seq`；`Limit=0` 使用服务端默认值。详细分页规则、权限和状态码见 [HTTP 契约](../../../docs/api.md)。
 

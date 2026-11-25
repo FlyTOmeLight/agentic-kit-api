@@ -14,6 +14,7 @@ type RunAPI interface {
 	Answer(ctx context.Context, req *AnswerRunRequest) error
 	Resolve(ctx context.Context, req *ResolveRunRequest) error
 
-	// OpenEvents returns raw SSE. The caller closes the body and supplies the last runID:seq to resume.
+	// OpenEvents returns raw SSE with durable Event and optional transient StreamDelta data.
+	// The caller closes the body and supplies the last runID:seq to resume durable events.
 	OpenEvents(ctx context.Context, req *OpenRunEventsRequest) (io.ReadCloser, error)
 }

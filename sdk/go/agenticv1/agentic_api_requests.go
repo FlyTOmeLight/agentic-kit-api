@@ -66,6 +66,7 @@ type OpenRunEventsRequest struct {
 	ID          string `json:"-" uri:"id" binding:"required,max=128"`
 	LastEventID string `json:"-" form:"-" uri:"-" header:"Last-Event-ID"`
 	After       string `json:"-" form:"after"`
+	Live        *bool  `json:"-" form:"live"`
 }
 
 type CheckExecutionLeaseRequest struct {

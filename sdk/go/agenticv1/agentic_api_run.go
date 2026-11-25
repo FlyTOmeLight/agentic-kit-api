@@ -40,6 +40,13 @@ type RunTrace = execution.RunTrace
 
 type Event = execution.Event
 
+type StreamDelta = execution.StreamDelta
+
+const (
+	EventModelReasoningDelta = execution.EventModelReasoningDelta
+	EventModelContentDelta   = execution.EventModelContentDelta
+)
+
 type SupplyResultRequest struct {
 	StepID string `json:"stepID" binding:"required,max=128"`
 	Result string `json:"result" binding:"required"`
