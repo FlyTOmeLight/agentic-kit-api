@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,55 @@ func newClient(t *testing.T, handler http.HandlerFunc) *sdk.Client {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	return client
+}
+
+func TestCreateAgentMCPServers(t *testing.T) {
+	const serverJSON = `{"name":"catalog","url":"https://mcp.test/tools","tokenEnv":"CATALOG_TOKEN",` +
+		`"defaultPolicy":"Unsafe","allowedTools":["lookup"],"toolPolicies":{"lookup":"ReadOnly"},"forwardScope":true}`
+	config := sdk.AgentConfig{
+		Model:    sdk.ModelSpec{Name: "test", BaseURL: "https://model.test/v1"},
+		MaxTurns: 3,
+		MCPServers: []sdk.MCPServerSpec{{
+			Name:          "catalog",
+			URL:           "https://mcp.test/tools",
+			TokenEnv:      "CATALOG_TOKEN",
+			DefaultPolicy: sdk.Unsafe,
+			AllowedTools:  []string{"lookup"},
+			ToolPolicies:  map[string]sdk.Policy{"lookup": sdk.ReadOnly},
+			ForwardScope:  true,
+		}},
+	}
+	var wantServer map[string]any
+	if err := json.Unmarshal([]byte(serverJSON), &wantServer); err != nil {
+		t.Fatal(err)
+	}
+	client := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/agents" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+		}
+		var request struct {
+			Name   string `json:"name"`
+			Config struct {
+				MCPServers []map[string]any `json:"mcpServers"`
+			} `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if request.Name != "search" ||
+			!reflect.DeepEqual(request.Config.MCPServers, []map[string]any{wantServer}) {
+			t.Errorf("request = %+v", request)
+		}
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, `{"id":"agent","draft":{"mcpServers":[`+serverJSON+`]}}`)
+	})
+	created, err := client.Agents.Create(t.Context(), &sdk.CreateAgentRequest{Name: "search", Config: config})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != "agent" || !reflect.DeepEqual(created.Draft.MCPServers, config.MCPServers) {
+		t.Fatalf("created agent = %+v", created)
+	}
 }
 
 func TestSendMessageProtocol(t *testing.T) {

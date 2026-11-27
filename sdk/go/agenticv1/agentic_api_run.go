@@ -33,6 +33,8 @@ type ModelSpec = agent.ModelSpec
 
 type ToolSpec = agent.ToolSpec
 
+type MCPServerSpec = agent.MCPServerSpec
+
 type Run = execution.Run
 
 // RunTrace is a replayable page of public execution events, never a checkpoint.

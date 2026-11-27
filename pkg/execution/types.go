@@ -55,14 +55,15 @@ type Spec struct {
 	Filesystem *FilesystemBinding `json:"filesystem,omitempty"`
 	Scope      *workspace.Scope   `json:"scope,omitempty"`
 
-	AgentID       string           `json:"agentID"`
-	ConfigVersion string           `json:"configVersion"`
-	Query         string           `json:"query"`
-	SystemPrompt  string           `json:"systemPrompt"`
-	Model         agent.ModelSpec  `json:"model"`
-	Tools         []agent.ToolSpec `json:"tools,omitempty"`
-	MaxTurns      int              `json:"maxTurns"`
-	History       []Message        `json:"history,omitempty"`
+	AgentID       string                `json:"agentID"`
+	ConfigVersion string                `json:"configVersion"`
+	Query         string                `json:"query"`
+	SystemPrompt  string                `json:"systemPrompt"`
+	Model         agent.ModelSpec       `json:"model"`
+	Tools         []agent.ToolSpec      `json:"tools,omitempty"`
+	MCPServers    []agent.MCPServerSpec `json:"mcpServers,omitempty"`
+	MaxTurns      int                   `json:"maxTurns"`
+	History       []Message             `json:"history,omitempty"`
 }
 
 type Run struct {

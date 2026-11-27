@@ -21,6 +21,10 @@ definitions:
     properties:
       maxTurns:
         type: integer
+      mcpServers:
+        items:
+          $ref: '#/definitions/agent.MCPServerSpec'
+        type: array
       model:
         $ref: '#/definitions/agent.ModelSpec'
       systemPrompt:
@@ -33,6 +37,27 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  agent.MCPServerSpec:
+    properties:
+      allowedTools:
+        items:
+          type: string
+        type: array
+      defaultPolicy:
+        type: string
+      forwardScope:
+        type: boolean
+      name:
+        type: string
+      tokenEnv:
+        type: string
+      toolPolicies:
+        additionalProperties:
+          type: string
+        type: object
+      url:
+        type: string
     type: object
   agent.ModelSpec:
     properties:
@@ -99,6 +124,10 @@ definitions:
     properties:
       maxTurns:
         type: integer
+      mcpServers:
+        items:
+          $ref: '#/definitions/agent.MCPServerSpec'
+        type: array
       model:
         $ref: '#/definitions/agent.ModelSpec'
       systemPrompt:

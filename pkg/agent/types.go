@@ -51,12 +51,43 @@ type ToolSpec struct {
 	Policy         Policy          `json:"policy"`
 }
 
+const MCPToolPrefix = "mcp__"
+
+func FormatMCPToolName(serverName, toolName string) string {
+	return MCPToolPrefix + serverName + "__" + toolName
+}
+
+type MCPServerSpec struct {
+	Name          string            `json:"name"`
+	URL           string            `json:"url"`
+	TokenEnv      string            `json:"tokenEnv,omitempty"`
+	DefaultPolicy Policy            `json:"defaultPolicy,omitempty"`
+	AllowedTools  []string          `json:"allowedTools,omitempty"`
+	ToolPolicies  map[string]Policy `json:"toolPolicies,omitempty"`
+	ForwardScope  bool              `json:"forwardScope,omitempty"`
+}
+
+func (s MCPServerSpec) EffectiveDefaultPolicy() Policy {
+	if s.DefaultPolicy == "" {
+		return Unsafe
+	}
+	return s.DefaultPolicy
+}
+
+func (s MCPServerSpec) PolicyFor(toolName string) Policy {
+	if policy, ok := s.ToolPolicies[toolName]; ok {
+		return policy
+	}
+	return s.EffectiveDefaultPolicy()
+}
+
 type AgentConfig struct {
-	Toolsets     []string   `json:"toolsets,omitempty"`
-	SystemPrompt string     `json:"systemPrompt"`
-	Model        ModelSpec  `json:"model"`
-	Tools        []ToolSpec `json:"tools,omitempty"`
-	MaxTurns     int        `json:"maxTurns"`
+	Toolsets     []string        `json:"toolsets,omitempty"`
+	SystemPrompt string          `json:"systemPrompt"`
+	Model        ModelSpec       `json:"model"`
+	Tools        []ToolSpec      `json:"tools,omitempty"`
+	MCPServers   []MCPServerSpec `json:"mcpServers,omitempty"`
+	MaxTurns     int             `json:"maxTurns"`
 }
 
 type Agent struct {

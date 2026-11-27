@@ -120,6 +120,7 @@ func fixtureConfig(spec Spec) AgentConfig {
 		SystemPrompt: spec.SystemPrompt,
 		Model:        spec.Model,
 		Tools:        spec.Tools,
+		MCPServers:   spec.MCPServers,
 		MaxTurns:     spec.MaxTurns,
 	}
 	if cfg.MaxTurns == 0 {

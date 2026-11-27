@@ -26,6 +26,8 @@ type ModelSpec = agent.ModelSpec
 
 type ToolSpec = agent.ToolSpec
 
+type MCPServerSpec = agent.MCPServerSpec
+
 type AgentConfig = agent.AgentConfig
 
 type Agent = agent.Agent

@@ -2950,6 +2950,12 @@ const docTemplateAgentic = `{
                 "maxTurns": {
                     "type": "integer"
                 },
+                "mcpServers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.MCPServerSpec"
+                    }
+                },
                 "model": {
                     "$ref": "#/definitions/agent.ModelSpec"
                 },
@@ -2967,6 +2973,38 @@ const docTemplateAgentic = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "agent.MCPServerSpec": {
+            "type": "object",
+            "properties": {
+                "allowedTools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "defaultPolicy": {
+                    "type": "string"
+                },
+                "forwardScope": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tokenEnv": {
+                    "type": "string"
+                },
+                "toolPolicies": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "url": {
+                    "type": "string"
                 }
             }
         },
@@ -3068,6 +3106,12 @@ const docTemplateAgentic = `{
             "properties": {
                 "maxTurns": {
                     "type": "integer"
+                },
+                "mcpServers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.MCPServerSpec"
+                    }
                 },
                 "model": {
                     "$ref": "#/definitions/agent.ModelSpec"

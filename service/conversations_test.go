@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/durable"
@@ -33,6 +34,12 @@ func TestAgentEditingAndPersistentSessions(t *testing.T) {
 			Parameters:     json.RawMessage(`{"type":"object"}`),
 		},
 	}
+	a.Draft.MCPServers = []durable.MCPServerSpec{{
+		Name:         "catalog",
+		URL:          "https://mcp.test/tools",
+		AllowedTools: []string{"lookup"},
+		ToolPolicies: map[string]durable.Policy{"lookup": durable.ReadOnly},
+	}}
 	body, _ := json.Marshal(map[string]any{"name": "updated", "revision": a.Revision, "config": a.Draft})
 	w = request(router, "PUT", agentPath, string(body), testToken, "")
 	if w.Code != 200 {
@@ -48,7 +55,7 @@ func TestAgentEditingAndPersistentSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if v.Number != 2 || v.Config.SystemPrompt != "new prompt" || len(v.Config.Tools) != 1 ||
-		!v.Config.Tools[0].ReturnDirectly {
+		!v.Config.Tools[0].ReturnDirectly || !reflect.DeepEqual(v.Config.MCPServers, a.Draft.MCPServers) {
 		t.Fatalf("version=%+v", v)
 	}
 	// Recreating the router must load definitions and history from the database.
@@ -67,6 +74,9 @@ func TestAgentEditingAndPersistentSessions(t *testing.T) {
 	frozen, err := store.Get(t.Context(), "owner", run.ID)
 	if err != nil || len(frozen.Spec.Tools) != 1 || !frozen.Spec.Tools[0].ReturnDirectly {
 		t.Fatalf("returnDirectly was not frozen in the run: %v", err)
+	}
+	if !reflect.DeepEqual(frozen.Spec.MCPServers, a.Draft.MCPServers) || frozen.Spec.Filesystem != nil {
+		t.Fatalf("chat MCPServers = %+v, filesystem = %+v", frozen.Spec.MCPServers, frozen.Spec.Filesystem)
 	}
 	for _, path := range []string{"/v1/agents", "/v1/sessions?agentID=" + session.AgentID, sessionPath + "/runs", sessionPath + "/messages"} {
 		w = request(router, "GET", path, "", testToken, "")

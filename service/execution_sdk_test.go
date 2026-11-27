@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -53,12 +54,19 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 	if legacyResponse.StatusCode != 400 {
 		t.Fatalf("inline Agent definition accepted: %d", legacyResponse.StatusCode)
 	}
+	servers := []sdk.MCPServerSpec{{
+		Name:         "catalog",
+		URL:          "https://mcp.test/tools",
+		AllowedTools: []string{"lookup"},
+		ToolPolicies: map[string]sdk.Policy{"lookup": sdk.ReadOnly},
+	}}
 	agent, e := client.Agents.Create(
 		ctx, &sdk.CreateAgentRequest{
 			Name: "Coding",
 			Config: sdk.AgentConfig{
-				Model:    sdk.ModelSpec{Name: "model", BaseURL: "http://model.test/v1"},
-				MaxTurns: 3,
+				Model:      sdk.ModelSpec{Name: "model", BaseURL: "http://model.test/v1"},
+				MCPServers: servers,
+				MaxTurns:   3,
 			},
 		},
 	)
@@ -135,6 +143,13 @@ func TestSDKTrustedApplicationExecution(t *testing.T) {
 	claimed, e := store.Claim(ctx, "worker", time.Minute)
 	if e != nil {
 		t.Fatal(e)
+	}
+	if !reflect.DeepEqual(claimed.Spec.MCPServers, servers) || claimed.Spec.Filesystem != nil {
+		t.Fatalf(
+			"application MCPServers = %+v, filesystem = %+v",
+			claimed.Spec.MCPServers,
+			claimed.Spec.Filesystem,
+		)
 	}
 	lease, e := client.Executions.CheckLease(ctx, &sdk.CheckExecutionLeaseRequest{ID: run.ID, Epoch: claimed.Epoch})
 	if e != nil || !lease.Allowed {

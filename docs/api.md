@@ -32,7 +32,23 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | PUT /v1/memories/{id} | 更新活跃记忆或恢复停用记忆 | expectedRevision、可选 restore、document；Idempotency-Key header 必填 |
 | POST /v1/memories/{id}/retire | 停用记忆 | expectedRevision；Idempotency-Key header 必填 |
 
-config 包括 systemPrompt、model、tools、maxTurns，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)；maxTurns 为 1～100。工具名称不能重复，parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`；该工具成功时，worker 直接返回工具结果并结束本轮，不再调用模型；错误结果返回给模型处理。此设置随 Agent 发布版本和 Run 快照冻结。工具 `kind` 仅接受空字符串或 `HTTP`；`AppForgeMCP`、`AppForgeOpenAPI` 及其他未知 kind 一律拒绝；ask_for_clarification 必须 `ReadOnly` 且 kind 为空或 `HTTP`，URL 字段可不填。
+config 包括 systemPrompt、model、tools、mcpServers、toolsets、maxTurns，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)，maxTurns 为 1～100。静态工具名称不能重复或以 `mcp__` 开头，parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`，成功时 worker 直接返回工具结果并结束本轮，失败时将错误结果交给模型处理。此设置随 Agent 发布版本和 Run 快照冻结。静态工具 `kind` 仅接受空字符串或 `HTTP`，`AppForgeMCP`、`AppForgeOpenAPI` 及其他未知 kind 一律拒绝。`ask_for_clarification` 必须为 `ReadOnly`，kind 为空或 `HTTP`，URL 字段可不填。
+
+`mcpServers` 是可选的标准 MCP Streamable HTTP 服务列表，最多 16 项。API 将服务配置随发布版本冻结到聊天和受信任应用的 Run 快照中，子 Run 继承父 Run 的配置。使用 MCP 不要求配置 `Filesystem`。
+
+| 字段 | 约束与行为 |
+| --- | --- |
+| `name` | 服务名唯一，匹配 `^[a-z0-9][a-z0-9-]{0,15}$`。Worker 暴露的完整工具名为 `mcp__<server>__<tool>`。 |
+| `url` | HTTP(S) 端点，不能包含用户信息或片段。 |
+| `tokenEnv` | 可选的 Worker 凭据环境变量名，不含空白。快照只保存变量名。 |
+| `allowedTools` | 可选的远端原始工具名白名单，最多 64 项且不可重复。省略或为空时不按白名单筛选。 |
+| `defaultPolicy` | 可设为 `ReadOnly`、`Idempotent` 或 `Unsafe`，省略或为空时按 `Unsafe` 处理。 |
+| `toolPolicies` | 按远端原始工具名设置上述策略，优先于 `defaultPolicy`，不接受空策略。白名单非空时，每个键都必须在白名单中。 |
+| `forwardScope` | 默认不向 MCP 服务发送 `X-Agentic-Scope`。显式设置为 `true` 时才转发。 |
+
+白名单和策略映射中的原始工具名须匹配 `^[a-zA-Z0-9_-]{1,64}$`，拼接后的完整工具名最多 64 字符。工具重放策略来自本地配置，远端 `ToolAnnotations` 不参与决策。`Idempotent` 只用于自身天然幂等、可安全重复调用的工具。
+
+API 不访问 MCP 服务，提交期工具预算预检只计入静态工具。Worker 接入后在执行期发现 MCP 工具，将其纳入参数校验和 `durable_step` 保护，并按实际工具定义核算上下文预算。静态工具和运行时装配的工具合计最多 128 个。
 
 `model.contextWindow`为可选非负整数。非零时必须同时配置正数`model.maxTokens`且小于窗口，输入预算为窗口减输出预留；`maxTokens`一旦提供就必须为正数。`model.stream` 为可选布尔值（省略时默认 `true`），随发布版本和 Run 快照冻结；设为 `false` 时 worker 直接使用非流式模型调用，兼容不支持流式或不支持 `stream_options.include_usage` 的 OpenAI 兼容网关。当前采用`cjk-weighted-v1`字符加权估算，并预留256 token协议开销，不是精确tokenizer计数。未配置窗口时冻结128 KiB输入字节上限。单条工具结果以有界首尾预览进入模型输入，完整结果仍持久保存。预算、预览上限和裁剪策略随Run冻结，发布新配置不改变已有Run。
 
