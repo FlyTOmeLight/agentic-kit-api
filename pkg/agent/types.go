@@ -51,7 +51,11 @@ type ToolSpec struct {
 	Policy         Policy          `json:"policy"`
 }
 
-const MCPToolPrefix = "mcp__"
+const (
+	MCPToolPrefix            = "mcp__"
+	DelegateSubAgentToolName = "delegate_subagent"
+	ReadStepResultToolName   = "read_step_result"
+)
 
 func FormatMCPToolName(serverName, toolName string) string {
 	return MCPToolPrefix + serverName + "__" + toolName
@@ -81,6 +85,13 @@ func (s MCPServerSpec) PolicyFor(toolName string) Policy {
 	return s.EffectiveDefaultPolicy()
 }
 
+type SubAgentSpec struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	AgentID     string `json:"agentID"`
+	Version     int64  `json:"version,omitempty"`
+}
+
 type AgentConfig struct {
 	Toolsets     []string        `json:"toolsets,omitempty"`
 	SystemPrompt string          `json:"systemPrompt"`
@@ -88,6 +99,8 @@ type AgentConfig struct {
 	Tools        []ToolSpec      `json:"tools,omitempty"`
 	MCPServers   []MCPServerSpec `json:"mcpServers,omitempty"`
 	MaxTurns     int             `json:"maxTurns"`
+	SubAgents    []SubAgentSpec  `json:"subAgents,omitempty"`
+	SelfDelegate bool            `json:"selfDelegate,omitempty"`
 }
 
 type Agent struct {

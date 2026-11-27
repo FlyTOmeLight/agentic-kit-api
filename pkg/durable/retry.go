@@ -3,9 +3,11 @@ package durable
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
@@ -19,7 +21,22 @@ func (s *Store) Retry(ctx context.Context, l Lease, state json.RawMessage, reaso
 		return err
 	}
 	defer tx.Rollback()
-	r, err := lockLease(ctx, tx, l)
+	var binding table.Run
+	if err := table.TenantQuery(ctx, tx).
+		Select("tenant_id", "parent_run_id", "attempt", "max_attempts").
+		Where("id = ? AND worker_id = ? AND epoch = ?", l.RunID, l.WorkerID, l.Epoch).
+		Take(&binding).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrLeaseLost
+		}
+		return err
+	}
+	if binding.ParentRunID != "" && binding.Attempt >= binding.MaxAttempts {
+		if err := lockParentRun(ctx, tx, binding); err != nil {
+			return err
+		}
+	}
+	r, err := lockLease(ctx, table.TenantQuery(ctx, tx), l)
 	if err != nil {
 		return err
 	}
@@ -27,13 +44,16 @@ func (s *Store) Retry(ctx context.Context, l Lease, state json.RawMessage, reaso
 	if r.Attempt >= r.MaxAttempts {
 		status = Failed
 	}
-	err = tx.Model(&table.Run{}).
+	var stored table.Run
+	err = table.TenantQuery(ctx, tx.Model(&stored)).
 		Where("id = ?", l.RunID).
+		Clauses(clause.Returning{}).
 		Updates(map[string]any{
 			"state":       string(state),
 			"status":      status,
 			"error":       reason,
 			"lease_until": nil,
+			"worker_id":   "",
 			"available_at": gorm.Expr(
 				"clock_timestamp()+?*interval '1 millisecond'",
 				delay.Milliseconds(),
@@ -48,6 +68,11 @@ func (s *Store) Retry(ctx context.Context, l Lease, state json.RawMessage, reaso
 	}
 	if err = emit(ctx, tx, l.RunID, "RunRetry", map[string]any{"status": status, "detail": reason}); err != nil {
 		return err
+	}
+	if status.Terminal() {
+		if err = finishTerminalRun(ctx, tx, &stored); err != nil {
+			return err
+		}
 	}
 	return tx.Commit().Error
 }

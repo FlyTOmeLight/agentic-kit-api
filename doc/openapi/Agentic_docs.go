@@ -2959,6 +2959,15 @@ const docTemplateAgentic = `{
                 "model": {
                     "$ref": "#/definitions/agent.ModelSpec"
                 },
+                "selfDelegate": {
+                    "type": "boolean"
+                },
+                "subAgents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.SubAgentSpec"
+                    }
+                },
                 "systemPrompt": {
                     "type": "string"
                 },
@@ -3034,6 +3043,23 @@ const docTemplateAgentic = `{
                 },
                 "topP": {
                     "type": "number"
+                }
+            }
+        },
+        "agent.SubAgentSpec": {
+            "type": "object",
+            "properties": {
+                "agentID": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
@@ -3115,6 +3141,15 @@ const docTemplateAgentic = `{
                 },
                 "model": {
                     "$ref": "#/definitions/agent.ModelSpec"
+                },
+                "selfDelegate": {
+                    "type": "boolean"
+                },
+                "subAgents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.SubAgentSpec"
+                    }
                 },
                 "systemPrompt": {
                     "type": "string"

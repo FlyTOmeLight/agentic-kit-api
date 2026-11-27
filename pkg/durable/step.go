@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -39,6 +40,9 @@ func (s *Store) ReadStepResult(ctx context.Context, l Lease, stepID string) (str
 // step whose outcome is unknown returns StepUncertain so the executor pauses
 // for review instead of repeating the call.
 func (s *Store) BeginStep(ctx context.Context, l Lease, intent StepIntent) (StepDecision, error) {
+	if strings.HasPrefix(intent.ExternalRef, childExternalRefPrefix) {
+		return StepDecision{}, ErrInvalid
+	}
 	if err := intent.Validate(); err != nil {
 		return StepDecision{}, err
 	}

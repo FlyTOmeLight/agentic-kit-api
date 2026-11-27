@@ -3,6 +3,7 @@ package durable
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -124,6 +125,9 @@ func (s *Store) supplyExternalResult(
 	owner *string,
 	id, step, externalRef, result string,
 ) error {
+	if strings.HasPrefix(externalRef, childExternalRefPrefix) {
+		return ErrConflict
+	}
 	if externalRef == "" {
 		return ErrInvalid
 	}
@@ -139,6 +143,9 @@ func (s *Store) supplyExternalResult(
 	r, err := readRun(query.Clauses(clause.Locking{Strength: "UPDATE"}))
 	if err != nil {
 		return err
+	}
+	if strings.HasPrefix(r.WaitingExternalRef, childExternalRefPrefix) {
+		return ErrConflict
 	}
 	var saved struct{ Result, Status, ExternalRef string }
 	err = tx.Model(&table.Step{}).

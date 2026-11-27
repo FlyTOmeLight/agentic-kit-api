@@ -97,6 +97,7 @@ func (tx *Tx) Submit(
 		}
 		prepared, err := prepare(ctx, tx.db, execution.SubmissionFacts{
 			PricingSnapshot: cmd.PricingSnapshot,
+			SubAgents:       cmd.SubAgents,
 			Owner:           cmd.Owner,
 			SessionID:       sessionID,
 			SessionAgentID:  sessionAgentID,

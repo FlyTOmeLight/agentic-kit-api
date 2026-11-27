@@ -19,6 +19,7 @@ const (
 // SubmitCommand is the durable accept input for chat and application entrypoints.
 type SubmitCommand struct {
 	PricingSnapshot *PricingSnapshot
+	SubAgents       []SubAgentSnapshot
 	Owner           string
 	RequestKey      string
 	RequestHash     string
@@ -45,6 +46,7 @@ type SubmitCommand struct {
 // SubmissionFacts are passed to prepare after session locks succeed.
 type SubmissionFacts struct {
 	PricingSnapshot *PricingSnapshot
+	SubAgents       []SubAgentSnapshot
 	Owner           string
 	SessionID       string
 	SessionAgentID  string
@@ -53,6 +55,14 @@ type SubmissionFacts struct {
 	ExecutionSpec   ExecutionSpec
 	Memory          memory.Selection
 	MemoryFilter    memory.RecallFilter
+}
+
+type ChildSpawnRequest struct {
+	StepID      string
+	SubAgent    string
+	Instruction string
+	Query       string
+	TTL         time.Duration
 }
 
 // PreparedSubmission is the compiled snapshot ready to persist.

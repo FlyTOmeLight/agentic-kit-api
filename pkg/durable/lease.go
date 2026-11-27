@@ -12,6 +12,12 @@ import (
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
 )
 
+const claimableRun = `(
+	(status = 'Queued' AND available_at <= clock_timestamp())
+	OR (status = 'Running' AND lease_until <= clock_timestamp())
+	OR (status IN ('WaitingClarification', 'NeedsReview', 'WaitingExternal') AND deadline <= clock_timestamp())
+)`
+
 func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (*Run, error) {
 	if worker == "" || lease <= 0 {
 		return nil, ErrConflict
@@ -22,56 +28,35 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (
 		return nil, err
 	}
 	defer tx.Rollback()
-	r, err := readRun(
-		tx.Model(&table.Run{}).
-			Where("(status='Queued' AND available_at<=clock_timestamp()) OR (status='Running' AND lease_until<=clock_timestamp()) OR (status IN ('WaitingClarification','NeedsReview','WaitingExternal') AND deadline<=clock_timestamp())").
-			Order("available_at,created_at").
-			Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}),
-	)
-	if errors.Is(err, ErrNotFound) {
+	var candidate table.Run
+	err = tx.Where(claimableRun).Order("available_at,created_at").
+		Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Take(&candidate).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrNoWork
 	}
 	if err != nil {
 		return nil, err
 	}
-	var expired bool
-	if err = tx.Model(&table.Run{}).
-		Select("deadline <= clock_timestamp()").
-		Where("id = ?", r.ID).
-		Scan(&expired).
-		Error; err != nil {
+	reason, err := claimFailureReason(tx, candidate)
+	if err != nil {
 		return nil, err
 	}
-	if expired || r.Attempt >= r.MaxAttempts {
-		reason := "execution deadline exceeded"
-		if !expired {
-			reason = "execution attempts exhausted"
+	if reason != "" {
+		if candidate.ParentRunID != "" {
+			if err = tx.Rollback().Error; err != nil {
+				return nil, err
+			}
+			err = s.failChildClaim(ctx, candidate)
+		} else if err = failClaim(ctx, tx, candidate, reason); err == nil {
+			err = tx.Commit().Error
 		}
-		err = tx.Model(&table.Run{}).
-			Where("id = ?", r.ID).
-			Updates(map[string]any{
-				"status":               Failed,
-				"epoch":                gorm.Expr("epoch + 1"),
-				"lease_until":          nil,
-				"error":                reason,
-				"waiting_step":         "",
-				"waiting_kind":         "",
-				"waiting_external_ref": "",
-			}).
-			Error
 		if err != nil {
-			return nil, err
-		}
-		if err = emit(ctx, tx, r.ID, "RunFailed", map[string]any{"error": reason}); err != nil {
-			return nil, err
-		}
-		if err = tx.Commit().Error; err != nil {
 			return nil, err
 		}
 		return nil, ErrNoWork
 	}
 	var claimed table.Run
-	err = tx.Model(&claimed).Where("id = ?", r.ID).Clauses(clause.Returning{}).Updates(map[string]any{
+	err = tx.Model(&claimed).Where("id = ?", candidate.ID).Clauses(clause.Returning{}).Updates(map[string]any{
 		"status":    Running,
 		"worker_id": worker,
 		"epoch":     gorm.Expr("epoch + 1"),
@@ -82,14 +67,72 @@ func (s *Store) Claim(ctx context.Context, worker string, lease time.Duration) (
 		),
 		"updated_at": gorm.Expr("clock_timestamp()"),
 	}).Error
-	r = runFromRow(claimed)
 	if err != nil {
 		return nil, err
 	}
+	r := runFromRow(claimed)
 	if err = emit(ctx, tx, r.ID, "RunStarted", map[string]any{"epoch": r.Epoch, "attempt": r.Attempt}); err != nil {
 		return nil, err
 	}
 	return r, tx.Commit().Error
+}
+
+func claimFailureReason(tx *gorm.DB, candidate table.Run) (string, error) {
+	var expired bool
+	if err := tx.Model(&table.Run{}).Select("deadline <= clock_timestamp()").
+		Where("id = ?", candidate.ID).Scan(&expired).Error; err != nil {
+		return "", err
+	}
+	if expired {
+		return "execution deadline exceeded", nil
+	}
+	if candidate.Attempt >= candidate.MaxAttempts {
+		return "execution attempts exhausted", nil
+	}
+	return "", nil
+}
+
+func (s *Store) failChildClaim(ctx context.Context, candidate table.Run) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockParentRun(ctx, tx, candidate); err != nil {
+			return err
+		}
+		var child table.Run
+		err := tx.Where("tenant_id = ? AND id = ?", candidate.TenantID, candidate.ID).
+			Where(claimableRun).Clauses(clause.Locking{Strength: "UPDATE"}).Take(&child).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		reason, err := claimFailureReason(tx, child)
+		if err != nil || reason == "" {
+			return err
+		}
+		return failClaim(ctx, tx, child, reason)
+	})
+}
+
+func failClaim(ctx context.Context, tx *gorm.DB, run table.Run, reason string) error {
+	if err := tx.Model(&table.Run{}).Where("id = ?", run.ID).Updates(map[string]any{
+		"status":               Failed,
+		"epoch":                gorm.Expr("epoch + 1"),
+		"lease_until":          nil,
+		"worker_id":            "",
+		"error":                reason,
+		"waiting_step":         "",
+		"waiting_kind":         "",
+		"waiting_external_ref": "",
+	}).Error; err != nil {
+		return err
+	}
+	if err := emit(ctx, tx, run.ID, "RunFailed", map[string]any{"error": reason}); err != nil {
+		return err
+	}
+	run.Status = Failed
+	run.Error = reason
+	return finishTerminalRun(ctx, tx, &run)
 }
 
 func (s *Store) Renew(ctx context.Context, l Lease, d time.Duration) error {

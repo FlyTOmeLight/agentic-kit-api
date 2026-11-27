@@ -11,6 +11,7 @@ import (
 var (
 	mcpServerNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,15}$`)
 	mcpToolNamePattern   = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+	subAgentNamePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 )
 
 func validEndpoint(raw string) bool {
@@ -23,12 +24,17 @@ func validEndpoint(raw string) bool {
 // not classify configurations by product scenario.
 func ValidateAgentConfig(c AgentConfig) error {
 	model := c.Model
+	maxStaticTools := 128
+	if len(c.SubAgents) > 0 || c.SelfDelegate {
+		// Reserve slots for built-in delegate_subagent and read_step_result tools.
+		maxStaticTools = 126
+	}
 	if strings.TrimSpace(model.Name) == "" || !validEndpoint(model.BaseURL) || model.ContextWindow < 0 ||
 		(model.MaxTokens != nil && *model.MaxTokens <= 0) ||
 		(model.ContextWindow > 0 &&
 			(model.MaxTokens == nil || int64(*model.MaxTokens) >= model.ContextWindow)) ||
 		c.MaxTurns < 1 || c.MaxTurns > 100 ||
-		len(c.Tools) > 128 {
+		len(c.Tools) > maxStaticTools {
 		return ErrInvalidConfig
 	}
 	seenSets := map[string]bool{}
@@ -42,6 +48,7 @@ func ValidateAgentConfig(c AgentConfig) error {
 	for _, t := range c.Tools {
 		var params map[string]any
 		if strings.TrimSpace(t.Name) == "" || strings.HasPrefix(t.Name, MCPToolPrefix) ||
+			t.Name == DelegateSubAgentToolName || t.Name == ReadStepResultToolName ||
 			seen[t.Name] || json.Unmarshal(t.Parameters, &params) != nil ||
 			params == nil ||
 			params["type"] != "object" {
@@ -63,6 +70,19 @@ func ValidateAgentConfig(c AgentConfig) error {
 		} else if !validEndpoint(t.URL) {
 			return ErrInvalidConfig
 		}
+	}
+	if len(c.SubAgents) > 10 {
+		return ErrInvalidConfig
+	}
+	subNames := make(map[string]bool, len(c.SubAgents))
+	for _, sub := range c.SubAgents {
+		agentID := strings.TrimSpace(sub.AgentID)
+		if !subAgentNamePattern.MatchString(sub.Name) || sub.Name == "self" || subNames[sub.Name] ||
+			strings.TrimSpace(sub.Description) == "" || len(sub.Description) > 1024 ||
+			agentID == "" || len(agentID) > 128 || agentID != sub.AgentID || sub.Version < 0 {
+			return ErrInvalidConfig
+		}
+		subNames[sub.Name] = true
 	}
 	return validateMCPServers(c.MCPServers)
 }

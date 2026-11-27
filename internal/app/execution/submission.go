@@ -136,6 +136,10 @@ func (s *Service) prepareChat(
 	if err != nil {
 		return ctx, execpkg.SubmitCommand{}, nil, nil, err
 	}
+	cmd.SubAgents, err = s.freezeSubAgents(ctx, identity, agentRow, config.SubAgents)
+	if err != nil {
+		return ctx, execpkg.SubmitCommand{}, nil, nil, err
+	}
 	return ctx, cmd, durable.PrepareChatSubmission(
 		config,
 		agentRow.ID,
@@ -200,11 +204,68 @@ func (s *Service) SubmitApplication(
 	if err != nil {
 		return nil, false, err
 	}
+	cmd.SubAgents, err = s.freezeSubAgents(ctx, identity, agentRow, config.SubAgents)
+	if err != nil {
+		return nil, false, err
+	}
 	return s.store.Accept(
 		ctx,
 		cmd,
 		durable.PrepareApplicationSubmission(config, agentRow.ID, spec.AgentVersion, s.recaller),
 	)
+}
+
+func (s *Service) freezeSubAgents(
+	ctx context.Context,
+	identity client.Identity,
+	parent table.Agent,
+	subAgents []agent.SubAgentSpec,
+) ([]execpkg.SubAgentSnapshot, error) {
+	var snapshots []execpkg.SubAgentSnapshot
+	db := s.store.DB().WithContext(ctx)
+	for _, sub := range subAgents {
+		row, err := table.GetAgent(db.Where("tenant_id = ?", parent.TenantID), parent.OwnerID, sub.AgentID)
+		if err != nil {
+			return nil, recordError(err)
+		}
+		if row.ID == parent.ID {
+			return nil, agent.ErrInvalid
+		}
+		version := sub.Version
+		if version == 0 {
+			if row.PublishedVersion <= 0 {
+				return nil, agent.ErrConflict
+			}
+			version = row.PublishedVersion
+		}
+		config, err := s.publishedConfig(ctx, identity, row.ID, version)
+		if err != nil {
+			return nil, err
+		}
+		if err = agent.ValidateAgentConfig(config); err != nil {
+			return nil, agent.ErrInvalid
+		}
+		pricing, err := s.pricing.Freeze(config.Model)
+		if err != nil {
+			return nil, err
+		}
+		spec := execpkg.CompileRunSpec(config, row.ID, version, "", nil, nil)
+		snapshots = append(snapshots, execpkg.SubAgentSnapshot{
+			Name:            sub.Name,
+			Description:     sub.Description,
+			AgentID:         spec.AgentID,
+			ConfigVersion:   spec.ConfigVersion,
+			PricingFrozen:   spec.PricingFrozen,
+			PricingSnapshot: pricing,
+			Toolsets:        spec.Toolsets,
+			SystemPrompt:    spec.SystemPrompt,
+			Model:           spec.Model,
+			Tools:           spec.Tools,
+			MCPServers:      spec.MCPServers,
+			MaxTurns:        spec.MaxTurns,
+		})
+	}
+	return snapshots, nil
 }
 
 func (s *Service) authorizeProjectRecall(

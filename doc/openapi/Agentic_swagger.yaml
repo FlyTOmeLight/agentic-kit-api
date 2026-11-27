@@ -27,6 +27,12 @@ definitions:
         type: array
       model:
         $ref: '#/definitions/agent.ModelSpec'
+      selfDelegate:
+        type: boolean
+      subAgents:
+        items:
+          $ref: '#/definitions/agent.SubAgentSpec'
+        type: array
       systemPrompt:
         type: string
       tools:
@@ -77,6 +83,17 @@ definitions:
         type: number
       topP:
         type: number
+    type: object
+  agent.SubAgentSpec:
+    properties:
+      agentID:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+      version:
+        type: integer
     type: object
   agent.ToolSpec:
     properties:
@@ -130,6 +147,12 @@ definitions:
         type: array
       model:
         $ref: '#/definitions/agent.ModelSpec'
+      selfDelegate:
+        type: boolean
+      subAgents:
+        items:
+          $ref: '#/definitions/agent.SubAgentSpec'
+        type: array
       systemPrompt:
         type: string
       tools:

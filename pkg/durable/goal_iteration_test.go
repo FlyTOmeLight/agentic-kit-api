@@ -217,12 +217,12 @@ func TestGoalIterationBlocksAtLimits(t *testing.T) {
 		}},
 		{name: "sandbox workspace", mutate: func(store *Store, _ *Goal, run *Run) error {
 			return store.db.Model(&table.Run{}).Where("id = ?", run.ID).
-				Update("spec", gorm.Expr(`jsonb_set(spec, '{filesystem}', '{"provider":"Sandbox","workspace":"/workspace"}')`)).
+				Update("spec", gorm.Expr(`spec || '{"toolsets":["filesystem"],"filesystem":{"provider":"Sandbox","workspace":"/workspace"}}'::jsonb`)).
 				Error
 		}},
 		{name: "aio workspace", mutate: func(store *Store, _ *Goal, run *Run) error {
 			return store.db.Model(&table.Run{}).Where("id = ?", run.ID).
-				Update("spec", gorm.Expr(`jsonb_set(spec, '{filesystem}', '{"provider":"AIO","workspace":"/workspace"}')`)).
+				Update("spec", gorm.Expr(`spec || '{"toolsets":["filesystem"],"filesystem":{"provider":"AIO","workspace":"/workspace"}}'::jsonb`)).
 				Error
 		}},
 	}

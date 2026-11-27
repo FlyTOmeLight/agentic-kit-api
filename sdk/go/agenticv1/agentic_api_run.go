@@ -35,6 +35,10 @@ type ToolSpec = agent.ToolSpec
 
 type MCPServerSpec = agent.MCPServerSpec
 
+type SubAgentSpec = agent.SubAgentSpec
+
+type SubAgentSnapshot = execution.SubAgentSnapshot
+
 type Run = execution.Run
 
 // RunTrace is a replayable page of public execution events, never a checkpoint.

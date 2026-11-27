@@ -192,10 +192,12 @@ func TestValidateAgentConfigMCPServers(t *testing.T) {
 func TestValidateAgentConfigRejectsReservedOrProprietaryTools(t *testing.T) {
 	for _, test := range []struct{ name, kind string }{
 		{name: "mcp__catalog__lookup", kind: "HTTP"},
+		{name: DelegateSubAgentToolName, kind: "HTTP"},
+		{name: ReadStepResultToolName, kind: "HTTP"},
 		{name: "lookup", kind: "AppForgeMCP"},
 		{name: "lookup", kind: "AppForgeOpenAPI"},
 	} {
-		t.Run(test.kind, func(t *testing.T) {
+		t.Run(test.name+"/"+test.kind, func(t *testing.T) {
 			cfg := AgentConfig{
 				Model:    ModelSpec{Name: "test", BaseURL: "http://model.test/v1"},
 				MaxTurns: 1,
@@ -209,6 +211,39 @@ func TestValidateAgentConfigRejectsReservedOrProprietaryTools(t *testing.T) {
 			}
 			if err := ValidateAgentConfig(cfg); !errors.Is(err, ErrInvalidConfig) {
 				t.Fatalf("got %v, want %v", err, ErrInvalidConfig)
+			}
+		})
+	}
+}
+
+func TestValidateSubAgentSpecs(t *testing.T) {
+	valid := SubAgentSpec{Name: "research-1", Description: "Research", AgentID: "agent-id"}
+	for _, test := range []struct {
+		name string
+		spec []SubAgentSpec
+		want error
+	}{
+		{name: "valid", spec: []SubAgentSpec{valid, {Name: "review_2", Description: "Review", AgentID: "agent-id", Version: 3}}},
+		{name: "limit", spec: make([]SubAgentSpec, 11), want: ErrInvalidConfig},
+		{name: "name", spec: []SubAgentSpec{{Name: "-review", Description: valid.Description, AgentID: valid.AgentID}}, want: ErrInvalidConfig},
+		{name: "self", spec: []SubAgentSpec{{Name: "self", Description: valid.Description, AgentID: valid.AgentID}}, want: ErrInvalidConfig},
+		{name: "duplicate", spec: []SubAgentSpec{valid, valid}, want: ErrInvalidConfig},
+		{name: "empty description", spec: []SubAgentSpec{{Name: valid.Name, Description: " \t", AgentID: valid.AgentID}}, want: ErrInvalidConfig},
+		{name: "long description", spec: []SubAgentSpec{{Name: valid.Name, Description: strings.Repeat("x", 1025), AgentID: valid.AgentID}}, want: ErrInvalidConfig},
+		{name: "untrimmed ID", spec: []SubAgentSpec{{Name: valid.Name, Description: valid.Description, AgentID: " agent-id"}}, want: ErrInvalidConfig},
+		{name: "empty ID", spec: []SubAgentSpec{{Name: valid.Name, Description: valid.Description}}, want: ErrInvalidConfig},
+		{name: "long ID", spec: []SubAgentSpec{{Name: valid.Name, Description: valid.Description, AgentID: strings.Repeat("x", 129)}}, want: ErrInvalidConfig},
+		{name: "negative version", spec: []SubAgentSpec{{Name: valid.Name, Description: valid.Description, AgentID: valid.AgentID, Version: -1}}, want: ErrInvalidConfig},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := AgentConfig{
+				Model:        ModelSpec{Name: "test", BaseURL: "http://model.test/v1"},
+				MaxTurns:     1,
+				SelfDelegate: true,
+				SubAgents:    test.spec,
+			}
+			if err := ValidateAgentConfig(cfg); !errors.Is(err, test.want) {
+				t.Fatalf("validation error = %v, want %v", err, test.want)
 			}
 		})
 	}
@@ -356,5 +391,51 @@ func TestModelSpecStreamJSON(t *testing.T) {
 	}
 	if decoded.Stream == nil || *decoded.Stream {
 		t.Fatalf("decoded Stream = %v, want false", decoded.Stream)
+	}
+}
+
+func TestValidateAgentConfigDelegationStaticToolLimit(t *testing.T) {
+	makeTools := func(n int) []ToolSpec {
+		tools := make([]ToolSpec, n)
+		for i := range tools {
+			tools[i] = ToolSpec{
+				Name: "tool_" + string(
+					rune('a'+i/26),
+				) + string(
+					rune('a'+i%26),
+				) + string(
+					rune('0'+i%10),
+				),
+				URL:        "https://tools.example/run",
+				Policy:     ReadOnly,
+				Parameters: json.RawMessage(`{"type":"object"}`),
+			}
+		}
+		return tools
+	}
+	base := AgentConfig{
+		Model:    ModelSpec{Name: "gpt-test", BaseURL: "https://model.example/v1"},
+		MaxTurns: 5,
+		Tools:    makeTools(126),
+	}
+	withSelf := base
+	withSelf.SelfDelegate = true
+	if err := ValidateAgentConfig(withSelf); err != nil {
+		t.Fatalf("126 static tools with selfDelegate should pass, got %v", err)
+	}
+	withSelf.Tools = makeTools(127)
+	if err := ValidateAgentConfig(withSelf); err == nil {
+		t.Fatal("127 static tools with selfDelegate should fail")
+	}
+	withSub := base
+	withSub.Tools = makeTools(127)
+	withSub.SubAgents = []SubAgentSpec{{Name: "review", Description: "Review", AgentID: "agent-2"}}
+	if err := ValidateAgentConfig(withSub); err == nil {
+		t.Fatal("127 static tools with subAgents should fail")
+	}
+	plain := base
+	plain.Tools = makeTools(128)
+	if err := ValidateAgentConfig(plain); err != nil {
+		t.Fatalf("128 static tools without delegation should still pass, got %v", err)
 	}
 }

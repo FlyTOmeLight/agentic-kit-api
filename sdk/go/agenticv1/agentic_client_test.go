@@ -29,6 +29,37 @@ func newClient(t *testing.T, handler http.HandlerFunc) *sdk.Client {
 	return client
 }
 
+func TestAgentConfigDelegationJSON(t *testing.T) {
+	config := sdk.AgentConfig{
+		SubAgents: []sdk.SubAgentSpec{
+			{Name: "research", Description: "Find references", AgentID: "research-id"},
+			{Name: "review", Description: "Review references", AgentID: "review-id", Version: 2},
+		},
+		SelfDelegate: true,
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"name":"research","description":"Find references","agentID":"research-id"},{"name":"review","description":"Review references","agentID":"review-id","version":2}]`
+	if string(fields["subAgents"]) != want || string(fields["selfDelegate"]) != "true" {
+		t.Fatalf("delegation JSON = %s", data)
+	}
+	var decoded sdk.AgentConfig
+	if err = json.Unmarshal(data, &decoded); err != nil || !reflect.DeepEqual(decoded, config) {
+		t.Fatalf("decoded = %+v, error = %v", decoded, err)
+	}
+	data, err = json.Marshal(sdk.AgentConfig{})
+	if err != nil || strings.Contains(string(data), `"subAgents"`) ||
+		strings.Contains(string(data), `"selfDelegate"`) {
+		t.Fatalf("empty delegation config = %s, error = %v", data, err)
+	}
+}
+
 func TestCreateAgentMCPServers(t *testing.T) {
 	const serverJSON = `{"name":"catalog","url":"https://mcp.test/tools","tokenEnv":"CATALOG_TOKEN",` +
 		`"defaultPolicy":"Unsafe","allowedTools":["lookup"],"toolPolicies":{"lookup":"ReadOnly"},"forwardScope":true}`

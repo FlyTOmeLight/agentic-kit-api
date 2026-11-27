@@ -64,6 +64,23 @@ type Spec struct {
 	MCPServers    []agent.MCPServerSpec `json:"mcpServers,omitempty"`
 	MaxTurns      int                   `json:"maxTurns"`
 	History       []Message             `json:"history,omitempty"`
+	SelfDelegate  bool                  `json:"selfDelegate,omitempty"`
+	SubAgents     []SubAgentSnapshot    `json:"subAgents,omitempty"`
+}
+
+type SubAgentSnapshot struct {
+	Name            string                `json:"name"`
+	Description     string                `json:"description"`
+	AgentID         string                `json:"agentID"`
+	ConfigVersion   string                `json:"configVersion"`
+	PricingFrozen   bool                  `json:"pricingFrozen,omitempty"`
+	PricingSnapshot *PricingSnapshot      `json:"pricingSnapshot,omitempty"`
+	Toolsets        []string              `json:"toolsets,omitempty"`
+	SystemPrompt    string                `json:"systemPrompt"`
+	Model           agent.ModelSpec       `json:"model"`
+	Tools           []agent.ToolSpec      `json:"tools,omitempty"`
+	MCPServers      []agent.MCPServerSpec `json:"mcpServers,omitempty"`
+	MaxTurns        int                   `json:"maxTurns"`
 }
 
 type Run struct {

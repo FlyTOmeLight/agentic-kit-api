@@ -53,11 +53,13 @@ func PrepareChatSubmission(
 		tx *gorm.DB,
 		facts execution.SubmissionFacts,
 	) (execution.PreparedSubmission, error) {
-		if len(config.Toolsets) > 0 {
+		if len(config.SubAgents) != len(facts.SubAgents) ||
+			len(config.Toolsets) > 0 || anySubAgentHasToolsets(facts.SubAgents) {
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
 		spec := execution.CompileRunSpec(config, agentID, version, facts.Query, nil, nil)
 		spec.PricingSnapshot = facts.PricingSnapshot
+		spec.SubAgents = execution.CloneSubAgents(facts.SubAgents)
 		history, baseSummary, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
 		if err != nil {
 			return execution.PreparedSubmission{}, err
@@ -91,9 +93,13 @@ func PrepareApplicationSubmission(
 		facts execution.SubmissionFacts,
 	) (execution.PreparedSubmission, error) {
 		input := facts.ExecutionSpec
+		if len(config.SubAgents) != len(facts.SubAgents) {
+			return execution.PreparedSubmission{}, ErrInvalid
+		}
 		spec := execution.CompileRunSpec(config, agentID, version, input.Query, input.Scope, input.Filesystem)
 		spec.PricingSnapshot = facts.PricingSnapshot
-		if len(spec.Toolsets) > 0 {
+		needsFilesystem := len(spec.Toolsets) > 0 || anySubAgentHasToolsets(facts.SubAgents)
+		if needsFilesystem {
 			if spec.Filesystem == nil ||
 				(spec.Filesystem.Provider != "AIO" && spec.Filesystem.Provider != "Sandbox") ||
 				!validEndpoint(spec.Filesystem.URL) ||
@@ -108,6 +114,7 @@ func PrepareApplicationSubmission(
 		} else if spec.Filesystem != nil {
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
+		spec.SubAgents = execution.CloneSubAgents(facts.SubAgents)
 		history, baseSummary, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
 		if err != nil {
 			return execution.PreparedSubmission{}, err
@@ -123,6 +130,15 @@ func PrepareApplicationSubmission(
 			ContextSnapshot: snapshot,
 		}, nil
 	}
+}
+
+func anySubAgentHasToolsets(subAgents []execution.SubAgentSnapshot) bool {
+	for _, sub := range subAgents {
+		if len(sub.Toolsets) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // loadConversationHistory returns complete stored turns oldest first. A Run is

@@ -129,7 +129,7 @@
 | --- | --- | --- | --- | --- | --- |
 | **P0** | 1 | 逐 Token 与思考过程（Thinking）实时流式输出 | API + Worker | `已完成` | API `v0.7.1` + Worker `v0.2.1` 双仓落地双流 SSE（`ModelReasoningDelta`/`ModelContentDelta`、无 `id:` 帧、中途补发、`?live=false`）、`model.stream` 开关与首帧前 `stream_options` 400 自动回退、可配置空闲超时及可选 Redis 积压合批 |
 | **P0** | 2 | 厂商中立标准 MCP 工具协议支持 | API + Worker | `已完成` | API `v0.8.0` + Worker `v0.3.0` 双仓落地标准 Streamable HTTP MCP 发现（`mcp__<server>__<tool>`）、配置驱动策略（不采信远端 annotations）、Schema 规范化、隐私头隔离、`durable_step` 重放/审批保护与无条件会话清理 |
-| **P0** | 3 | Worker 侧子智能体（Sub-Agent / `ChildRun`）执行闭环 | API + Worker | `部分就绪` | API [pkg/durable/subtask.go](../pkg/durable/subtask.go) 已实现 `SpawnChildRun`、计价继承与级联收口；Worker 侧待接入委派工具与版本冻结 |
+| **P0** | 3 | Worker 侧子智能体（Sub-Agent / `ChildRun`）执行闭环 | API + Worker | `已完成` | API `v0.9.0` + Worker `v0.4.0` 双仓落地双模式委派（模式 A `subAgents` 提交期冻结与独立单价 + 模式 B `selfDelegate` 动态分裂）、单事务 `SpawnChildAndAwait`、统一终态收口与防死锁锁序、`child:` 回调隔离及 Worker `delegate_subagent` 护栏 |
 | **P0** | 4 | 多模态附件输入与产物文件索引契约 | API + Worker + SDK | `待实施` | 复用 `artifact-go` 附件引用，补齐上下文文件索引块 |
 | **P1** | 5 | 按需加载的通用 Skill 挂载协议（不含技能市场） | API + Worker | `待实施` | 目录摘要注入与按需读取不可变技能包 |
 | **P1** | 6 | 会话分支（Session Fork）与工作区检查点联动分叉 | API + SDK | `待实施` | 按历史消息序号分叉会话并关联 `restoreFromSandboxId` |

@@ -68,6 +68,56 @@ func testIdentity() client.Identity {
 	return client.Identity{TenantID: "tenant-1"}
 }
 
+func TestUpdateAndPublishRejectSelfReference(t *testing.T) {
+	s, fake := testService(t)
+	ctx := context.Background()
+	cfg := testConfig("parent")
+	cfg.SubAgents = []agent.SubAgentSpec{{Name: "specialist", Description: "Review", AgentID: "not-yet-created"}}
+	parent, err := s.CreateAgent(ctx, "owner", "parent", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.PublishAgent(ctx, testIdentity(), "owner", parent.ID, parent.Revision); err != nil {
+		t.Fatalf("publish with unresolved child: %v", err)
+	}
+	cfg.SubAgents[0].AgentID = parent.ID
+	if _, err = s.UpdateAgent(
+		ctx,
+		"owner",
+		parent.ID,
+		parent.Name,
+		parent.Revision,
+		cfg,
+	); !errors.Is(
+		err,
+		agent.ErrInvalid,
+	) {
+		t.Fatalf("update error = %v, want invalid", err)
+	}
+	row, err := table.GetAgent(s.db, "owner", parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = table.UpdateDraft(s.db, &row, row.Name, row.Revision, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.PublishAgent(
+		ctx,
+		testIdentity(),
+		"owner",
+		row.ID,
+		row.Revision,
+	); !errors.Is(
+		err,
+		agent.ErrInvalid,
+	) {
+		t.Fatalf("publish error = %v, want invalid", err)
+	}
+	if fake.publishes != 1 {
+		t.Fatalf("artifact publishes = %d, want one", fake.publishes)
+	}
+}
+
 func TestPublishUploadsBodyOnceAndReplaysRevision(t *testing.T) {
 	s, fake := testService(t)
 	ctx := context.Background()

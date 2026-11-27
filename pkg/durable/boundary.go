@@ -26,7 +26,14 @@ func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 		return err
 	}
 	defer tx.Rollback()
-	run, err := lockLease(ctx, table.TenantQuery(ctx, tx), l)
+	status, kind, messageKind := boundaryOutcome(b.Kind)
+	var run *Run
+	var err error
+	if status.Terminal() {
+		run, err = lockTerminalLease(ctx, tx, l)
+	} else {
+		run, err = lockLease(ctx, table.TenantQuery(ctx, tx), l)
+	}
 	if err != nil {
 		return err
 	}
@@ -41,7 +48,6 @@ func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 			return ErrConflict
 		}
 	}
-	status, kind, messageKind := boundaryOutcome(b.Kind)
 	updates := map[string]any{
 		"state":                string(b.State),
 		"status":               status,
@@ -128,10 +134,7 @@ func (s *Store) CommitBoundary(ctx context.Context, l Lease, b Boundary) error {
 		if err = row.Take(&stored).Error; err != nil {
 			return err
 		}
-		if err = handleChildTerminal(ctx, tx, &stored); err != nil {
-			return err
-		}
-		if err = cascadeCancelChildren(ctx, tx, l.RunID); err != nil {
+		if err = finishTerminalRun(ctx, tx, &stored); err != nil {
 			return err
 		}
 	}

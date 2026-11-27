@@ -21,15 +21,17 @@ type ExecutionSnapshot struct {
 	Filesystem *execution.FilesystemBinding `json:"filesystem,omitempty"`
 	Scope      *workspace.Scope             `json:"scope,omitempty"`
 
-	AgentID       string                `json:"agentID"`
-	ConfigVersion string                `json:"configVersion"`
-	Query         string                `json:"query"`
-	SystemPrompt  string                `json:"systemPrompt"`
-	Model         agent.ModelSpec       `json:"model"`
-	Tools         []agent.ToolSpec      `json:"tools,omitempty"`
-	MCPServers    []agent.MCPServerSpec `json:"mcpServers,omitempty"`
-	MaxTurns      int                   `json:"maxTurns"`
-	History       []execution.Message   `json:"history,omitempty"`
+	AgentID       string                       `json:"agentID"`
+	ConfigVersion string                       `json:"configVersion"`
+	Query         string                       `json:"query"`
+	SystemPrompt  string                       `json:"systemPrompt"`
+	Model         agent.ModelSpec              `json:"model"`
+	Tools         []agent.ToolSpec             `json:"tools,omitempty"`
+	MCPServers    []agent.MCPServerSpec        `json:"mcpServers,omitempty"`
+	MaxTurns      int                          `json:"maxTurns"`
+	History       []execution.Message          `json:"history,omitempty"`
+	SelfDelegate  bool                         `json:"selfDelegate,omitempty"`
+	SubAgents     []execution.SubAgentSnapshot `json:"subAgents,omitempty"`
 }
 
 type Run struct {
@@ -97,7 +99,8 @@ func (s *ContextSnapshot) Scan(value any) error {
 }
 
 func (s ContextSnapshot) Value() (driver.Value, error) {
-	return json.Marshal(execution.ContextSnapshot(s))
+	data, err := json.Marshal(execution.ContextSnapshot(s))
+	return string(data), err
 }
 
 type Step struct {

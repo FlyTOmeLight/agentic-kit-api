@@ -23,6 +23,7 @@ func TestGoalIterationRequiresSavedWorkspace(t *testing.T) {
 				t.Fatal(err)
 			}
 			spec := current.Spec
+			spec.Toolsets = []string{"filesystem"}
 			spec.Filesystem = &FilesystemBinding{
 				Provider: "Sandbox", URL: "http://sandbox-center", TokenEnv: "SANDBOX_TOKEN",
 				Workspace: "/workspace/repo", RestoreFromSandboxID: "older-sandbox",

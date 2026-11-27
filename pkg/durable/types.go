@@ -28,6 +28,12 @@ type ToolSpec = agent.ToolSpec
 
 type MCPServerSpec = agent.MCPServerSpec
 
+type SubAgentSpec = agent.SubAgentSpec
+
+type SubAgentSnapshot = execution.SubAgentSnapshot
+
+type ChildSpawnRequest = execution.ChildSpawnRequest
+
 type AgentConfig = agent.AgentConfig
 
 type Agent = agent.Agent
@@ -100,6 +106,8 @@ const (
 	StepReplay                 = execution.StepReplay
 	StepUncertain              = execution.StepUncertain
 	StepExternalWait           = execution.StepExternalWait
+	DelegateSubAgentToolName   = agent.DelegateSubAgentToolName
+	ReadStepResultToolName     = agent.ReadStepResultToolName
 )
 
 const (

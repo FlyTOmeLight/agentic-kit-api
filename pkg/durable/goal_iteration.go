@@ -98,7 +98,7 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 	case goal.Budget.MaxCostUSD > 0 && goal.CostUSD >= goal.Budget.MaxCostUSD:
 		reason = "goal cost budget exhausted"
 	}
-	if reason == "" && spec.Filesystem != nil {
+	if reason == "" && len(spec.Toolsets) > 0 && spec.Filesystem != nil {
 		filesystem := *spec.Filesystem
 		workspace := path.Clean(filesystem.Workspace)
 		if filesystem.Provider != "Sandbox" ||

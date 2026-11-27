@@ -18,6 +18,7 @@
 | Memory 已拒绝撤权用户，公开 Artifact 入口仍返回该用户的项目归档版本 | [项目记忆撤权验收](verification.md#项目记忆撤权还要检查公开归档入口) |
 | Steering 消费后进程退出丢指令，或签名正文被 Query 覆盖 | [长任务边界](long-task-boundaries.md) |
 | Goal 续跑时文件丢失，或 Release 成功被误认为保存完成 | [跨 Run 工作区恢复](long-task-boundaries.md#跨-run-续跑必须等待工作区保存确认) |
+| 父 Run 取消和子 Run 完成争抢行锁，或重复投递子结果 | [父子 Run 锁序与结果归属](child-run-terminal.md) |
 | 只检查恢复参数或手动确认检查点，未覆盖真实 Worker 与文件继承 | [Goal 跨 Run 真实集群验收](long-task-boundaries.md#goal-跨-run-恢复要验证真实文件与自动状态推进) |
 | 保存屏障期间 Worker 退出，下一轮无人推进 | [保存与迭代不依赖原 Worker 进程](long-task-boundaries.md#goal-跨-run-恢复要验证真实文件与自动状态推进) |
 | 真实命令成功但验收回执未提交时 Worker 退出 | [真实沙箱验收接管](long-task-boundaries.md#真实沙箱验收接管要区分操作完成与回执提交) |

@@ -32,9 +32,9 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | PUT /v1/memories/{id} | 更新活跃记忆或恢复停用记忆 | expectedRevision、可选 restore、document；Idempotency-Key header 必填 |
 | POST /v1/memories/{id}/retire | 停用记忆 | expectedRevision；Idempotency-Key header 必填 |
 
-config 包括 systemPrompt、model、tools、mcpServers、toolsets、maxTurns，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)，maxTurns 为 1～100。静态工具名称不能重复或以 `mcp__` 开头，parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`，成功时 worker 直接返回工具结果并结束本轮，失败时将错误结果交给模型处理。此设置随 Agent 发布版本和 Run 快照冻结。静态工具 `kind` 仅接受空字符串或 `HTTP`，`AppForgeMCP`、`AppForgeOpenAPI` 及其他未知 kind 一律拒绝。`ask_for_clarification` 必须为 `ReadOnly`，kind 为空或 `HTTP`，URL 字段可不填。
+config 包括 systemPrompt、model、tools、mcpServers、toolsets、maxTurns、subAgents 和 selfDelegate，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)，maxTurns 为 1～100。静态工具名称不能重复或以 `mcp__` 开头，`delegate_subagent` 和 `read_step_result` 为系统保留名。parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`，成功时 worker 直接返回工具结果并结束本轮，失败时将错误结果交给模型处理。此设置随 Agent 发布版本和 Run 快照冻结。静态工具 `kind` 仅接受空字符串或 `HTTP`，`AppForgeMCP`、`AppForgeOpenAPI` 及其他未知 kind 一律拒绝。`ask_for_clarification` 必须为 `ReadOnly`，kind 为空或 `HTTP`，URL 字段可不填。
 
-`mcpServers` 是可选的标准 MCP Streamable HTTP 服务列表，最多 16 项。API 将服务配置随发布版本冻结到聊天和受信任应用的 Run 快照中，子 Run 继承父 Run 的配置。使用 MCP 不要求配置 `Filesystem`。
+`mcpServers` 是可选的标准 MCP Streamable HTTP 服务列表，最多 16 项。API 将服务配置随发布版本冻结到聊天和受信任应用的 Run 快照中。使用 MCP 不要求配置 `Filesystem`。
 
 | 字段 | 约束与行为 |
 | --- | --- |
@@ -86,6 +86,15 @@ artifact 出站请求统一使用 API 自身的 `Tenant.ServiceAPIKey` 作为 Be
 权威事件包括 `RunQueued`、`RunStarted`、`ModelStarted`、`UsageRecorded`、`ModelCompleted`、`ToolStarted`、`ToolCompleted`、`ClarificationRequested`、`RunNeedsReview`、`RunResumed`、`RunRetry`、`RunBlocked`、`RunUnblocked`、`RunCompleted`、`RunFailed` 和 `RunCanceled`。`ModelStarted` 的 `payload.epoch` 由租约决定，调用方提供轮次时还有 `payload.turn`。`RunRetry` 的 `payload.status` 可能为 `Failed`。
 
 以 `ModelCompleted.payload.output` 校准该轮生成的正文，以 `RunCompleted.payload.output` 为最终答案。思考仅在瞬态流中传输；Worker 发布队列满时中间增量可能被丢弃，且轮次结束前的 Flush 有时间上限，尾部增量也可能截断。Redis 瞬态流在每次写入后续期一小时，按约 10,000 条裁剪。Redis 单节点和哨兵使用一次阻塞读取监听两个流。Redis Cluster 返回 `CROSSSLOT` 时分别读取两条流。Redis 不可用时，客户端仍能通过 PostgreSQL 轮询收到权威事件。
+
+## 子 Agent 与子 Run
+
+- `subAgents` 可配置最多 10 个专职子 Agent。每项包含 `name`、`description`、`agentID` 及可选 `version`。别名在同一 Agent 内唯一，匹配 `^[a-z0-9][a-z0-9_-]{0,31}$`，`self` 保留。描述去除首尾空白后须非空，原值最多 1024 字节。`agentID` 须非空、无首尾空白且最多 128 字节。`version` 为正数时指定发布版本，省略或为 0 时在提交 Run 时解析当时的最新发布版本。
+- 编辑和发布拒绝直接自引用。聊天和应用提交按父 Agent 的 tenant 与 owner 查找每个引用，缺少 Agent 或指定版本返回 404，自动解析时尚未发布返回 409，历史版本配置不合法返回 400。API 将每个子 Agent 的版本、系统提示词、模型、静态工具、MCP、工具集、轮次上限和模型单价冻结在父 Run 快照中。已接受请求按原幂等键返回原快照。
+- `selfDelegate` 默认为 `false`。开启后，根 Run 可按本轮冻结配置派生动态子任务，委派指令进入子任务的用户输入，父系统提示词原样继承。指定专职子 Agent 时使用该子 Agent 的冻结配置。两种子 Run 均有各自的会话和上下文，深度最多一层。
+- 子 Run 排队与父 Run 进入 `WaitingExternal` 同事务提交。父 Run 的 `ChildRunSpawned` 事件提供 `stepID`、`childID`、`subAgent`、`agentID`。子 Run 到达终态时，匹配的等待步骤接收结果并重新排队。`child:` 引用由持久层保留，外部结果回调无法完成该步骤。子 Run 的查询、取消和 SSE 使用现有 `/v1/runs/{id}` 路由及子 Run ID，沿用 tenant 与 owner 鉴权。其他租户或 owner 访问返回 404。父 Run 终止会取消仍处于活动状态的子 Run。
+- 父或专职子 Agent 使用文件工具集时，须从受信任应用执行入口提交合法 `filesystem`，普通聊天提交返回 400。双方均无文件工具集时，应用提交也拒绝 `filesystem`。专职子 Run 仅在自身使用文件工具集时接收绑定，动态子 Run 继承父绑定。`AIO` 使用绑定中相同的端点和工作目录，文件可见性取决于端点提供的工作区。`Sandbox` 按 Run 获取独立租约和工作区，子 Run 会清空父 `restoreFromSandboxID` 始终以干净工作区启动，委派本身不共享父沙箱的实时文件。
+- 当子 Run 绑定了 Goal 并因未知模型消费等原因进入 `Blocked` 时，关联 Goal 会同步进入 `Blocked`，父 Run 保持 `WaitingExternal`。恢复需两步人工操作：先调用 `POST /v1/runs/{childID}/unblock` 解除子 Run 阻断，待无其他阻断 Run 后再显式恢复 Goal（`POST /v1/goals/{goalID}/transition`）以继续后续评测与迭代。
 
 ## Memory
 
@@ -193,7 +202,7 @@ Goal 是跨多个 Run 的内部控制面对象，不进入公开 API。
 
 Worker 通过共享存储 `ClaimEvaluation`/`RenewEvaluation` 领取并续期 Completed Run 的验收，失租后可由其他 Worker 在原窗口内接管，`evaluation_epoch` 拒绝旧 claim 的续期、回执与新派发。`ResumeEvaluation` 只挂接原环境，不重新申请沙箱；已有 Passed/Failed 回执时先推进 Goal，再尝试挂接环境清理，沙箱不可用不会阻挡已保存结果的推进，也不重跑命令。Error 回执不可变，排除自动领取；过期窗口不能恢复。真实子进程强杀后的接管已通过本机 PostgreSQL 与 HTTP 沙箱替身验证，真实 Kubernetes Guard 的期限接续仍待验证。
 
-Goal 的 Sandbox 工作区默认申请必要保存。验收 Failed 后，`QueueGoalIteration` 等待原环境退出 Preparing/Active，再检查当前 Run epoch、profile 对应唯一 Released 环境且检查点非空，将来源沙箱 ID 冻结到下一 Run 的 `Filesystem.restoreFromSandboxId`。保存期间保持 Goal Active；检查点缺失、来源不唯一、AIO 或 `/workspace` 外的目录均阻断续跑。Worker 不依据 Release 响应自行确认持久工作区保存，由中心完成回填和环境关闭。
+Goal 的根 Run 自身使用文件工具集时，Sandbox 工作区默认申请必要保存。验收 Failed 后，`QueueGoalIteration` 等待原环境退出 Preparing/Active，再检查当前 Run epoch、profile 对应唯一 Released 环境且检查点非空，将来源沙箱 ID 冻结到下一 Run 的 `Filesystem.restoreFromSandboxId`。保存期间保持 Goal Active；检查点缺失、来源不唯一、AIO 或 `/workspace` 外的目录均阻断续跑。仅子 Agent 使用文件工具集时，下一轮沿用冻结绑定，跳过根 Run 的工作区恢复检查。Worker 不依据 Release 响应自行确认持久工作区保存，由中心完成回填和环境关闭。
 
 Steering 只接受 Active Goal 的 Running Run，成功返回 204。`content` 去除首尾空白后不能为空，单条和待消费合并内容均不得超过 4096 字节，多条按事务顺序以换行合并。其他 owner 返回 404；Goal/Run 状态不允许返回 409。提交会重置 StallCount，但不增加预算。Worker 下一次模型调用前，在持租事务中同时清空 `pending_steer`、保存含纠偏内容的 checkpoint；后续轮次和接管执行继续携带这些指令。当前工具不会被中止。
 

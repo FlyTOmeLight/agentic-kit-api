@@ -90,6 +90,15 @@ func validateConfig(c agent.AgentConfig) error {
 	return nil
 }
 
+func validateSubAgentReferences(id string, config agent.AgentConfig) error {
+	for _, sub := range config.SubAgents {
+		if sub.AgentID == id {
+			return agent.ErrInvalid
+		}
+	}
+	return nil
+}
+
 func (s *service) CreateAgent(
 	ctx context.Context,
 	owner, name string,
@@ -152,6 +161,9 @@ func (s *service) UpdateAgent(
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
+	if err := validateSubAgentReferences(id, config); err != nil {
+		return nil, err
+	}
 	var row table.Agent
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		locked, err := table.LockAgent(tx, owner, id)
@@ -188,6 +200,9 @@ func (s *service) PublishAgent(
 		}
 		if row.Revision != revision {
 			return agent.ErrConflict
+		}
+		if err = validateSubAgentReferences(id, row.Draft); err != nil {
+			return err
 		}
 		if row.PublishedRevision == revision {
 			version, err := table.GetVersion(tx, id, row.PublishedVersion)
