@@ -72,6 +72,7 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 			Service:     []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
 			Propagation: []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
 			Callback:    []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
+			Worker:      []gin.HandlerFunc{func(c *gin.Context) { c.Next() }},
 		},
 		execution.PricingCatalog{},
 	).register(router.Group(""))

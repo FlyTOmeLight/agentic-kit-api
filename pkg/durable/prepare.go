@@ -55,12 +55,17 @@ func PrepareChatSubmission(
 		facts execution.SubmissionFacts,
 	) (execution.PreparedSubmission, error) {
 		if len(config.SubAgents) != len(facts.SubAgents) ||
+			len(config.Skills) != len(facts.Skills) ||
 			len(config.Toolsets) > 0 || anySubAgentHasToolsets(facts.SubAgents) {
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
 		spec := execution.CompileRunSpec(config, agentID, version, facts.Query, nil, nil, facts.Attachments...)
 		spec.PricingSnapshot = facts.PricingSnapshot
+		spec.Skills = execution.CloneSkills(facts.Skills)
 		spec.SubAgents = execution.CloneSubAgents(facts.SubAgents)
+		if err := precheckSubAgentSkillBudgets(spec.SubAgents); err != nil {
+			return execution.PreparedSubmission{}, err
+		}
 		history, baseSummary, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
 		if err != nil {
 			return execution.PreparedSubmission{}, err
@@ -102,7 +107,8 @@ func PrepareApplicationSubmission(
 		if attachments == nil {
 			attachments = input.Attachments
 		}
-		if len(config.SubAgents) != len(facts.SubAgents) {
+		if len(config.SubAgents) != len(facts.SubAgents) ||
+			len(config.Skills) != len(facts.Skills) {
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
 		spec := execution.CompileRunSpec(
@@ -114,6 +120,7 @@ func PrepareApplicationSubmission(
 			input.Filesystem,
 			attachments...)
 		spec.PricingSnapshot = facts.PricingSnapshot
+		spec.Skills = execution.CloneSkills(facts.Skills)
 		needsFilesystem := len(spec.Toolsets) > 0 || anySubAgentHasToolsets(facts.SubAgents)
 		if needsFilesystem {
 			if spec.Filesystem == nil ||
@@ -131,6 +138,9 @@ func PrepareApplicationSubmission(
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
 		spec.SubAgents = execution.CloneSubAgents(facts.SubAgents)
+		if err := precheckSubAgentSkillBudgets(spec.SubAgents); err != nil {
+			return execution.PreparedSubmission{}, err
+		}
 		history, baseSummary, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
 		if err != nil {
 			return execution.PreparedSubmission{}, err
@@ -463,6 +473,7 @@ func freezeContextMaterials(
 			Memory:            materials,
 			History:           history,
 			FileIndex:         files,
+			Skills:            contextSkills(spec.Skills),
 		},
 		Policy: contextbuilder.Policy{
 			Version:               contextbuilder.PolicyVersionV4,
@@ -501,6 +512,50 @@ func freezeContextMaterials(
 		Digest:        envelope.Digest,
 		Payload:       envelope.Payload,
 	}, nil
+}
+
+func contextSkills(skills []execution.SkillSnapshot) []contextbuilder.SkillSummary {
+	if len(skills) == 0 {
+		return nil
+	}
+	out := make([]contextbuilder.SkillSummary, len(skills))
+	for i, skill := range skills {
+		files := make([]string, len(skill.Files))
+		for j, f := range skill.Files {
+			files[j] = f.Path
+		}
+		out[i] = contextbuilder.SkillSummary{
+			Name:        skill.Name,
+			Description: skill.Description,
+			EntryPath:   skill.EntryPath,
+			Files:       files,
+		}
+	}
+	return out
+}
+
+func precheckSubAgentSkillBudgets(subAgents []execution.SubAgentSnapshot) error {
+	for _, sub := range subAgents {
+		if len(sub.Skills) == 0 {
+			continue
+		}
+		probe := execution.Spec{
+			AgentID:       sub.AgentID,
+			ConfigVersion: sub.ConfigVersion,
+			Query:         "subtask",
+			SystemPrompt:  sub.SystemPrompt,
+			Model:         sub.Model,
+			Tools:         sub.Tools,
+			MCPServers:    sub.MCPServers,
+			Skills:        sub.Skills,
+			Toolsets:      sub.Toolsets,
+			MaxTurns:      sub.MaxTurns,
+		}
+		if _, err := freezeContextMaterials(probe, nil, "", memory.SelectionOff, nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func contextTools(tools []agent.ToolSpec) []contextbuilder.ToolDefinition {

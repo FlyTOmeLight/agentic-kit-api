@@ -89,6 +89,9 @@ func (r *routes) register(router *core.RouterGroup) {
 			sandboxcenter.RegisterStoreRoutes(sandbox, r.sandboxStore)
 		}
 	}
+	if len(r.authentication.Worker) > 0 {
+		r.run.RegisterWorkerRoutes(router.Group("", r.authentication.Worker...))
+	}
 	if r.memory != nil {
 		r.memory.RegisterRoutes(v1)
 	}

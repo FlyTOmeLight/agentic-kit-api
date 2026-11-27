@@ -44,9 +44,27 @@ type MCPServerSpec = agent.MCPServerSpec
 
 type SubAgentSpec = agent.SubAgentSpec
 
+type SkillRef = agent.SkillRef
+
+type SkillFileSnapshot = execution.SkillFileSnapshot
+
+type SkillSnapshot = execution.SkillSnapshot
+
+type SkillFileContent = execution.SkillFileContent
+
 type SubAgentSnapshot = execution.SubAgentSnapshot
 
 type ChildSpawnRequest = execution.ChildSpawnRequest
+
+type AuthorizedSkillRead struct {
+	TenantID   string
+	ProjectID  string
+	OwnerID    string
+	Skill      string
+	VersionURI string
+	Shared     bool
+	File       SkillFileSnapshot
+}
 
 type AgentConfig = agent.AgentConfig
 
@@ -122,6 +140,7 @@ const (
 	StepExternalWait           = execution.StepExternalWait
 	DelegateSubAgentToolName   = agent.DelegateSubAgentToolName
 	ReadStepResultToolName     = agent.ReadStepResultToolName
+	LoadSkillToolName          = agent.LoadSkillToolName
 )
 
 const (

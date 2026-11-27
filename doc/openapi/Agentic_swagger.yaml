@@ -29,6 +29,10 @@ definitions:
         $ref: '#/definitions/agent.ModelSpec'
       selfDelegate:
         type: boolean
+      skills:
+        items:
+          $ref: '#/definitions/agent.SkillRef'
+        type: array
       subAgents:
         items:
           $ref: '#/definitions/agent.SubAgentSpec'
@@ -87,6 +91,17 @@ definitions:
         type: number
       topP:
         type: number
+    type: object
+  agent.SkillRef:
+    properties:
+      artifactURI:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+      shared:
+        type: boolean
     type: object
   agent.SubAgentSpec:
     properties:
@@ -153,6 +168,10 @@ definitions:
         $ref: '#/definitions/agent.ModelSpec'
       selfDelegate:
         type: boolean
+      skills:
+        items:
+          $ref: '#/definitions/agent.SkillRef'
+        type: array
       subAgents:
         items:
           $ref: '#/definitions/agent.SubAgentSpec'
@@ -372,6 +391,25 @@ definitions:
         minimum: 1
         type: integer
     type: object
+  agenticv1.ReadSkillFileRequest:
+    properties:
+      epoch:
+        minimum: 1
+        type: integer
+      path:
+        maxLength: 512
+        type: string
+      skill:
+        maxLength: 64
+        type: string
+      workerID:
+        maxLength: 128
+        type: string
+    required:
+    - epoch
+    - skill
+    - workerID
+    type: object
   agenticv1.RetireMemoryRequest:
     properties:
       expectedRevision:
@@ -471,6 +509,21 @@ definitions:
       title:
         type: string
       updatedAt:
+        type: string
+    type: object
+  agenticv1.SkillFileContent:
+    properties:
+      content:
+        type: string
+      mediaType:
+        type: string
+      path:
+        type: string
+      sizeBytes:
+        type: integer
+      skill:
+        type: string
+      versionURI:
         type: string
     type: object
   agenticv1.SubmitExecutionRequest:
@@ -1704,6 +1757,58 @@ paths:
       security:
       - BearerAuth: []
       summary: 查询内部执行入口健康状态
+      tags:
+      - Run
+  /internal/v1/worker/runs/{id}/skills/read:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: JSON 请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/agenticv1.ReadSkillFileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功
+          schema:
+            $ref: '#/definitions/agenticv1.SkillFileContent'
+        "400":
+          description: 参数或文件格式无效
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "401":
+          description: 服务身份校验失败
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "403":
+          description: 服务白名单或权限不足
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "404":
+          description: Skill 或文件不在冻结清单中
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "409":
+          description: 租约失效或版本状态冲突
+          schema:
+            $ref: '#/definitions/errors.Error'
+        "503":
+          description: Artifact 或对象存储暂不可用
+          schema:
+            $ref: '#/definitions/errors.Error'
+      security:
+      - BearerAuth: []
+      summary: 读取冻结 Skill 文件
       tags:
       - Run
   /v1/agents:

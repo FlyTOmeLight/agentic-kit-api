@@ -32,7 +32,7 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | PUT /v1/memories/{id} | 更新活跃记忆或恢复停用记忆 | expectedRevision、可选 restore、document；Idempotency-Key header 必填 |
 | POST /v1/memories/{id}/retire | 停用记忆 | expectedRevision；Idempotency-Key header 必填 |
 
-config 包括 systemPrompt、model、tools、mcpServers、toolsets、maxTurns、subAgents 和 selfDelegate，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)，maxTurns 为 1～100。静态工具名称不能重复或以 `mcp__` 开头，`delegate_subagent` 和 `read_step_result` 为系统保留名。parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`，成功时 worker 直接返回工具结果并结束本轮，失败时将错误结果交给模型处理。此设置随 Agent 发布版本和 Run 快照冻结。静态工具 `kind` 仅接受空字符串或 `HTTP`，`AppForgeMCP`、`AppForgeOpenAPI` 及其他未知 kind 一律拒绝。`ask_for_clarification` 必须为 `ReadOnly`，kind 为空或 `HTTP`，URL 字段可不填。
+config 包括 systemPrompt、model、tools、mcpServers、skills、toolsets、maxTurns、subAgents 和 selfDelegate，不接受 query/history/agentID/configVersion。模型配置与工具字段见 [创建请求样例](../examples/agents/agents.example.json)。模型地址必须是 HTTP(S)，maxTurns 为 1～100。静态工具名称不能重复或以 `mcp__` 开头，`delegate_subagent`、`read_step_result` 和 `load_skill` 为系统保留名。parameters 必须为 object 类型 JSON Schema，policy 必须显式提供。工具可设置 `returnDirectly: true`，成功时 worker 直接返回工具结果并结束本轮，失败时将错误结果交给模型处理。此设置随 Agent 发布版本和 Run 快照冻结。静态工具 `kind` 仅接受空字符串或 `HTTP`，`AppForgeMCP`、`AppForgeOpenAPI` 及其他未知 kind 一律拒绝。`ask_for_clarification` 必须为 `ReadOnly`，kind 为空或 `HTTP`，URL 字段可不填。
 
 `mcpServers` 是可选的标准 MCP Streamable HTTP 服务列表，最多 16 项。API 将服务配置随发布版本冻结到聊天和受信任应用的 Run 快照中。使用 MCP 不要求配置 `Filesystem`。
 
@@ -48,7 +48,9 @@ config 包括 systemPrompt、model、tools、mcpServers、toolsets、maxTurns、
 
 白名单和策略映射中的原始工具名须匹配 `^[a-zA-Z0-9_-]{1,64}$`，拼接后的完整工具名最多 64 字符。工具重放策略来自本地配置，远端 `ToolAnnotations` 不参与决策。`Idempotent` 只用于自身天然幂等、可安全重复调用的工具。`model.apiKeyEnv` 与静态工具 `tokenEnv` 适用相同的环境变量名格式与平台保留名限制。
 
-API 不访问 MCP 服务，提交期工具预算预检只计入静态工具。Worker 接入后在执行期发现 MCP 工具，将其纳入参数校验和 `durable_step` 保护，并按实际工具定义核算上下文预算。静态工具上限为 127 个（启用 `subAgents` 或 `selfDelegate` 时收紧至 126 个，为内置 `read_step_result` 与 `delegate_subagent` 预留槽位），静态工具与运行时装配的工具合计最多 128 个。升级说明：此前按旧上限已发布且恰好包含 128 个静态工具的历史 Agent 版本，其新 Run 会在 Worker 装配期因计入 `read_step_result` 后超出 128 上限而失败，需精简并重新发布。
+`skills` 是可选的按需加载技能包引用列表，最多 16 项（不含技能市场，版本与文件由 `artifact-go` 管理）。每项包含 `name`（唯一，匹配 `^[a-z0-9][a-z0-9_-]{0,63}$`）、`artifactURI`（指向 `artifact-go` 中 `type == "agent-skill"` 的 ready 版本或别名）、可选 `description`（最多 1024 字节，省略时取版本 `payload.description` 或回退 `name`）和可选 `shared`（`false` 访问个人归属资源，`true` 访问租户/项目共享资源）。提交新任务时，API 先校验身份与项目 `read` 权限，再并发解析并冻结不可变 `versionURI` 与文件清单（单包最多 64 个干净相对路径文件，须含 `SKILL.md` 且不超过 128 KiB；父与专职子 Agent 合计最多 32 个技能包），仅将目录摘要注入 `context-v4` 的 `skills` 固定块（超出 8 KiB 时在末尾标注 `(+N more skills omitted)`），不将文件内容存入 PostgreSQL。运行期 Worker 通过内置只读工具 `load_skill(name, path?)` 回调受控内部路由 `POST /internal/v1/worker/runs/{id}/skills/read`（需配置 `[Worker].AllowedServices`），API 核验活动租约后仅从冻结清单中换取 60 秒只读存储凭证拉取 UTF-8 文本（单次上限 128 KiB）。API 进程内维护有界不可变文件缓存（最多 64 项，按租户/项目/资源用户/`fileID` 严格隔离，命中前仍校验活动租约但不再重复请求 `artifact-go` 鉴权；若远端撤销或删除版本，缓存淘汰或进程重启后生效）。Skill 受限于 `artifact-go` 精确租户/项目作用域，跨项目引用会返回 404/403。Mode A 专职子 Agent 冻结自身 `skills`，Mode B 动态子任务继承父 Run 已冻结的 `skills`。
+
+API 不访问 MCP 服务，提交期工具预算预检只计入静态工具。Worker 接入后在执行期发现 MCP 工具，将其纳入参数校验和 `durable_step` 保护，并按实际工具定义核算上下文预算。静态工具上限按启用的内置工具精确预留：`read_step_result`（1 槽）+ 启用委派时 `delegate_subagent`（1 槽）+ 启用 `skills` 时 `load_skill`（1 槽），因此静态上限为 127 / 126 / 125，静态工具与运行时装配的工具合计最多 128 个。升级说明：此前按旧上限已发布且恰好包含 128 个静态工具的历史 Agent 版本，其新 Run 会在 Worker 装配期因计入 `read_step_result` 后超出 128 上限而失败，需精简并重新发布。
 
 `model.contextWindow`为可选非负整数。非零时必须同时配置正数`model.maxTokens`且小于窗口，输入预算为窗口减输出预留；`maxTokens`一旦提供就必须为正数。`model.stream` 为可选布尔值（省略时默认 `true`），随发布版本和 Run 快照冻结；设为 `false` 时 worker 直接使用非流式模型调用，兼容不支持流式或不支持 `stream_options.include_usage` 的 OpenAI 兼容网关。当前采用`cjk-weighted-v1`字符加权估算，并预留256 token协议开销，不是精确tokenizer计数。未配置窗口时冻结128 KiB输入字节上限。单条工具结果以有界首尾预览进入模型输入，完整结果仍持久保存。预算、预览上限和裁剪策略随Run冻结，发布新配置不改变已有Run。
 

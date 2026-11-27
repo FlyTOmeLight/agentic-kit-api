@@ -52,7 +52,7 @@ flowchart LR
 
 | 模块 | 当前实现范围与约束 |
 | --- | --- |
-| **Agent** | 创建和编辑草稿、`revision` 乐观锁冲突检测、写入 `artifact-go` 发布不可变版本；配置校验要求 `maxTurns` 为 1～100，支持 `model.stream`、`model.inputModalities`、通用 HTTP 工具、标准 Streamable HTTP `mcpServers`、双模式 `subAgents`/`selfDelegate` 及 `returnDirectly`/`endRun`（拒绝专有协议），并校验 `apiKeyEnv`/`tokenEnv` 格式与平台保留名 |
+| **Agent** | 创建和编辑草稿、`revision` 乐观锁冲突检测、写入 `artifact-go` 发布不可变版本；配置校验要求 `maxTurns` 为 1～100，支持 `model.stream`、`model.inputModalities`、通用 HTTP 工具、标准 Streamable HTTP `mcpServers`、按需挂载的 `skills`（`artifact-go` `agent-skill` 版本与文件清单冻结）、双模式 `subAgents`/`selfDelegate` 及 `returnDirectly`/`endRun`（拒绝专有协议），并校验 `apiKeyEnv`/`tokenEnv` 格式与平台保留名 |
 | **Session / Message** | 多轮会话、会话行锁下的单调 `seq` 消息、同会话单活动 Run 限制、按 `(owner, tenant, project, taskID)` 复用的应用会话、幂等提交与历史分页 |
 | **Run / Execution / Goal** | 提交、查询、取消（级联取消子 Run）、`WaitingClarification` / `NeedsReview` / `Blocked` 人工恢复、外部 HMAC 回调、Goal 预算/Stall/Steer/验收闭环、脱敏 `RunTrace` 与 SSE 回放 |
 | **Durable / Outbox** | API 与 Worker 共用的执行事务、数据库时钟租约与 `epoch` 隔离、步骤意图与重放、状态/消息/事件同事务提交、单 Run 保序 Outbox 投递 |
@@ -181,6 +181,7 @@ Worker 不访问 `artifact-go`，`[Redis]` 为可选配置（配置后推送逐 
 * **内部执行 / Goal / Lease 路由（`/internal/v1/*`）**：仅在 `Tenant.AllowedPropagationServices` 非空时注册，使用 `MiddlewareInternalPropagation` 校验调用服务及白名单，并接收 `x-impersonate-target-tenant-id`、`x-impersonate-target-user-id` 与可选 `x-impersonate-target-project-id`；末端同样要求租户 scope。
 * **沙箱控制面路由（`/v1/sandboxes/*`）**：`Sandbox.AllowedServices` 为空时不注册；启用后使用独立服务认证与白名单，申请的 `tenantId`/`ownerId` 来自可信调用方请求体，不从 Forge 用户 scope 推导。
 * **外部回调路由（`/internal/v1/executions/{id}/callback`）**：默认不注册，仅在 `Callback.Enabled=true` 且已装配 callback 服务认证时注册；启动必须配置 `SigningSecret`、`AllowedSources`、`AllowedServices`，请求需同时通过服务认证、来源白名单与 HMAC-SHA256 校验。上述 HTTP 门槛不影响可信 Worker 直接调用 Store 时无 HTTP scope 的内部契约。
+* **Worker 受控读取路由（`/internal/v1/worker/runs/{id}/skills/read`）**：默认不注册，仅在 `[Worker].AllowedServices` 非空并装配服务认证时注册；供 Worker 凭当前有效任务租约（`workerID` + `epoch` + 未过期租约与截止时间）按需读取该 Run 冻结清单内的 Skill 正文，API 使用 Run 自身冻结的权威 `tenant/project/owner` 通过 `artifact-go` 短期下载凭证读取。
 * **内置探针与 SSE 要求**：server-go HTTPHost 自动提供免鉴权的 `/ping`、`/healthz`、`/livez`、`/readyz`、`/version` 探针；开启 `HTTPServer.SwaggerEnable` 可访问 `/swagger/`。`HTTPServer.WriteTimeout` 必须非负（[conf/server/config.toml](conf/server/config.toml#L9) 默认 `60000` 毫秒），SSE 端点通过 `stream.NewSSE` 清除单连接总写超时并按事件控制写期限，`APIBasePath` 为空。
 
 #### Artifact 出站与可选 `[Artifact]`（Memory 归档）

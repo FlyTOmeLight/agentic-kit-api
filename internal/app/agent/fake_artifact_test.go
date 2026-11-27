@@ -124,3 +124,22 @@ func (*fakeArtifactStore) ResolveAttachment(
 ) (client.ResolvedAttachment, error) {
 	return client.ResolvedAttachment{}, agent.ErrUnavailable
 }
+
+func (*fakeArtifactStore) ResolveSkill(
+	context.Context,
+	client.Identity,
+	string,
+	bool,
+) (client.ResolvedSkill, error) {
+	return client.ResolvedSkill{}, agent.ErrUnavailable
+}
+
+func (*fakeArtifactStore) ReadSkillFile(
+	context.Context,
+	client.Identity,
+	bool,
+	string,
+	int64,
+) ([]byte, error) {
+	return nil, agent.ErrUnavailable
+}

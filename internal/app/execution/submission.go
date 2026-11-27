@@ -82,6 +82,7 @@ func (s *Service) prepareChat(
 ) (context.Context, execpkg.SubmitCommand, durable.PrepareSubmission, *execpkg.Run, error) {
 	var conversation table.Session
 	needsArtifact := hasArtifactAttachments(attachments)
+	projectAuthorized := false
 	if needsArtifact || memorySelection == memory.SelectionRecall {
 		scope, verified := access.FromContext(ctx)
 		if !verified || scope.TenantID == "" || owner == "" ||
@@ -93,6 +94,7 @@ func (s *Service) prepareChat(
 		if err != nil {
 			return ctx, execpkg.SubmitCommand{}, nil, nil, err
 		}
+		projectAuthorized = true
 		conversation, err = table.GetSession(s.store.DB().WithContext(ctx), owner, session)
 		if err != nil {
 			return ctx, execpkg.SubmitCommand{}, nil, nil, recordError(err)
@@ -148,7 +150,24 @@ func (s *Service) prepareChat(
 	if err != nil {
 		return ctx, execpkg.SubmitCommand{}, nil, nil, err
 	}
-	cmd.SubAgents, err = s.freezeSubAgents(ctx, identity, agentRow, config.SubAgents)
+	if len(config.Skills) > 0 {
+		ctx, err = s.authorizeSkillAccess(ctx, identity, owner, projectAuthorized)
+		if err != nil {
+			return ctx, execpkg.SubmitCommand{}, nil, nil, err
+		}
+		if scope, ok := access.FromContext(ctx); ok && conversation.ProjectID != scope.ProjectID {
+			return ctx, execpkg.SubmitCommand{}, nil, nil, memory.ErrForbidden
+		}
+		projectAuthorized = true
+		cmd.Skills, err = s.resolveSkills(ctx, identity, config.Skills)
+		if err != nil {
+			return ctx, execpkg.SubmitCommand{}, nil, nil, err
+		}
+	}
+	remainingSkillBudget := maxTotalRunSkills - len(cmd.Skills)
+	cmd.SubAgents, err = s.freezeSubAgents(
+		ctx, identity, owner, agentRow, config.SubAgents, projectAuthorized, remainingSkillBudget,
+	)
 	if err != nil {
 		return ctx, execpkg.SubmitCommand{}, nil, nil, err
 	}
@@ -178,6 +197,7 @@ func (s *Service) SubmitApplication(
 		}
 		return nil, false, agent.ErrInvalid
 	}
+	projectAuthorized := false
 	if needsArtifact || memorySelection == memory.SelectionRecall {
 		if !verified || spec.Scope == nil || owner == "" || spec.Scope.ActorID != owner ||
 			(needsArtifact && !matchesArtifactIdentity(identity, owner, scope)) {
@@ -188,6 +208,7 @@ func (s *Service) SubmitApplication(
 		if err != nil {
 			return nil, false, err
 		}
+		projectAuthorized = true
 	}
 	if err := execpkg.ValidateSubmittedAttachments(spec.Attachments); err != nil {
 		return nil, false, err
@@ -228,7 +249,24 @@ func (s *Service) SubmitApplication(
 	if err != nil {
 		return nil, false, err
 	}
-	cmd.SubAgents, err = s.freezeSubAgents(ctx, identity, agentRow, config.SubAgents)
+	if len(config.Skills) > 0 {
+		if spec.Scope == nil || spec.Scope.ActorID != owner {
+			return nil, false, memory.ErrForbidden
+		}
+		ctx, err = s.authorizeSkillAccess(ctx, identity, owner, projectAuthorized)
+		if err != nil {
+			return nil, false, err
+		}
+		projectAuthorized = true
+		cmd.Skills, err = s.resolveSkills(ctx, identity, config.Skills)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	remainingSkillBudget := maxTotalRunSkills - len(cmd.Skills)
+	cmd.SubAgents, err = s.freezeSubAgents(
+		ctx, identity, owner, agentRow, config.SubAgents, projectAuthorized, remainingSkillBudget,
+	)
 	if err != nil {
 		return nil, false, err
 	}
@@ -242,8 +280,11 @@ func (s *Service) SubmitApplication(
 func (s *Service) freezeSubAgents(
 	ctx context.Context,
 	identity client.Identity,
+	owner string,
 	parent table.Agent,
 	subAgents []agent.SubAgentSpec,
+	projectAuthorized bool,
+	remainingSkillBudget int,
 ) ([]execpkg.SubAgentSnapshot, error) {
 	var snapshots []execpkg.SubAgentSnapshot
 	db := s.store.DB().WithContext(ctx)
@@ -273,6 +314,22 @@ func (s *Service) freezeSubAgents(
 		if err != nil {
 			return nil, err
 		}
+		var skills []execpkg.SkillSnapshot
+		if len(config.Skills) > 0 {
+			if len(config.Skills) > remainingSkillBudget {
+				return nil, agent.ErrInvalid
+			}
+			ctx, err = s.authorizeSkillAccess(ctx, identity, owner, projectAuthorized)
+			if err != nil {
+				return nil, err
+			}
+			projectAuthorized = true
+			skills, err = s.resolveSkills(ctx, identity, config.Skills)
+			if err != nil {
+				return nil, err
+			}
+			remainingSkillBudget -= len(skills)
+		}
 		spec := execpkg.CompileRunSpec(config, row.ID, version, "", nil, nil)
 		snapshots = append(snapshots, execpkg.SubAgentSnapshot{
 			Name:            sub.Name,
@@ -286,6 +343,7 @@ func (s *Service) freezeSubAgents(
 			Model:           spec.Model,
 			Tools:           spec.Tools,
 			MCPServers:      spec.MCPServers,
+			Skills:          skills,
 			MaxTurns:        spec.MaxTurns,
 		})
 	}

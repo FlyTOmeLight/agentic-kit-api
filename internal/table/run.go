@@ -29,6 +29,7 @@ type ExecutionSnapshot struct {
 	Model         agent.ModelSpec              `json:"model"`
 	Tools         []agent.ToolSpec             `json:"tools,omitempty"`
 	MCPServers    []agent.MCPServerSpec        `json:"mcpServers,omitempty"`
+	Skills        []execution.SkillSnapshot    `json:"skills,omitempty"`
 	MaxTurns      int                          `json:"maxTurns"`
 	History       []execution.Message          `json:"history,omitempty"`
 	SelfDelegate  bool                         `json:"selfDelegate,omitempty"`

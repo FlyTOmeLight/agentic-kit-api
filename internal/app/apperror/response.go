@@ -40,6 +40,8 @@ func Respond(c *core.Context, err error) {
 		serrors.Abort(c, 400, "InvalidParameter", "invalid input")
 	case errors.Is(err, durable.ErrNotFound), errors.Is(err, memory.ErrNotFound):
 		serrors.Abort(c, http.StatusNotFound, "NotFound", "resource not found")
+	case errors.Is(err, durable.ErrLeaseLost):
+		serrors.Abort(c, http.StatusConflict, "LeaseLost", "execution lease lost")
 	case errors.Is(err, durable.ErrConflict), errors.Is(err, memory.ErrConflict):
 		serrors.Abort(c, http.StatusConflict, "Conflict", "state or idempotency conflict")
 	case errors.Is(err, memory.ErrForbidden):

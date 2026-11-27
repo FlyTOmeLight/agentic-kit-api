@@ -104,10 +104,19 @@ type MessageGroup struct {
 	Messages []Message `json:"messages"`
 }
 
+// SkillSummary is the frozen directory entry for one mounted skill package.
+type SkillSummary struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	EntryPath   string   `json:"entryPath,omitempty"`
+	Files       []string `json:"files,omitempty"`
+}
+
 // FrozenMaterials are the inputs fixed when the Run was accepted. History is
 // ordered oldest to newest and each group is atomic.
 type FrozenMaterials struct {
 	FileIndex         []FileIndexEntry `json:"fileIndex,omitempty"`
+	Skills            []SkillSummary   `json:"skills,omitempty"`
 	SystemInstruction string           `json:"systemInstruction"`
 	BaseSummary       string           `json:"baseSummary,omitempty"`
 	Tools             []ToolDefinition `json:"tools,omitempty"`

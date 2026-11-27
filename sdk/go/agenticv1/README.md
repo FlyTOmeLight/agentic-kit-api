@@ -61,7 +61,7 @@ Update 和 Restore 的 revision 不匹配、恢复活跃条目、更新停用条
 
 `sdk.ModelSpec.ContextWindow` 配置模型窗口；大于零时同时设置正数且小于窗口的 `MaxTokens`，作为输出预留。未配置窗口时使用 128 KiB 输入字节上限；配置窗口时采用 `cjk-weighted-v1` 字符加权估算并预留 256 token 协议开销（不是精确 tokenizer 计数）。`ModelSpec.Stream` 默认启用流式输出（显式设 `false` 可切回非流式），`ModelSpec.InputModalities` 控制首问公网 `https://` 图片/视频直传能力（省略默认支持文本与图片）。提交期已知输入超限返回 HTTP 400、`Code == "ContextBudgetExceeded"`，不会创建 Run；worker 仍会按实际工具定义和当前消息再次检查。
 
-`sdk.AgentConfig` 除静态 HTTP `Tools` 外，还支持 `MCPServers`（标准 Streamable HTTP MCP 源配置）、`SubAgents`（专职子 Agent 引用，提交期冻结版本与单价）与 `SelfDelegate`（根 Run 动态派生子任务）。Run 状态常量导出覆盖完整生命周期（含 `sdk.WaitingExternal` 与 `sdk.Blocked`），等待交互类型导出 `sdk.InteractionKind`（`sdk.InteractionClarification` / `sdk.InteractionReview`）。
+`sdk.AgentConfig` 除静态 HTTP `Tools` 外，还支持 `MCPServers`（标准 Streamable HTTP MCP 源配置）、`Skills`（按需加载的 Artifact `agent-skill` 清单，提交期冻结版本与文件列表，执行期由 worker 暴露内置 `load_skill` 只读工具按需拉取正文）、`SubAgents`（专职子 Agent 引用，提交期冻结版本与单价）与 `SelfDelegate`（根 Run 动态派生子任务）。Run 状态常量导出覆盖完整生命周期（含 `sdk.WaitingExternal` 与 `sdk.Blocked`），等待交互类型导出 `sdk.InteractionKind`（`sdk.InteractionClarification` / `sdk.InteractionReview`）。
 
 `client.Runs.OpenEvents(ctx, &sdk.OpenRunEventsRequest{ID: runID, LastEventID: after})` 返回原始 SSE `io.ReadCloser`。调用方负责读取、关闭、解析和重连，建议使用独立的 context 控制订阅时长。
 
@@ -98,7 +98,7 @@ func NewConversation(sessions sdk.SessionAPI) *Conversation {
 
 ## 受信任应用执行
 
-`Client.Executions` 提供 Submit 与 CheckLease，使用 SubmitExecutionRequest / ExecutionSpec / Scope。先通过 Agents 创建并发布定义，再调用 Executions.Submit；同一应用任务跨轮复用 Session。Submit 的幂等键与不可变快照重试语义和服务端一致。内部 execution/goal/lease 路由仅在配置 propagation 服务白名单时注册，由 Forge `MiddlewareInternalPropagation` 校验服务 Authorization 及目标身份；调用方需携带 `x-impersonate-target-tenant-id`、`x-impersonate-target-user-id` 和可选 `x-impersonate-target-project-id`，并使 ExecutionSpec 的 tenant/project 与已验证 scope 一致。浏览器用户不得持有服务凭据。Run.Scope 记录提交时的业务上下文，不替代每次敏感操作的动态授权。
+`Client.Executions` 提供 Submit、CheckLease 与 ReadSkillFile，使用 SubmitExecutionRequest / ExecutionSpec / Scope 与 ReadSkillFileRequest / SkillFileContent。先通过 Agents 创建并发布定义，再调用 Executions.Submit；同一应用任务跨轮复用 Session。Submit 的幂等键与不可变快照重试语义和服务端一致。内部 execution/goal/lease 路由仅在配置 propagation 服务白名单时注册，由 Forge `MiddlewareInternalPropagation` 校验服务 Authorization 及目标身份；调用方需携带 `x-impersonate-target-tenant-id`、`x-impersonate-target-user-id` 和可选 `x-impersonate-target-project-id`，并使 ExecutionSpec 的 tenant/project 与已验证 scope 一致。浏览器用户不得持有服务凭据。Run.Scope 记录提交时的业务上下文，不替代每次敏感操作的动态授权。`Executions.ReadSkillFile` 对应 `POST /internal/v1/worker/runs/{id}/skills/read`，仅在服务端配置 `[Worker].AllowedServices` 时注册，供 worker 凭有效任务租约按需读取冻结 Skill 文件。
 
 ## 沙箱检查点恢复
 

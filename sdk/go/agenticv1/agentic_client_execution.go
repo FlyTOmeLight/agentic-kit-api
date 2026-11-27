@@ -49,3 +49,18 @@ func (c *executionClient) CheckLease(ctx context.Context, req *CheckExecutionLea
 		http.StatusOK,
 	)
 }
+
+func (c *executionClient) ReadSkillFile(ctx context.Context, req *ReadSkillFileRequest) (*SkillFileContent, error) {
+	if req == nil || strings.TrimSpace(req.ID) == "" {
+		return nil, errors.New("run id is required")
+	}
+	return jsonResult[SkillFileContent](
+		ctx,
+		c.transport,
+		http.MethodPost,
+		"/internal/v1/worker/runs/"+url.PathEscape(req.ID)+"/skills/read",
+		req,
+		nil,
+		http.StatusOK,
+	)
+}

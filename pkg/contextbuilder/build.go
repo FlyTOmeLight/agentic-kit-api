@@ -41,6 +41,10 @@ func Build(in BuildInput) (BuildResult, error) {
 		materials.History = nil
 	}
 	pinned := append([]PinnedBlock(nil), in.PinnedBlocks...)
+	if skillsBlock, ok := RenderSkillDirectory(materials.Skills); ok {
+		pinned = slices.DeleteFunc(pinned, func(pin PinnedBlock) bool { return pin.Label == "skills" })
+		pinned = append(pinned, skillsBlock)
+	}
 	liveFiles := append(attachmentFileIndex(in.CurrentTurn[0].Attachments), in.FileIndex...)
 	filesPin := -1
 	if files, ok := RenderFileIndex(materials.FileIndex, liveFiles); ok {

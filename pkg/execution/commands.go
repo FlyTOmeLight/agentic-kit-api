@@ -20,6 +20,7 @@ const (
 type SubmitCommand struct {
 	Attachments     []Attachment
 	PricingSnapshot *PricingSnapshot
+	Skills          []SkillSnapshot
 	SubAgents       []SubAgentSnapshot
 	Owner           string
 	RequestKey      string
@@ -48,6 +49,7 @@ type SubmitCommand struct {
 type SubmissionFacts struct {
 	Attachments     []Attachment
 	PricingSnapshot *PricingSnapshot
+	Skills          []SkillSnapshot
 	SubAgents       []SubAgentSnapshot
 	Owner           string
 	SessionID       string

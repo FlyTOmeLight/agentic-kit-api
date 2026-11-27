@@ -60,6 +60,14 @@ type MCPServerSpec = agent.MCPServerSpec
 
 type SubAgentSpec = agent.SubAgentSpec
 
+type SkillRef = agent.SkillRef
+
+type SkillFileSnapshot = execution.SkillFileSnapshot
+
+type SkillSnapshot = execution.SkillSnapshot
+
+type SkillFileContent = execution.SkillFileContent
+
 type SubAgentSnapshot = execution.SubAgentSnapshot
 
 type Run = execution.Run

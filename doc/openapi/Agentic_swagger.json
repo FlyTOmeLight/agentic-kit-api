@@ -823,6 +823,87 @@
                 }
             }
         },
+        "/internal/v1/worker/runs/{id}/skills/read": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Run"
+                ],
+                "summary": "读取冻结 Skill 文件",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "JSON 请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/agenticv1.ReadSkillFileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "成功",
+                        "schema": {
+                            "$ref": "#/definitions/agenticv1.SkillFileContent"
+                        }
+                    },
+                    "400": {
+                        "description": "参数或文件格式无效",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "服务身份校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "服务白名单或权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Skill 或文件不在冻结清单中",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "租约失效或版本状态冲突",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    },
+                    "503": {
+                        "description": "Artifact 或对象存储暂不可用",
+                        "schema": {
+                            "$ref": "#/definitions/errors.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/agents": {
             "get": {
                 "security": [
@@ -2954,6 +3035,12 @@
                 "selfDelegate": {
                     "type": "boolean"
                 },
+                "skills": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.SkillRef"
+                    }
+                },
                 "subAgents": {
                     "type": "array",
                     "items": {
@@ -3041,6 +3128,23 @@
                 },
                 "topP": {
                     "type": "number"
+                }
+            }
+        },
+        "agent.SkillRef": {
+            "type": "object",
+            "properties": {
+                "artifactURI": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "shared": {
+                    "type": "boolean"
                 }
             }
         },
@@ -3142,6 +3246,12 @@
                 },
                 "selfDelegate": {
                     "type": "boolean"
+                },
+                "skills": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agent.SkillRef"
+                    }
                 },
                 "subAgents": {
                     "type": "array",
@@ -3474,6 +3584,32 @@
                 }
             }
         },
+        "agenticv1.ReadSkillFileRequest": {
+            "type": "object",
+            "required": [
+                "epoch",
+                "skill",
+                "workerID"
+            ],
+            "properties": {
+                "epoch": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "path": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "skill": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "workerID": {
+                    "type": "string",
+                    "maxLength": 128
+                }
+            }
+        },
         "agenticv1.RetireMemoryRequest": {
             "type": "object",
             "required": [
@@ -3623,6 +3759,29 @@
                     "type": "string"
                 },
                 "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "agenticv1.SkillFileContent": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "mediaType": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "sizeBytes": {
+                    "type": "integer"
+                },
+                "skill": {
+                    "type": "string"
+                },
+                "versionURI": {
                     "type": "string"
                 }
             }

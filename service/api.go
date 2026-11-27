@@ -25,6 +25,7 @@ var _ host.Service = (*API)(nil)
 type Authentication struct {
 	User         []core.HandlerFunc
 	Service      []core.HandlerFunc
+	Worker       []core.HandlerFunc
 	Propagation  []core.HandlerFunc
 	Callback     []core.HandlerFunc
 	ProjectRead  access.ProjectReadCheck
@@ -72,6 +73,9 @@ func New(
 	if len(cfg.Sandbox.AllowedServices) > 0 && len(authentication.Service) == 0 {
 		return nil, errors.New("API requires configured sandbox service authentication")
 	}
+	if len(cfg.Worker.AllowedServices) > 0 && len(authentication.Worker) == 0 {
+		return nil, errors.New("API requires configured worker service authentication")
+	}
 	if cfg.Callback.Enabled && len(authentication.Callback) == 0 {
 		return nil, errors.New("API requires callback service authentication")
 	}
@@ -80,6 +84,9 @@ func New(
 	}
 	if len(cfg.Sandbox.AllowedServices) == 0 {
 		authentication.Service = nil
+	}
+	if len(cfg.Worker.AllowedServices) == 0 {
+		authentication.Worker = nil
 	}
 	a := &API{log: log, store: store, redis: cache}
 	a.routes = newRoutes(store, cache, artifact, archive, nil, nil, cfg.Callback, authentication, cfg.Pricing)

@@ -6,4 +6,5 @@ import "context"
 type ExecutionAPI interface {
 	Submit(ctx context.Context, req *SubmitExecutionRequest) (*SubmitExecutionResponse, error)
 	CheckLease(ctx context.Context, req *CheckExecutionLeaseRequest) (*LeaseCheck, error)
+	ReadSkillFile(ctx context.Context, req *ReadSkillFileRequest) (*SkillFileContent, error)
 }

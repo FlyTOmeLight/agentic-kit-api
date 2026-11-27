@@ -77,6 +77,33 @@ type ToolCall struct {
 	Arguments string `json:"arguments"`
 }
 
+type SkillFileSnapshot struct {
+	Path      string `json:"path"`
+	FileID    string `json:"fileID"`
+	FileURI   string `json:"fileURI"`
+	MediaType string `json:"mediaType,omitempty"`
+	SizeBytes int64  `json:"sizeBytes,omitempty"`
+}
+
+type SkillSnapshot struct {
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	ArtifactURI string              `json:"artifactURI"`
+	VersionURI  string              `json:"versionURI"`
+	Shared      bool                `json:"shared,omitempty"`
+	EntryPath   string              `json:"entryPath"`
+	Files       []SkillFileSnapshot `json:"files"`
+}
+
+type SkillFileContent struct {
+	Skill      string `json:"skill"`
+	Path       string `json:"path"`
+	VersionURI string `json:"versionURI"`
+	MediaType  string `json:"mediaType,omitempty"`
+	SizeBytes  int64  `json:"sizeBytes"`
+	Content    string `json:"content"`
+}
+
 // Spec is an immutable snapshot. Credentials are environment references, never secret values.
 type Spec struct {
 	Attachments     []Attachment     `json:"attachments,omitempty"`
@@ -94,6 +121,7 @@ type Spec struct {
 	Model         agent.ModelSpec       `json:"model"`
 	Tools         []agent.ToolSpec      `json:"tools,omitempty"`
 	MCPServers    []agent.MCPServerSpec `json:"mcpServers,omitempty"`
+	Skills        []SkillSnapshot       `json:"skills,omitempty"`
 	MaxTurns      int                   `json:"maxTurns"`
 	History       []Message             `json:"history,omitempty"`
 	SelfDelegate  bool                  `json:"selfDelegate,omitempty"`
@@ -112,6 +140,7 @@ type SubAgentSnapshot struct {
 	Model           agent.ModelSpec       `json:"model"`
 	Tools           []agent.ToolSpec      `json:"tools,omitempty"`
 	MCPServers      []agent.MCPServerSpec `json:"mcpServers,omitempty"`
+	Skills          []SkillSnapshot       `json:"skills,omitempty"`
 	MaxTurns        int                   `json:"maxTurns"`
 }
 

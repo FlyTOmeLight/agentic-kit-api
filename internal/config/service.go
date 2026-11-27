@@ -24,6 +24,7 @@ type Service struct {
 	DB            db.Config
 	Redis         frameworkredis.Config
 	Sandbox       SandboxConfig
+	Worker        WorkerConfig
 	Callback      CallbackConfig
 	Artifact      Artifact
 	AgentArtifact ArtifactConfig
@@ -61,6 +62,12 @@ type CallbackConfig struct {
 	Enabled         bool
 	SigningSecret   string
 	AllowedSources  []string
+	AllowedServices []string
+}
+
+// WorkerConfig wires service authentication for trusted worker control-plane callbacks
+// (such as on-demand read of frozen skill files). Empty disables those routes.
+type WorkerConfig struct {
 	AllowedServices []string
 }
 
@@ -183,6 +190,7 @@ func (cfg Service) ValidateAPI() error {
 		{name: "Callback.AllowedSources", values: cfg.Callback.AllowedSources},
 		{name: "Callback.AllowedServices", values: cfg.Callback.AllowedServices},
 		{name: "Sandbox.AllowedServices", values: cfg.Sandbox.AllowedServices},
+		{name: "Worker.AllowedServices", values: cfg.Worker.AllowedServices},
 		{name: "Tenant.AllowedPropagationServices", values: cfg.Tenant.AllowedPropagationServices},
 	} {
 		for _, value := range list.values {

@@ -3,6 +3,8 @@ package durable
 import (
 	"context"
 	"errors"
+	"path"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -57,4 +59,65 @@ func (s *Store) AuthorizeExecution(
 		CheckedAt: row.CheckedAt,
 		ExpiresAt: row.ExpiresAt,
 	}, nil
+}
+
+// AuthorizeSkillRead verifies the active worker lease on runID and resolves the
+// requested file exclusively from the run's frozen skill manifest. Identity comes
+// from the authoritative durable_run row, never from caller-supplied headers.
+func (s *Store) AuthorizeSkillRead(
+	ctx context.Context,
+	runID, workerID string,
+	epoch int64,
+	skillName, filePath string,
+) (*AuthorizedSkillRead, error) {
+	if runID == "" || workerID == "" || epoch < 1 || strings.TrimSpace(skillName) == "" {
+		return nil, ErrInvalid
+	}
+	var row table.Run
+	err := s.db.WithContext(ctx).
+		Model(&table.Run{}).
+		Select("tenant_id", "project_id", "owner_id", "spec").
+		Where(
+			"id = ? AND worker_id = ? AND epoch = ? AND status = ? AND lease_until > clock_timestamp() AND deadline > clock_timestamp()",
+			runID, workerID, epoch, Running,
+		).
+		Take(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrLeaseLost
+		}
+		return nil, err
+	}
+	for _, skill := range row.Spec.Skills {
+		if skill.Name != skillName {
+			continue
+		}
+		target := strings.TrimSpace(filePath)
+		if target == "" {
+			target = skill.EntryPath
+			if target == "" {
+				target = "SKILL.md"
+			}
+		}
+		if strings.HasPrefix(target, "/") || strings.Contains(target, "\\") ||
+			target == "." || target == ".." || strings.HasPrefix(target, "../") ||
+			path.Clean(target) != target {
+			return nil, ErrInvalid
+		}
+		for _, f := range skill.Files {
+			if f.Path == target {
+				return &AuthorizedSkillRead{
+					TenantID:   row.TenantID,
+					ProjectID:  row.ProjectID,
+					OwnerID:    row.OwnerID,
+					Skill:      skill.Name,
+					VersionURI: skill.VersionURI,
+					Shared:     skill.Shared,
+					File:       f,
+				}, nil
+			}
+		}
+		return nil, ErrNotFound
+	}
+	return nil, ErrNotFound
 }

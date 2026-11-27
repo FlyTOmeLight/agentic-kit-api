@@ -63,6 +63,10 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if err != nil {
 		return err
 	}
+	authentication.Worker, err = tenant.Service(cfg.Worker.AllowedServices)
+	if err != nil {
+		return err
+	}
 	if cfg.Callback.Enabled {
 		authentication.Callback, err = tenant.Service(cfg.Callback.AllowedServices)
 		if err != nil {

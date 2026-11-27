@@ -512,3 +512,49 @@ func TestSessionAttachmentWireContract(t *testing.T) {
 		t.Fatalf("messages = %+v %v", page, err)
 	}
 }
+
+func TestExecutionReadSkillFileAndConfigSkills(t *testing.T) {
+	cfg := sdk.AgentConfig{
+		Skills: []sdk.SkillRef{{
+			Name:        "go-review",
+			ArtifactURI: "artifact://tenant/artifacts/agent-skill/s1/versions/v1",
+			Description: "Review Go code",
+			Shared:      true,
+		}},
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil ||
+		!strings.Contains(
+			string(raw),
+			`"artifactURI":"artifact://tenant/artifacts/agent-skill/s1/versions/v1"`,
+		) ||
+		!strings.Contains(string(raw), `"shared":true`) {
+		t.Fatalf("skills JSON = %s err=%v", raw, err)
+	}
+	client := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/internal/v1/worker/runs/run-1/skills/read" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			WorkerID string `json:"workerID"`
+			Epoch    int64  `json:"epoch"`
+			Skill    string `json:"skill"`
+			Path     string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
+			body.WorkerID != "w-1" || body.Epoch != 2 || body.Skill != "go-review" || body.Path != "SKILL.md" {
+			t.Errorf("unexpected body = %+v err=%v", body, err)
+		}
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(
+			w,
+			`{"skill":"go-review","path":"SKILL.md","versionURI":"artifact://t/v1","mediaType":"text/markdown","sizeBytes":12,"content":"# Go Review\n"}`,
+		)
+	})
+	got, err := client.Executions.ReadSkillFile(t.Context(), &sdk.ReadSkillFileRequest{
+		ID: "run-1", WorkerID: "w-1", Epoch: 2, Skill: "go-review", Path: "SKILL.md",
+	})
+	if err != nil || got.Skill != "go-review" || got.Path != "SKILL.md" || got.Content != "# Go Review\n" {
+		t.Fatalf("ReadSkillFile = %+v err=%v", got, err)
+	}
+}

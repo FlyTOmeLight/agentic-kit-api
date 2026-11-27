@@ -37,6 +37,14 @@ func CompileRunSpec(
 	}
 }
 
+func CloneSkills(skills []SkillSnapshot) []SkillSnapshot {
+	cloned := slices.Clone(skills)
+	for index := range cloned {
+		cloned[index].Files = slices.Clone(cloned[index].Files)
+	}
+	return cloned
+}
+
 func CloneSubAgents(subAgents []SubAgentSnapshot) []SubAgentSnapshot {
 	cloned := slices.Clone(subAgents)
 	for index := range cloned {
@@ -51,6 +59,7 @@ func CloneSubAgents(subAgents []SubAgentSnapshot) []SubAgentSnapshot {
 		sub.Model = cloneModel(sub.Model)
 		sub.Tools = cloneTools(sub.Tools)
 		sub.MCPServers = cloneMCPServers(sub.MCPServers)
+		sub.Skills = CloneSkills(sub.Skills)
 	}
 	return cloned
 }

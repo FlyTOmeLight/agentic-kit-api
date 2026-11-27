@@ -65,6 +65,7 @@ const (
 	MCPToolPrefix            = "mcp__"
 	DelegateSubAgentToolName = "delegate_subagent"
 	ReadStepResultToolName   = "read_step_result"
+	LoadSkillToolName        = "load_skill"
 )
 
 func FormatMCPToolName(serverName, toolName string) string {
@@ -102,12 +103,20 @@ type SubAgentSpec struct {
 	Version     int64  `json:"version,omitempty"`
 }
 
+type SkillRef struct {
+	Name        string `json:"name"`
+	ArtifactURI string `json:"artifactURI"`
+	Description string `json:"description,omitempty"`
+	Shared      bool   `json:"shared,omitempty"`
+}
+
 type AgentConfig struct {
 	Toolsets     []string        `json:"toolsets,omitempty"`
 	SystemPrompt string          `json:"systemPrompt"`
 	Model        ModelSpec       `json:"model"`
 	Tools        []ToolSpec      `json:"tools,omitempty"`
 	MCPServers   []MCPServerSpec `json:"mcpServers,omitempty"`
+	Skills       []SkillRef      `json:"skills,omitempty"`
 	MaxTurns     int             `json:"maxTurns"`
 	SubAgents    []SubAgentSpec  `json:"subAgents,omitempty"`
 	SelfDelegate bool            `json:"selfDelegate,omitempty"`

@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/memory"
 )
 
@@ -249,6 +250,7 @@ func childSpec(parent Spec, req ChildSpawnRequest, await bool) (Spec, error) {
 				Model:           sub.Model,
 				Tools:           sub.Tools,
 				MCPServers:      sub.MCPServers,
+				Skills:          execution.CloneSkills(sub.Skills),
 				Toolsets:        sub.Toolsets,
 				MaxTurns:        sub.MaxTurns,
 				PricingFrozen:   sub.PricingFrozen,
@@ -270,6 +272,7 @@ func childSpec(parent Spec, req ChildSpawnRequest, await bool) (Spec, error) {
 		parent.Query = "[Subtask Instructions]\n" + req.Instruction + "\n\n[Task]\n" + req.Query
 	}
 	parent.Filesystem = cloneChildFilesystem(parent.Filesystem)
+	parent.Skills = execution.CloneSkills(parent.Skills)
 	parent.History = nil
 	parent.Attachments = nil
 	parent.SubAgents = nil

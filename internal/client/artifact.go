@@ -289,7 +289,25 @@ type ResolvedAttachment struct {
 	SizeBytes int64
 }
 
-// ArtifactStore serves published Agent configurations and submitted file references.
+// ResolvedSkillFile is one immutable file entry inside a resolved skill version.
+type ResolvedSkillFile struct {
+	Path      string
+	FileID    string
+	FileURI   string
+	MediaType string
+	SizeBytes int64
+}
+
+// ResolvedSkill is the immutable version and file manifest returned by Artifact
+// for a mounted skill package.
+type ResolvedSkill struct {
+	VersionURI  string
+	Description string
+	Files       []ResolvedSkillFile
+}
+
+// ArtifactStore serves published Agent configurations, submitted file references,
+// and mounted skill packages.
 type ArtifactStore interface {
 	// EnsureCollection idempotently creates the Agent's collection.
 	EnsureCollection(ctx context.Context, identity Identity, agentID string) (string, error)
@@ -309,13 +327,29 @@ type ArtifactStore interface {
 	// ResolveAttachment locates a file using the caller's verified scope.
 	ResolveAttachment(ctx context.Context, identity Identity, artifactURI string) (ResolvedAttachment, error)
 
+	// ResolveSkill locates an immutable agent-skill version and its file manifest.
+	ResolveSkill(ctx context.Context, identity Identity, artifactURI string, shared bool) (ResolvedSkill, error)
+
+	// ReadSkillFile obtains a short-lived download grant and reads one immutable
+	// UTF-8 skill file up to maxBytes.
+	ReadSkillFile(
+		ctx context.Context,
+		identity Identity,
+		shared bool,
+		fileID string,
+		maxBytes int64,
+	) ([]byte, error)
+
 	// Close releases the underlying transport; called by the assembly layer.
 	Close() error
 }
 
 type artifactClient struct {
 	sdk           *artifactv1.Client
+	endpoint      string
 	serviceAPIKey string
+	httpClient    *http.Client
+	skillCache    *skillFileCache
 }
 
 // NewArtifact constructs the adapter. The caller closes it after requests stop.
@@ -327,7 +361,22 @@ func NewArtifact(endpoint, serviceAPIKey string, timeout time.Duration) (Artifac
 	if err != nil {
 		return nil, err
 	}
-	return &artifactClient{sdk: sdk, serviceAPIKey: serviceAPIKey}, nil
+	httpTimeout := timeout
+	if httpTimeout <= 0 {
+		httpTimeout = 15 * time.Second
+	}
+	return &artifactClient{
+		sdk:           sdk,
+		endpoint:      strings.TrimRight(endpoint, "/"),
+		serviceAPIKey: serviceAPIKey,
+		httpClient: &http.Client{
+			Timeout: httpTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		skillCache: newSkillFileCache(64),
+	}, nil
 }
 
 func (c *artifactClient) Close() error { return c.sdk.Close() }
@@ -509,14 +558,22 @@ func mapArtifactError(err error, binding *memory.ArtifactBinding) error {
 }
 
 func (c *artifactClient) withIdentity(ctx context.Context, identity Identity) context.Context {
-	return artifactv1.WithRequestIdentity(ctx, artifactv1.RequestIdentity{
+	return c.withScopeIdentity(ctx, identity, false)
+}
+
+func (c *artifactClient) withScopeIdentity(ctx context.Context, identity Identity, shared bool) context.Context {
+	reqIdentity := artifactv1.RequestIdentity{
 		BearerToken:      c.serviceAPIKey,
 		TenantID:         identity.TenantID,
 		ProjectID:        identity.ProjectID,
 		PropagatedUserID: identity.PropagatedUserID,
-		ResourceUserID:   &identity.PropagatedUserID,
 		RequestID:        identity.RequestID,
-	})
+	}
+	if !shared {
+		user := identity.PropagatedUserID
+		reqIdentity.ResourceUserID = &user
+	}
+	return artifactv1.WithRequestIdentity(ctx, reqIdentity)
 }
 
 // collectionKey is stable across retries because it derives from persisted

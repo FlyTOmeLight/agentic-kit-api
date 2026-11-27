@@ -44,6 +44,7 @@ func TestRespondDomainErrors(t *testing.T) {
 		}, status: 503, code: "MemoryVersionUnavailable"},
 		{name: "durable invalid", err: durable.ErrInvalid, status: 400, code: "InvalidParameter"},
 		{name: "durable not found", err: durable.ErrNotFound, status: 404, code: "NotFound"},
+		{name: "durable lease lost", err: durable.ErrLeaseLost, status: 409, code: "LeaseLost"},
 		{name: "durable conflict", err: durable.ErrConflict, status: 409, code: "Conflict"},
 		{name: "context budget", err: contextbuilder.ErrBudgetExceeded, status: 400, code: "ContextBudgetExceeded"},
 		{name: "unknown", err: errors.New("private database detail"), status: 500, code: "InternalError"},

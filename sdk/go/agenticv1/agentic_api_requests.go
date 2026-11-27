@@ -75,6 +75,14 @@ type CheckExecutionLeaseRequest struct {
 	WorkerID string `json:"-" form:"workerId" binding:"omitempty,max=128"`
 }
 
+type ReadSkillFileRequest struct {
+	ID       string `json:"-" uri:"id" binding:"required,max=128"`
+	WorkerID string `json:"workerID" binding:"required,max=128"`
+	Epoch    int64  `json:"epoch" binding:"required,min=1"`
+	Skill    string `json:"skill" binding:"required,max=64"`
+	Path     string `json:"path,omitempty" binding:"omitempty,max=512"`
+}
+
 type SendMessageResponse struct {
 	Run
 	Created bool `json:"-"`

@@ -300,3 +300,22 @@ func (*tenantArtifactStore) ResolveAttachment(
 ) (client.ResolvedAttachment, error) {
 	return client.ResolvedAttachment{}, agent.ErrUnavailable
 }
+
+func (*tenantArtifactStore) ResolveSkill(
+	context.Context,
+	client.Identity,
+	string,
+	bool,
+) (client.ResolvedSkill, error) {
+	return client.ResolvedSkill{}, agent.ErrUnavailable
+}
+
+func (*tenantArtifactStore) ReadSkillFile(
+	context.Context,
+	client.Identity,
+	bool,
+	string,
+	int64,
+) ([]byte, error) {
+	return nil, agent.ErrUnavailable
+}

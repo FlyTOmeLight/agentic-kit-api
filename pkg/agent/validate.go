@@ -5,12 +5,14 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
 	mcpServerNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,15}$`)
 	mcpToolNamePattern   = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 	subAgentNamePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+	skillNamePattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	credentialEnvPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 )
 
@@ -18,7 +20,7 @@ func validCredentialEnv(name string) bool {
 	switch name {
 	case "":
 		return true
-	case "DATABASE_URL", "SANDBOX_CENTER_TOKEN", "REDIS_PASSWORD", "FORGE_SERVICE_API_KEY",
+	case "DATABASE_URL", "AGENTIC_API_TOKEN", "SANDBOX_CENTER_TOKEN", "REDIS_PASSWORD", "FORGE_SERVICE_API_KEY",
 		"TENANT_SERVICE_API_KEY", "AGENT_ARTIFACT_SERVICE_API_KEY", "CALLBACK_SIGNING_SECRET":
 		return false
 	default:
@@ -36,11 +38,14 @@ func validEndpoint(raw string) bool {
 // not classify configurations by product scenario.
 func ValidateAgentConfig(c AgentConfig) error {
 	model := c.Model
-	maxStaticTools := 127 // Reserve a slot for read_step_result.
+	reservedTools := 1 // Reserve a slot for read_step_result.
 	if len(c.SubAgents) > 0 || c.SelfDelegate {
-		// Reserve slots for built-in delegate_subagent and read_step_result tools.
-		maxStaticTools = 126
+		reservedTools++ // Reserve a slot for delegate_subagent.
 	}
+	if len(c.Skills) > 0 {
+		reservedTools++ // Reserve a slot for load_skill.
+	}
+	maxStaticTools := 128 - reservedTools
 	if strings.TrimSpace(model.Name) == "" || !validEndpoint(model.BaseURL) ||
 		!validCredentialEnv(model.APIKeyEnv) || model.ContextWindow < 0 ||
 		(model.MaxTokens != nil && *model.MaxTokens <= 0) ||
@@ -74,6 +79,7 @@ func ValidateAgentConfig(c AgentConfig) error {
 		var params map[string]any
 		if strings.TrimSpace(t.Name) == "" || strings.HasPrefix(t.Name, MCPToolPrefix) ||
 			t.Name == DelegateSubAgentToolName || t.Name == ReadStepResultToolName ||
+			t.Name == LoadSkillToolName ||
 			seen[t.Name] || json.Unmarshal(t.Parameters, &params) != nil ||
 			params == nil ||
 			params["type"] != "object" {
@@ -109,7 +115,40 @@ func ValidateAgentConfig(c AgentConfig) error {
 		}
 		subNames[sub.Name] = true
 	}
+	if err := validateSkills(c.Skills); err != nil {
+		return err
+	}
 	return validateMCPServers(c.MCPServers)
+}
+
+func validSkillArtifactURI(raw string) bool {
+	if raw == "" || len(raw) > 2048 || raw != strings.TrimSpace(raw) ||
+		strings.ContainsFunc(raw, unicode.IsControl) || strings.Contains(raw, "#") ||
+		!strings.HasPrefix(raw, "artifact://") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	return err == nil && u.Hostname() != "" && u.User == nil && u.Path != "" && u.Path != "/"
+}
+
+func validateSkills(skills []SkillRef) error {
+	if len(skills) > 16 {
+		return ErrInvalidConfig
+	}
+	seen := make(map[string]bool, len(skills))
+	for _, skill := range skills {
+		if !skillNamePattern.MatchString(skill.Name) || seen[skill.Name] ||
+			!validSkillArtifactURI(skill.ArtifactURI) {
+			return ErrInvalidConfig
+		}
+		if skill.Description != "" &&
+			(strings.TrimSpace(skill.Description) == "" || len(skill.Description) > 1024 ||
+				strings.ContainsFunc(skill.Description, unicode.IsControl)) {
+			return ErrInvalidConfig
+		}
+		seen[skill.Name] = true
+	}
+	return nil
 }
 
 func validPolicy(policy Policy) bool {
