@@ -19,18 +19,22 @@ type submittedMessage struct {
 	Service
 	called              bool
 	session, key, query string
+	attachments         []durable.Attachment
 }
 
 func (s *submittedMessage) Submit(
 	_ context.Context,
 	_ client.Identity,
 	_, session, key, query string,
+	attachments []durable.Attachment,
+
 	_ time.Duration,
 	_ int,
 	_ memory.Selection,
 	_ memory.RecallFilter,
 ) (*durable.Run, bool, error) {
 	s.called = true
+	s.attachments = attachments
 	s.session, s.key, s.query = session, key, query
 	return &durable.Run{ID: "run", SessionID: session}, true, nil
 }
@@ -52,7 +56,9 @@ func TestSubmitMessageSourcesRemainSeparate(t *testing.T) {
 			req := httptest.NewRequest(
 				http.MethodPost,
 				tc.path,
-				strings.NewReader(`{"query":"original input"}`),
+				strings.NewReader(
+					`{"query":"original input","attachments":[{"kind":"file","uri":"/tmp/test","name":"test","mediaType":"text/plain"}]}`,
+				),
 			)
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Query", "injected input")
@@ -67,6 +73,10 @@ func TestSubmitMessageSourcesRemainSeparate(t *testing.T) {
 			}
 			if submitted.called != tc.called {
 				t.Fatalf("Submit called = %v, want %v", submitted.called, tc.called)
+			}
+			if submitted.called &&
+				(len(submitted.attachments) != 1 || submitted.attachments[0].URI != "/tmp/test") {
+				t.Fatalf("Submit received attachments=%+v", submitted.attachments)
 			}
 			if submitted.called &&
 				(submitted.session != "original" || submitted.query != "original input" || submitted.key != tc.key) {

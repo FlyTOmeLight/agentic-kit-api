@@ -22,6 +22,7 @@ type Service interface {
 		ctx context.Context,
 		identity client.Identity,
 		owner, session, key, query string,
+		attachments []execpkg.Attachment,
 		ttl time.Duration,
 		maxAttempts int,
 		memory memory.Selection,
@@ -67,10 +68,23 @@ func (s *service) Submit(
 	ctx context.Context,
 	identity client.Identity,
 	owner, session, key, query string,
+	attachments []execpkg.Attachment,
 	ttl time.Duration,
 	maxAttempts int,
 	memory memory.Selection,
 	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
-	return s.exec.SubmitChat(ctx, identity, owner, session, key, query, ttl, maxAttempts, memory, filter)
+	return s.exec.SubmitChat(
+		ctx,
+		identity,
+		owner,
+		session,
+		key,
+		query,
+		attachments,
+		ttl,
+		maxAttempts,
+		memory,
+		filter,
+	)
 }

@@ -38,7 +38,7 @@ HTTP 用户与 propagation 请求通过已验证的 `access.Scope` 限制 tenant
 
 表模型可以复用 SDK 领域类型，不依赖 durable 或 HTTP。Agent 的单表查询位于 `internal/table/agent_query.go`，业务事务位于 `internal/app/agent`；其已发布正文通过 `internal/client/artifact.go` 保存到 artifact-go，本地 `agent_version` 只保存版本号与远端引用。执行查询和一致性事务位于 `pkg/durable`，使用 table 模型并显式转换公开对象；不对外暴露私有表类型或保留旧模型副本。
 
-`internal/app/execution` 在执行事务外校验 Agent 归属并预取发布配置，再调用 durable 的 `Accept` 与准备回调冻结 Run。回调在事务中只读取会话历史，不调用 artifact；远端 SDK 类型只允许出现在 `internal/client`。
+`internal/app/execution` 在执行事务外校验归属、检查幂等重放、解析提交的 Artifact 附件并预取发布配置，再调用 durable 的 `Accept` 冻结 Run。准备回调在事务中读取会话历史、文件索引和选定的记忆。Artifact SDK 类型封装在 `internal/client`。
 
 `pkg/durable` 的任务、租约、步骤、事件、执行快照与 Store 供 API 和 worker 共用，不依赖 Gin 或 HTTP 模块。执行状态写入按职责拆分在 `lease.go`、`boundary.go`、`step.go`、`interaction.go`、`cancellation.go`、`retry.go`；等待交互由 Run 的 `waiting_step`/`waiting_kind` 列显式保存。公开契约或持久化格式变化时核对 worker 的真实调用与恢复行为。执行权、epoch 和一致提交见 [恢复设计](design.md)。
 

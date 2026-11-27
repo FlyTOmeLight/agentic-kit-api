@@ -3029,6 +3029,12 @@ const docTemplateAgentic = `{
                 "contextWindow": {
                     "type": "integer"
                 },
+                "inputModalities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "maxTokens": {
                     "type": "integer"
                 },
@@ -3185,6 +3191,32 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "agenticv1.Attachment": {
+            "type": "object",
+            "properties": {
+                "artifactURI": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "mediaType": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "sizeBytes": {
+                    "type": "integer"
+                },
+                "uri": {
+                    "type": "string"
+                }
+            }
+        },
         "agenticv1.CreateAgentRequest": {
             "type": "object",
             "required": [
@@ -3235,6 +3267,12 @@ const docTemplateAgentic = `{
                 },
                 "agentVersion": {
                     "type": "integer"
+                },
+                "attachments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/execution.Attachment"
+                    }
                 },
                 "filesystem": {
                     "$ref": "#/definitions/execution.FilesystemBinding"
@@ -3553,6 +3591,12 @@ const docTemplateAgentic = `{
                 "query"
             ],
             "properties": {
+                "attachments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agenticv1.Attachment"
+                    }
+                },
                 "memory": {
                     "type": "string",
                     "enum": [
@@ -3706,6 +3750,32 @@ const docTemplateAgentic = `{
                 }
             }
         },
+        "execution.Attachment": {
+            "type": "object",
+            "properties": {
+                "artifactURI": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "mediaType": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "sizeBytes": {
+                    "type": "integer"
+                },
+                "uri": {
+                    "type": "string"
+                }
+            }
+        },
         "execution.BudgetSpec": {
             "type": "object",
             "properties": {
@@ -3773,6 +3843,31 @@ const docTemplateAgentic = `{
                     "type": "string"
                 },
                 "seq": {
+                    "type": "integer"
+                }
+            }
+        },
+        "execution.FileArtifact": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "\"written\" or \"edited\"",
+                    "type": "string"
+                },
+                "mediaType": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "\"AIO\" or \"Sandbox\"",
+                    "type": "string"
+                },
+                "sizeBytes": {
                     "type": "integer"
                 }
             }
@@ -3943,6 +4038,18 @@ const docTemplateAgentic = `{
         "execution.SessionMessage": {
             "type": "object",
             "properties": {
+                "artifacts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/execution.FileArtifact"
+                    }
+                },
+                "attachments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/execution.Attachment"
+                    }
+                },
                 "content": {
                     "type": "string"
                 },

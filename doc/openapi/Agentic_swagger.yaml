@@ -73,6 +73,10 @@ definitions:
         type: string
       contextWindow:
         type: integer
+      inputModalities:
+        items:
+          type: string
+        type: array
       maxTokens:
         type: integer
       name:
@@ -175,6 +179,23 @@ definitions:
       number:
         type: integer
     type: object
+  agenticv1.Attachment:
+    properties:
+      artifactURI:
+        type: string
+      id:
+        type: string
+      kind:
+        type: string
+      mediaType:
+        type: string
+      name:
+        type: string
+      sizeBytes:
+        type: integer
+      uri:
+        type: string
+    type: object
   agenticv1.CreateAgentRequest:
     properties:
       config:
@@ -209,6 +230,10 @@ definitions:
         type: string
       agentVersion:
         type: integer
+      attachments:
+        items:
+          $ref: '#/definitions/execution.Attachment'
+        type: array
       filesystem:
         $ref: '#/definitions/execution.FilesystemBinding'
       goalID:
@@ -417,6 +442,10 @@ definitions:
     type: object
   agenticv1.SendMessageRequest:
     properties:
+      attachments:
+        items:
+          $ref: '#/definitions/agenticv1.Attachment'
+        type: array
       memory:
         enum:
         - "Off"
@@ -524,6 +553,23 @@ definitions:
         description: StatusCode 状态码，推荐6位数字
         type: integer
     type: object
+  execution.Attachment:
+    properties:
+      artifactURI:
+        type: string
+      id:
+        type: string
+      kind:
+        type: string
+      mediaType:
+        type: string
+      name:
+        type: string
+      sizeBytes:
+        type: integer
+      uri:
+        type: string
+    type: object
   execution.BudgetSpec:
     properties:
       maxCostUSD:
@@ -568,6 +614,23 @@ definitions:
       runID:
         type: string
       seq:
+        type: integer
+    type: object
+  execution.FileArtifact:
+    properties:
+      action:
+        description: '"written" or "edited"'
+        type: string
+      mediaType:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      provider:
+        description: '"AIO" or "Sandbox"'
+        type: string
+      sizeBytes:
         type: integer
     type: object
   execution.FilesystemBinding:
@@ -684,6 +747,14 @@ definitions:
     type: object
   execution.SessionMessage:
     properties:
+      artifacts:
+        items:
+          $ref: '#/definitions/execution.FileArtifact'
+        type: array
+      attachments:
+        items:
+          $ref: '#/definitions/execution.Attachment'
+        type: array
       content:
         type: string
       createdAt:

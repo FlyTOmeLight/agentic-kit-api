@@ -979,3 +979,52 @@ func mustArtifactJSON(t *testing.T, value any) []byte {
 	}
 	return payload
 }
+
+func TestResolveAttachment(t *testing.T) {
+	const alias = "artifact://tenant/media/asset/aliases/latest/files/photo.jpg"
+	const fixed = "artifact://tenant/media/asset/versions/v1/files/photo.jpg"
+	ready := &artifactv1.VersionResponse{State: artifactv1.VersionReady}
+	file := &artifactv1.FileResponse{
+		FileID: "file-1", Path: "photo.jpg", FileURI: fixed, ContentType: "image/jpeg", Size: 25,
+	}
+	for _, tc := range []struct {
+		name, kind string
+		version    *artifactv1.VersionResponse
+		file       *artifactv1.FileResponse
+		want       error
+	}{
+		{name: "ready", kind: "media", version: ready, file: file, want: nil},
+		{name: "not ready", kind: "media", version: &artifactv1.VersionResponse{State: "draft"}, file: file, want: agent.ErrConflict},
+		{name: "no version", kind: "media", version: nil, file: file, want: agent.ErrInvalid},
+		{name: "no file", kind: "media", version: ready, file: nil, want: agent.ErrInvalid},
+		{name: "agent", kind: "agent", version: nil, file: nil, want: memory.ErrForbidden},
+		{name: "agent memory", kind: "agent-memory", version: ready, file: file, want: memory.ErrForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestStore(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertIdentityHeaders(t, r)
+				var body artifactv1.ResolveRequest
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URI != alias ||
+					r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/resolve") {
+					t.Errorf("request %s %s body=%+v err=%v", r.Method, r.URL.Path, body, err)
+				}
+				writeJSON(w, http.StatusOK, artifactv1.ResolveResponse{
+					Artifact: artifactv1.ArtifactResponse{
+						Type: tc.kind,
+					},
+					Version: tc.version,
+					File:    tc.file,
+				})
+			}))
+			got, err := store.ResolveAttachment(t.Context(), testIdentity(), alias)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("resolve = %+v %v, want %v", got, err, tc.want)
+			}
+			if tc.want == nil && got != (ResolvedAttachment{
+				FileURI: fixed, FileID: "file-1", Path: "photo.jpg", MediaType: "image/jpeg", SizeBytes: 25,
+			}) {
+				t.Fatalf("resolved metadata = %+v", got)
+			}
+		})
+	}
+}

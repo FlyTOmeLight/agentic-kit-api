@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"slices"
 	"strings"
 
 	"gorm.io/gorm"
@@ -57,7 +58,7 @@ func PrepareChatSubmission(
 			len(config.Toolsets) > 0 || anySubAgentHasToolsets(facts.SubAgents) {
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
-		spec := execution.CompileRunSpec(config, agentID, version, facts.Query, nil, nil)
+		spec := execution.CompileRunSpec(config, agentID, version, facts.Query, nil, nil, facts.Attachments...)
 		spec.PricingSnapshot = facts.PricingSnapshot
 		spec.SubAgents = execution.CloneSubAgents(facts.SubAgents)
 		history, baseSummary, err := loadConversationHistory(tx, facts.Owner, facts.SessionID)
@@ -70,8 +71,12 @@ func PrepareChatSubmission(
 			return execution.PreparedSubmission{}, err
 		}
 		return execution.PreparedSubmission{
-			Spec:            spec,
-			UserMessage:     execution.Message{Role: "user", Content: facts.Query},
+			Spec: spec,
+			UserMessage: execution.Message{
+				Role:        "user",
+				Content:     facts.Query,
+				Attachments: slices.Clone(spec.Attachments),
+			},
 			ContextSnapshot: snapshot,
 		}, nil
 	}
@@ -93,10 +98,21 @@ func PrepareApplicationSubmission(
 		facts execution.SubmissionFacts,
 	) (execution.PreparedSubmission, error) {
 		input := facts.ExecutionSpec
+		attachments := facts.Attachments
+		if attachments == nil {
+			attachments = input.Attachments
+		}
 		if len(config.SubAgents) != len(facts.SubAgents) {
 			return execution.PreparedSubmission{}, ErrInvalid
 		}
-		spec := execution.CompileRunSpec(config, agentID, version, input.Query, input.Scope, input.Filesystem)
+		spec := execution.CompileRunSpec(
+			config,
+			agentID,
+			version,
+			input.Query,
+			input.Scope,
+			input.Filesystem,
+			attachments...)
 		spec.PricingSnapshot = facts.PricingSnapshot
 		needsFilesystem := len(spec.Toolsets) > 0 || anySubAgentHasToolsets(facts.SubAgents)
 		if needsFilesystem {
@@ -125,8 +141,12 @@ func PrepareApplicationSubmission(
 			return execution.PreparedSubmission{}, err
 		}
 		return execution.PreparedSubmission{
-			Spec:            spec,
-			UserMessage:     execution.Message{Role: "user", Content: input.Query},
+			Spec: spec,
+			UserMessage: execution.Message{
+				Role:        "user",
+				Content:     input.Query,
+				Attachments: slices.Clone(spec.Attachments),
+			},
 			ContextSnapshot: snapshot,
 		}, nil
 	}
@@ -215,10 +235,11 @@ func completeHistoryGroup(
 	}
 	for i, message := range messages {
 		group.Messages[i] = contextbuilder.Message{
-			Role:       contextbuilder.Role(message.Role),
-			Content:    message.Content,
-			ToolCalls:  contextToolCalls(message.ToolCalls),
-			ToolCallID: message.ToolCallID,
+			Role:        contextbuilder.Role(message.Role),
+			Content:     message.Content,
+			ToolCalls:   contextToolCalls(message.ToolCalls),
+			ToolCallID:  message.ToolCallID,
+			Attachments: contextAttachments(message.Attachments),
 		}
 	}
 	if err := contextbuilder.ValidateGroup(group.Messages); err != nil {
@@ -249,6 +270,17 @@ func legacyHistory(groups []contextbuilder.MessageGroup) []execution.Message {
 			switch {
 			case message.Role == contextbuilder.RoleUser:
 				value := execution.Message{Role: string(message.Role), Content: message.Content}
+				for _, a := range message.Attachments {
+					value.Attachments = append(value.Attachments, execution.Attachment{
+						ID:          a.ID,
+						Kind:        execution.AttachmentKind(a.Kind),
+						URI:         a.URI,
+						Name:        a.Name,
+						MediaType:   a.MediaType,
+						SizeBytes:   a.SizeBytes,
+						ArtifactURI: a.ArtifactURI,
+					})
+				}
 				user = &value
 			case message.Role == contextbuilder.RoleAssistant && len(message.ToolCalls) == 0:
 				value := execution.Message{Role: string(message.Role), Content: message.Content}
@@ -280,7 +312,7 @@ func freezeContextWithoutRecall(
 	history []contextbuilder.MessageGroup,
 	selection memory.Selection,
 ) (execution.ContextSnapshot, error) {
-	return freezeContextMaterials(spec, history, "", selection, nil)
+	return freezeContextMaterials(spec, history, "", selection, nil, nil)
 }
 
 func freezeContext(
@@ -296,7 +328,11 @@ func freezeContext(
 	if err != nil {
 		return execution.ContextSnapshot{}, err
 	}
-	return freezeContextMaterials(spec, history, baseSummary, facts.Memory, materials)
+	files, err := loadSessionFileIndex(tx, facts.Owner, facts.SessionID, spec.Filesystem)
+	if err != nil {
+		return execution.ContextSnapshot{}, err
+	}
+	return freezeContextMaterials(spec, history, baseSummary, facts.Memory, materials, files)
 }
 
 // recallMaterials reads the active projection for a Recall submission inside
@@ -404,6 +440,7 @@ func freezeContextMaterials(
 	baseSummary string,
 	selection memory.Selection,
 	materials []contextbuilder.ContextBlock,
+	files []contextbuilder.FileIndexEntry,
 ) (execution.ContextSnapshot, error) {
 	budget := contextbuilder.Budget{MaxInputBytes: 128 * 1024, MaxToolResultBytes: 16 * 1024}
 	if spec.Model.ContextWindow > 0 {
@@ -425,6 +462,7 @@ func freezeContextMaterials(
 			Tools:             contextTools(spec.Tools),
 			Memory:            materials,
 			History:           history,
+			FileIndex:         files,
 		},
 		Policy: contextbuilder.Policy{
 			Version:               contextbuilder.PolicyVersionV4,
@@ -439,10 +477,17 @@ func freezeContextMaterials(
 	}
 	if _, err = contextbuilder.Build(contextbuilder.BuildInput{
 		FrozenMaterials: snapshot.Materials,
-		CurrentTurn:     []contextbuilder.Message{{Role: contextbuilder.RoleUser, Content: spec.Query}},
-		Policy:          snapshot.Policy,
-		Budget:          budget,
-		Counter:         counter,
+		CurrentTurn: []contextbuilder.Message{
+			{
+				Role:        contextbuilder.RoleUser,
+				Content:     spec.Query,
+				Attachments: contextAttachments(spec.Attachments),
+			},
+		},
+		DirectModalities: spec.Model.InputModalities,
+		Policy:           snapshot.Policy,
+		Budget:           budget,
+		Counter:          counter,
 	}); err != nil {
 		return execution.ContextSnapshot{}, err
 	}

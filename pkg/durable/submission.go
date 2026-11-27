@@ -104,10 +104,17 @@ func (tx *Tx) Submit(
 			Kind:            cmd.Kind,
 			Query:           cmd.Query,
 			ExecutionSpec:   cmd.ExecutionSpec,
+			Attachments:     cmd.Attachments,
 			Memory:          cmd.Memory,
 			MemoryFilter:    cmd.MemoryFilter,
 		})
 		if err != nil {
+			return err
+		}
+		if err = execution.ValidateAttachments(prepared.Spec.Attachments); err != nil {
+			return err
+		}
+		if err = execution.ValidateAttachments(prepared.UserMessage.Attachments); err != nil {
 			return err
 		}
 		if err = validateContextSnapshot(prepared.ContextSnapshot); err != nil {

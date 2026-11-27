@@ -448,3 +448,52 @@ func TestConcurrentServices(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionAttachmentWireContract(t *testing.T) {
+	attachment := sdk.Attachment{
+		Kind: sdk.AttachmentImage, URI: "https://media.test/source.jpg",
+		ArtifactURI: "artifact://tenant/media/version/source.jpg",
+		ID:          "file-1", Name: "source.jpg", MediaType: "image/jpeg", SizeBytes: 42,
+	}
+	artifact := sdk.FileArtifact{
+		Path: "/workspace/report.txt", Name: "report.txt", MediaType: "text/plain",
+		SizeBytes: 80, Action: "written", Provider: "Sandbox",
+	}
+	client := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			var body struct {
+				Query       string           `json:"query"`
+				Attachments []sdk.Attachment `json:"attachments"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Query != "inspect" ||
+				!reflect.DeepEqual(body.Attachments, []sdk.Attachment{attachment}) {
+				t.Errorf("request = %+v %v", body, err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			io.WriteString(w, `{"id":"run","status":"Queued"}`)
+		case http.MethodGet:
+			io.WriteString(w, `{"items":[
+				{"kind":"User","role":"user","content":"inspect","attachments":[{"id":"file-1","kind":"image","uri":"https://media.test/source.jpg","name":"source.jpg","mediaType":"image/jpeg","sizeBytes":42,"artifactURI":"artifact://tenant/media/version/source.jpg"}]},
+				{"kind":"Tool","role":"tool","content":"done","artifacts":[{"path":"/workspace/report.txt","name":"report.txt","mediaType":"text/plain","sizeBytes":80,"action":"written","provider":"Sandbox"}]}
+			]}`)
+		default:
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+	})
+	_, err := client.Sessions.SendMessage(t.Context(), &sdk.SendMessageRequest{
+		SessionID:      "session",
+		IdempotencyKey: "question-1",
+		Query:          "inspect",
+		Attachments:    []sdk.Attachment{attachment},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := client.Sessions.ListMessages(t.Context(), &sdk.ListMessagesRequest{SessionID: "session"})
+	if err != nil || len(page.Items) != 2 ||
+		!reflect.DeepEqual(page.Items[0].Attachments, []sdk.Attachment{attachment}) ||
+		!reflect.DeepEqual(page.Items[1].Artifacts, []sdk.FileArtifact{artifact}) {
+		t.Fatalf("messages = %+v %v", page, err)
+	}
+}

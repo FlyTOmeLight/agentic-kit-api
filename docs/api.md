@@ -58,15 +58,36 @@ Agent 创建时 revision=1，编辑成功递增 revision。编辑或发布携带
 
 已发布的 `AgentVersion.config` 来自 artifact-go 的不可变正文，本地只保存版本指针，响应形状不变。发布先完成远端写入，再复核本地 revision 并提交版本指针；远端成功而本地提交失败可能留下未引用版本，但不会占用公开版本号。远端依赖不可用时发布、版本读取和新任务提交返回 503；同一请求已接受后的幂等重放直接返回原 Run，不重新读取 artifact。
 
-artifact 出站请求统一使用 API 自身的 `Tenant.ServiceAPIKey` 作为 Bearer。`RequestIdentity` 只读取 Forge middleware 已核验的 user/tenant/project 与 RequestID；适配器将 tenant/user/可选 project 写入 `x-impersonate-target-*`，并将同一用户写入 `X-Resource-User-ID`，保持个人归属。入站 Authorization、`forge_session` Cookie、CSRF 和 Origin 均不转发，也不混用 Cookie 与 Bearer；浏览器不得持有服务凭据。缺少有效 tenant 或 actor 时，适配器在请求远端前返回依赖不可用错误，不退化为共享范围。artifact 部署须启用服务传播，并将该 key 对应的 API 服务名列入允许名单；当前本地联调使用包含 `PropagatedUserID` 的 SDK，正式依赖仍为 v0.5.0，需待包含该字段的版本发布后升级。真实 Forge/artifact 联调尚未完成；入站会话示例见 [README](../README.md#调用接口)。
+artifact 出站请求统一使用 API 自身的 `Tenant.ServiceAPIKey` 作为 Bearer。`RequestIdentity` 只读取 Forge middleware 已核验的 user/tenant/project 与 RequestID；适配器将 tenant/user/可选 project 写入 `x-impersonate-target-*`，并将同一用户写入 `X-Resource-User-ID`，保持个人归属。入站 Authorization、`forge_session` Cookie、CSRF 和 Origin 均不转发，也不混用 Cookie 与 Bearer；浏览器不得持有服务凭据。缺少有效 tenant 或 actor 时，适配器在请求远端前返回依赖不可用错误，不退化为共享范围。artifact 部署须启用服务传播，并将该 key 对应的 API 服务名列入允许名单；当前发布依赖的 Artifact SDK 包含 `PropagatedUserID`。真实 Forge/artifact 联调尚未完成；入站会话示例见 [README](../README.md#调用接口)。
 
-提交消息返回 202 和 Run；同一 tenant、owner 的相同请求编号、相同 session/query 重试返回 200 和原任务，不重复保存用户消息，也不重放其他租户的 Run。发布新版本不改变该行为。请求编号重复但输入不同、同一会话已有活动任务、无效状态转换返回 409。
+提交消息返回 202 和 Run；同一 tenant、owner 的相同请求编号和相同输入重试返回 200 和原任务，不重复保存用户消息，也不重放其他租户的 Run。发布新版本不改变该行为。请求编号重复但输入不同、同一会话已有活动任务、无效状态转换返回 409。
 
 列表返回 `{"items":[]}`。默认 limit=50；Agent、会话、任务列表最多 100 项，按 ID 升序，after 是上一页最后一项 ID。ID 排序不代表创建时间。消息列表最多 200 项，按会话内 seq 升序，after 默认 0，下一页使用上一页最后一项 seq。Agent、会话和消息时间以 UTC RFC3339 返回。
 
-消息包含 sessionID、seq、runID、kind、role、content、可选 toolCalls/toolCallID、createdAt。kind 包括 User、Assistant、Final、Tool、ClarificationAnswer、ReviewResult。助手工具决策保存为 Assistant，最终回复保存为 Final；澄清回答与人工确认属于工具结果，role 为 tool。通过 toolCallID 与助手 toolCalls 中的 ID 配对。失败和取消从 Run 状态及 Event 读取，不伪造成助手回复。
+消息包含 sessionID、seq、runID、kind、role、content、可选 toolCalls/toolCallID 与 attachments/artifacts、createdAt。kind 包括 User、Assistant、Final、Tool、ClarificationAnswer、ReviewResult。助手工具决策保存为 Assistant，最终回复保存为 Final；澄清回答与人工确认属于工具结果，role 为 tool。通过 toolCallID 与助手 toolCalls 中的 ID 配对。失败和取消从 Run 状态及 Event 读取，不伪造成助手回复。
 
-消息与对应任务状态在同一事务提交。客户端可以用会话消息列表展示历史，用 Run SSE 展示当前任务进度；Event 不作为聊天记录。当前模型上下文取最近 20 个已完成 Run 的 User/Final 消息，工具历史保存在消息表供查询，尚未实现跨轮工具历史与上下文压缩。
+消息与对应任务状态在同一事务提交。客户端可以用会话消息列表展示历史，用 Run SSE 展示当前任务进度；Event 不作为聊天记录。Run 接受时冻结会话历史和上下文策略。已经压缩的消息仍可通过会话消息列表读取。
+
+### 附件与文件索引
+
+聊天提交在消息正文携带 `attachments`，应用执行在 `spec.attachments` 携带同样的数组。两种入口都要求非空 `query`。例如，提交一张远端图片：
+
+```json
+{
+  "query": "描述这张图片",
+  "attachments": [
+    {"kind":"image","uri":"https://media.example/photo.jpg","name":"photo.jpg","mediaType":"image/jpeg"}
+  ]
+}
+```
+
+- `kind` 接受 `image`、`document`、`audio`、`video`、`file`。最多 10 个附件，单个 `sizeBytes` 可省略，非负且不超过 50 MiB，合计不超过 100 MiB。可选 `id` 最多 128 字节，非空 `name` 最多 255 字节，均不能含控制字符。
+- `mediaType` 使用小写且无参数的 MIME 类型。图片、音频、视频分别要求 `image/`、`audio/`、`video/`。`uri` 最长 2048 字节，接受无凭据和片段的 HTTP(S) 或 `artifact://` URI，以及无路径穿越的干净绝对路径。API 接收引用和元数据，不接收内嵌文件字节。凡 `uri` 使用 `artifact://` 必须同时提供 `artifactURI`；`artifactURI` 不可与外部 HTTP(S) 或工作区路径 `uri` 混用。
+- 通过 `artifactURI` 提交 Artifact 文件引用时，API 在首次提交和幂等重放前核验 Forge 的用户、tenant、project 及项目 `read` 权限。聊天要求会话属于当前 project，应用要求 `spec.scope.actorID` 等于当前用户。Artifact 按同一身份和个人资源归属解析。返回的 `agent` 和 `agent-memory` 类型一律拒绝，解析须返回 ready 版本及文件清单项。
+- 新请求解析后将 `artifactURI` 与 `uri` 冻结为固定版本的文件 URI。此时可省略 `uri`、`name`、`mediaType`，分别从文件引用、路径末段（缺省回退文件 ID）和清单（忽略 MIME 参数规范化为小写 `type/subtype`）补全。附件按原始顺序参与幂等比较。授权通过的同键重放直接返回已接受的 Run，即使 Artifact 别名已经移动或服务暂时不可用。
+- `model.inputModalities` 随 Agent 发布版本和 Run 冻结，允许 `text`、`image`、`video`，每项至多出现一次。省略或传空数组时支持文本和图片。上下文构建器只在当前首问保留模型支持的 HTTP(S) 图片或视频直传项。其他附件以及历史附件使用 `[Attachments]` 元数据。直传的 URL 计入输入字节，图片和视频分别额外计 1024 和 2048 token。文件大小不计入模型输入字节。
+- 用户消息保存 `attachments`。工具写入或编辑文件时可随工具结果提交 `artifacts`，每项有 `path`、`action`（`written` 或 `edited`），可选 `name`、`mediaType`、`sizeBytes` 和 `provider`（`AIO` 或 `Sandbox`）。工具步骤、结果消息和 checkpoint 在同一事务提交。
+- 上下文的 `files` 固定块合并当前轮和本会话已完成 Run 的文件记录，以来源和 URI 去重，新记录优先。索引不受会话历史压缩游标影响，最多展示 50 条和 4 KiB（按完整行截断），并受本轮上下文预算约束且不会挤掉首问。`[attachment]` 表示附件引用。`[workspace/accessible]` 表示当前 Run 使用同一 AIO 工作区或已确认的沙箱恢复链。`[workspace/historical]` 表示可查到路径记录，但当前工作区未确认可读。索引本身不授予读取权限。子 Run 默认不继承父会话附件与文件索引，需要交接的文件由父 Agent 在子任务描述中显式传递。
 
 任务状态为 Queued、Running、WaitingClarification、NeedsReview、WaitingExternal、Blocked、Completed、Failed、Canceled。等待状态时，GET /v1/runs/{id} 与 Run 列表项从 `durable_run` 显式列返回 `waitingStep` 与 `waitingKind`（`Clarification` 或 `Review`），不再从 worker 私有 checkpoint JSON 解析。`POST /v1/runs/{id}/answer` 在 `WaitingClarification` 且 `waitingKind=Clarification` 时提交澄清；`POST /v1/runs/{id}/resolve` 在 `NeedsReview` 且 `waitingKind=Review` 时提交人工确认的工具结果。两处请求体仍为 `stepID` 与 `result`，`stepID` 必须等于当前 `waitingStep`；`result` 是提供给模型的用户回答或已确认工具结果。相关 SSE 事件 payload 在保留 `waitingStep` 的同时新增 `waitingKind`。
 
@@ -171,7 +192,7 @@ Completed Run 的原沙箱可为 command 验收继续续租。完成事务为满
 
 Agent 定义先通过 `/v1/agents` 创建、编辑与发布。应用执行必须引用明确的发布版本，不能传入 systemPrompt、model、tools 或 maxTurns。运行时读取该版本并冻结完整执行快照；不创建临时 Agent。旧的内联定义请求返回 400，不保留第二条定义路径。
 
-同一 owner、tenant、project、task 复用同一个 Session；不同项目的同名 task 不共享历史。后续轮次允许选择同一 Agent 的其他已发布版本，但不能在同一任务中更换 Agent 身份。同一会话已有活动 Run 时返回 409。上下文策略与普通聊天一致：最近 20 个已完成轮次的用户输入与最终答案。
+同一 owner、tenant、project、task 复用同一个 Session；不同项目的同名 task 不共享历史。后续轮次允许选择同一 Agent 的其他已发布版本，但不能在同一任务中更换 Agent 身份。同一会话已有活动 Run 时返回 409。上下文策略与普通聊天一致。
 
 幂等键必填。同一 tenant、owner 内同键同输入返回原 Run，包括发布新版本之后的重试；同键不同输入返回 409。不同租户的相同 owner 和请求键不会重放另一租户的 Run。Agent、发布版本不存在或属于其他 tenant/owner 时返回 404。创建会话、Run、输入消息与事件在同一事务提交。应用服务凭据不能下发给浏览器；应用从已验证的用户与任务构造 scope，敏感操作仍动态检查业务权限。
 

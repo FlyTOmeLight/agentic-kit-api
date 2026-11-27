@@ -20,6 +20,20 @@ type Scope = workspace.Scope
 
 type Message = execution.Message
 
+type AttachmentKind = execution.AttachmentKind
+
+type Attachment = execution.Attachment
+
+type FileArtifact = execution.FileArtifact
+
+const (
+	AttachmentImage    = execution.AttachmentImage
+	AttachmentDocument = execution.AttachmentDocument
+	AttachmentAudio    = execution.AttachmentAudio
+	AttachmentVideo    = execution.AttachmentVideo
+	AttachmentFile     = execution.AttachmentFile
+)
+
 type ToolCall = execution.ToolCall
 
 type ModelSpec = agent.ModelSpec

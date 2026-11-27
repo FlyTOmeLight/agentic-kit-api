@@ -326,7 +326,7 @@ func TestProjectChatRecallChecksSessionAndCurrentGrant(t *testing.T) {
 		})
 	submit := func(ctx context.Context, key string) (*execution.Run, bool, error) {
 		return submissions.SubmitChat(
-			ctx, identity, owner, session.ID, key, "editor",
+			ctx, identity, owner, session.ID, key, "editor", nil,
 			time.Hour, 3, memory.SelectionRecall, memory.RecallFilter{},
 		)
 	}
@@ -419,7 +419,7 @@ func TestSubmissionRecallQueryAndFilterReplay(t *testing.T) {
 					)
 				}
 				return submissions.SubmitChat(
-					ctx, identity, "owner", session.ID, "recall-key", spec.Query,
+					ctx, identity, "owner", session.ID, "recall-key", spec.Query, nil,
 					time.Hour, 3, memory.SelectionRecall, filter,
 				)
 			}

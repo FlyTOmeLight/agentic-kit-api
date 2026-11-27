@@ -93,7 +93,7 @@ func TestSubmissionFreezesPricing(t *testing.T) {
 							"owner",
 							session.ID,
 							key,
-							"query",
+							"query", nil,
 							time.Minute,
 							3,
 							memory.SelectionOff,

@@ -33,11 +33,42 @@ func (s Status) Suspended() bool {
 	return s == WaitingClarification || s == NeedsReview || s == WaitingExternal
 }
 
+type AttachmentKind string
+
+const (
+	AttachmentImage    AttachmentKind = "image"
+	AttachmentDocument AttachmentKind = "document"
+	AttachmentAudio    AttachmentKind = "audio"
+	AttachmentVideo    AttachmentKind = "video"
+	AttachmentFile     AttachmentKind = "file"
+)
+
+type Attachment struct {
+	ID          string         `json:"id,omitempty"`
+	Kind        AttachmentKind `json:"kind"`
+	URI         string         `json:"uri"`
+	Name        string         `json:"name"`
+	MediaType   string         `json:"mediaType"`
+	SizeBytes   int64          `json:"sizeBytes,omitempty"`
+	ArtifactURI string         `json:"artifactURI,omitempty"`
+}
+
+type FileArtifact struct {
+	Path      string `json:"path"`
+	Name      string `json:"name,omitempty"`
+	MediaType string `json:"mediaType,omitempty"`
+	SizeBytes int64  `json:"sizeBytes,omitempty"`
+	Action    string `json:"action"`             // "written" or "edited"
+	Provider  string `json:"provider,omitempty"` // "AIO" or "Sandbox"
+}
+
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
-	ToolCallID string     `json:"toolCallID,omitempty"`
+	Attachments []Attachment   `json:"attachments,omitempty"`
+	Artifacts   []FileArtifact `json:"artifacts,omitempty"`
+	Role        string         `json:"role"`
+	Content     string         `json:"content"`
+	ToolCalls   []ToolCall     `json:"toolCalls,omitempty"`
+	ToolCallID  string         `json:"toolCallID,omitempty"`
 }
 
 type ToolCall struct {
@@ -48,6 +79,7 @@ type ToolCall struct {
 
 // Spec is an immutable snapshot. Credentials are environment references, never secret values.
 type Spec struct {
+	Attachments     []Attachment     `json:"attachments,omitempty"`
 	PricingFrozen   bool             `json:"pricingFrozen,omitempty"`
 	PricingSnapshot *PricingSnapshot `json:"pricingSnapshot,omitempty"`
 
@@ -269,6 +301,7 @@ type SessionMessage struct {
 // ExecutionSpec references an immutable published Agent. Applications supply
 // business input and scope; they cannot replace its model, prompt or tools.
 type ExecutionSpec struct {
+	Attachments  []Attachment       `json:"attachments,omitempty"`
 	Filesystem   *FilesystemBinding `json:"filesystem,omitempty"`
 	Scope        *workspace.Scope   `json:"scope"`
 	AgentID      string             `json:"agentID"`

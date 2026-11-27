@@ -135,6 +135,15 @@ func measureMessages(counter Counter, messages []Message) measurement {
 	var total measurement
 	for _, message := range messages {
 		total.add(measureText(counter, messageText(message)))
+		for _, a := range message.Attachments {
+			total.bytes += int64(len(a.URI))
+			switch a.Kind {
+			case "image":
+				total.tokens += 1024
+			case "video":
+				total.tokens += 2048
+			}
+		}
 	}
 	return total
 }

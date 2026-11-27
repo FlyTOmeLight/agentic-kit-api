@@ -5,6 +5,7 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -21,20 +22,29 @@ const (
 )
 
 type ModelSpec struct {
-	Temperature   *float32 `json:"temperature,omitempty"`
-	TopP          *float32 `json:"topP,omitempty"`
-	MaxTokens     *int     `json:"maxTokens,omitempty"`
-	Stream        *bool    `json:"stream,omitempty"`
-	ContextWindow int64    `json:"contextWindow,omitempty"`
-	Name          string   `json:"name"`
-	BaseURL       string   `json:"baseURL"`
-	APIKeyEnv     string   `json:"apiKeyEnv"`
+	InputModalities []string `json:"inputModalities,omitempty"`
+	Temperature     *float32 `json:"temperature,omitempty"`
+	TopP            *float32 `json:"topP,omitempty"`
+	MaxTokens       *int     `json:"maxTokens,omitempty"`
+	Stream          *bool    `json:"stream,omitempty"`
+	ContextWindow   int64    `json:"contextWindow,omitempty"`
+	Name            string   `json:"name"`
+	BaseURL         string   `json:"baseURL"`
+	APIKeyEnv       string   `json:"apiKeyEnv"`
 }
 
 // Streaming reports whether model calls should use upstream SSE streaming.
 // A nil Stream defaults to true for backward compatibility with P0-1 live deltas.
 func (m ModelSpec) Streaming() bool {
 	return m.Stream == nil || *m.Stream
+}
+
+// SupportsInputModality reports which input modalities the model accepts.
+func (m ModelSpec) SupportsInputModality(kind string) bool {
+	if len(m.InputModalities) == 0 {
+		return kind == "text" || kind == "image"
+	}
+	return slices.Contains(m.InputModalities, kind)
 }
 
 type ToolSpec struct {

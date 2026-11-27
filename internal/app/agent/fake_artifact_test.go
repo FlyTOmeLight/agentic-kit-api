@@ -116,3 +116,11 @@ func digest(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
 }
+
+func (*fakeArtifactStore) ResolveAttachment(
+	context.Context,
+	client.Identity,
+	string,
+) (client.ResolvedAttachment, error) {
+	return client.ResolvedAttachment{}, agent.ErrUnavailable
+}

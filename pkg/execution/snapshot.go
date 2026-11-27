@@ -17,8 +17,10 @@ func CompileRunSpec(
 	query string,
 	scope *workspace.Scope,
 	filesystem *FilesystemBinding,
+	attachments ...Attachment,
 ) Spec {
 	return Spec{
+		Attachments:   slices.Clone(attachments),
 		PricingFrozen: true,
 		AgentID:       agentID,
 		ConfigVersion: strconv.FormatInt(version, 10),
@@ -54,6 +56,7 @@ func CloneSubAgents(subAgents []SubAgentSnapshot) []SubAgentSnapshot {
 }
 
 func cloneModel(model agent.ModelSpec) agent.ModelSpec {
+	model.InputModalities = slices.Clone(model.InputModalities)
 	model.Temperature = clonePointer(model.Temperature)
 	model.TopP = clonePointer(model.TopP)
 	model.MaxTokens = clonePointer(model.MaxTokens)

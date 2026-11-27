@@ -18,6 +18,7 @@ const (
 
 // SubmitCommand is the durable accept input for chat and application entrypoints.
 type SubmitCommand struct {
+	Attachments     []Attachment
 	PricingSnapshot *PricingSnapshot
 	SubAgents       []SubAgentSnapshot
 	Owner           string
@@ -45,6 +46,7 @@ type SubmitCommand struct {
 
 // SubmissionFacts are passed to prepare after session locks succeed.
 type SubmissionFacts struct {
+	Attachments     []Attachment
 	PricingSnapshot *PricingSnapshot
 	SubAgents       []SubAgentSnapshot
 	Owner           string

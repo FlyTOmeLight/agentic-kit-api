@@ -98,7 +98,7 @@ func (s *Store) spawnChild(
 		if err != nil {
 			return err
 		}
-		snapshot, err := freezeContextMaterials(spec, nil, "", memory.SelectionOff, nil)
+		snapshot, err := freezeContextMaterials(spec, nil, "", memory.SelectionOff, nil, nil)
 		if err != nil {
 			return err
 		}
@@ -271,6 +271,7 @@ func childSpec(parent Spec, req ChildSpawnRequest, await bool) (Spec, error) {
 	}
 	parent.Filesystem = cloneChildFilesystem(parent.Filesystem)
 	parent.History = nil
+	parent.Attachments = nil
 	parent.SubAgents = nil
 	parent.SelfDelegate = false
 	return parent, nil

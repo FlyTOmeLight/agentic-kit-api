@@ -55,13 +55,14 @@ func (s *Service) SubmitChat(
 	ctx context.Context,
 	identity client.Identity,
 	owner, session, key, query string,
+	attachments []execpkg.Attachment,
 	ttl time.Duration,
 	maxAttempts int,
 	memorySelection memory.Selection,
 	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
 	ctx, cmd, prepare, replay, err := s.prepareChat(
-		ctx, identity, owner, session, key, query, ttl, maxAttempts, memorySelection, filter,
+		ctx, identity, owner, session, key, query, attachments, ttl, maxAttempts, memorySelection, filter,
 	)
 	if err != nil || replay != nil {
 		return replay, false, err
@@ -73,15 +74,18 @@ func (s *Service) prepareChat(
 	ctx context.Context,
 	identity client.Identity,
 	owner, session, key, query string,
+	attachments []execpkg.Attachment,
 	ttl time.Duration,
 	maxAttempts int,
 	memorySelection memory.Selection,
 	filter memory.RecallFilter,
 ) (context.Context, execpkg.SubmitCommand, durable.PrepareSubmission, *execpkg.Run, error) {
 	var conversation table.Session
-	if memorySelection == memory.SelectionRecall {
+	needsArtifact := hasArtifactAttachments(attachments)
+	if needsArtifact || memorySelection == memory.SelectionRecall {
 		scope, verified := access.FromContext(ctx)
-		if !verified || scope.TenantID == "" || owner == "" {
+		if !verified || scope.TenantID == "" || owner == "" ||
+			(needsArtifact && !matchesArtifactIdentity(identity, owner, scope)) {
 			return ctx, execpkg.SubmitCommand{}, nil, nil, memory.ErrForbidden
 		}
 		var err error
@@ -97,7 +101,10 @@ func (s *Service) prepareChat(
 			return ctx, execpkg.SubmitCommand{}, nil, nil, memory.ErrForbidden
 		}
 	}
-	hash := chatRequestHash(session, query, memorySelection, filter)
+	if err := execpkg.ValidateSubmittedAttachments(attachments); err != nil {
+		return ctx, execpkg.SubmitCommand{}, nil, nil, err
+	}
+	hash := chatRequestHash(session, query, memorySelection, filter, attachments...)
 	if run, err := s.replay(ctx, owner, key, hash); err != nil || run != nil {
 		return ctx, execpkg.SubmitCommand{}, nil, run, err
 	}
@@ -108,6 +115,10 @@ func (s *Service) prepareChat(
 		if err != nil {
 			return ctx, execpkg.SubmitCommand{}, nil, nil, recordError(err)
 		}
+	}
+	attachments, err := s.resolveAttachments(ctx, identity, attachments)
+	if err != nil {
+		return ctx, execpkg.SubmitCommand{}, nil, nil, err
 	}
 	agentRow, err := table.GetAgent(db, owner, conversation.AgentID)
 	if err != nil {
@@ -127,6 +138,7 @@ func (s *Service) prepareChat(
 		TTL:          ttl,
 		MaxAttempts:  maxAttempts,
 		Kind:         execpkg.SubmitChat,
+		Attachments:  attachments,
 		SessionID:    session,
 		Query:        query,
 		Memory:       normalizeMemorySelection(memorySelection),
@@ -158,14 +170,17 @@ func (s *Service) SubmitApplication(
 	filter memory.RecallFilter,
 ) (*execpkg.Run, bool, error) {
 	scope, verified := access.FromContext(ctx)
-	if verified {
-		if scope.TenantID == "" || spec.Scope == nil ||
-			spec.Scope.TenantID != scope.TenantID || spec.Scope.ProjectID != scope.ProjectID {
-			return nil, false, agent.ErrInvalid
+	needsArtifact := hasArtifactAttachments(spec.Attachments)
+	if verified && (scope.TenantID == "" || spec.Scope == nil ||
+		spec.Scope.TenantID != scope.TenantID || spec.Scope.ProjectID != scope.ProjectID) {
+		if needsArtifact {
+			return nil, false, memory.ErrForbidden
 		}
+		return nil, false, agent.ErrInvalid
 	}
-	if memorySelection == memory.SelectionRecall {
-		if !verified || spec.Scope == nil || owner == "" || spec.Scope.ActorID != owner {
+	if needsArtifact || memorySelection == memory.SelectionRecall {
+		if !verified || spec.Scope == nil || owner == "" || spec.Scope.ActorID != owner ||
+			(needsArtifact && !matchesArtifactIdentity(identity, owner, scope)) {
 			return nil, false, memory.ErrForbidden
 		}
 		var err error
@@ -174,10 +189,18 @@ func (s *Service) SubmitApplication(
 			return nil, false, err
 		}
 	}
+	if err := execpkg.ValidateSubmittedAttachments(spec.Attachments); err != nil {
+		return nil, false, err
+	}
 	hash := applicationRequestHash(spec, ttl, memorySelection, filter)
 	if run, err := s.replay(ctx, owner, key, hash); err != nil || run != nil {
 		return run, false, err
 	}
+	attachments, err := s.resolveAttachments(ctx, identity, spec.Attachments)
+	if err != nil {
+		return nil, false, err
+	}
+	spec.Attachments = attachments
 	db := s.store.DB().WithContext(ctx)
 	agentRow, err := table.GetAgent(db, owner, spec.AgentID)
 	if err != nil {
@@ -195,6 +218,7 @@ func (s *Service) SubmitApplication(
 		MaxAttempts:   5,
 		Kind:          execpkg.SubmitApplication,
 		ExecutionSpec: spec,
+		Attachments:   attachments,
 		GoalID:        spec.GoalID,
 		Query:         spec.Query,
 		Memory:        normalizeMemorySelection(memorySelection),
@@ -301,18 +325,27 @@ func emptyRecallFilter(filter memory.RecallFilter) bool {
 		filter.MaxEntries == 0 && filter.MaxBytes == 0
 }
 
-func chatRequestHash(session, query string, selection memory.Selection, filter memory.RecallFilter) string {
+func chatRequestHash(
+	session, query string,
+	selection memory.Selection,
+	filter memory.RecallFilter,
+	attachments ...execpkg.Attachment,
+) string {
 	selection = normalizeMemorySelection(selection)
 	if selection == memory.SelectionOff && emptyRecallFilter(filter) {
-		input, _ := json.Marshal(struct{ Session, Query string }{Session: session, Query: query})
+		input, _ := json.Marshal(struct {
+			Session, Query string
+			Attachments    []execpkg.Attachment `json:"Attachments,omitempty"`
+		}{Session: session, Query: query, Attachments: attachments})
 		return durable.Hash(input)
 	}
 	input, _ := json.Marshal(struct {
-		Session string
-		Query   string
-		Memory  memory.Selection
-		Filter  memory.RecallFilter
-	}{Session: session, Query: query, Memory: selection, Filter: filter})
+		Session     string
+		Query       string
+		Memory      memory.Selection
+		Filter      memory.RecallFilter
+		Attachments []execpkg.Attachment `json:"Attachments,omitempty"`
+	}{Session: session, Query: query, Memory: selection, Filter: filter, Attachments: attachments})
 	return durable.Hash(input)
 }
 

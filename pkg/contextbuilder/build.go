@@ -1,6 +1,10 @@
 package contextbuilder
 
-import "sort"
+import (
+	"slices"
+	"sort"
+	"strings"
+)
 
 // Build composes model input from frozen materials and the current turn,
 // reducing it toward the requested target before checking the hard limits.
@@ -36,7 +40,15 @@ func Build(in BuildInput) (BuildResult, error) {
 		summary = in.CompactedSummary
 		materials.History = nil
 	}
-	preamble := renderContext(summary, in.PinnedBlocks)
+	pinned := append([]PinnedBlock(nil), in.PinnedBlocks...)
+	liveFiles := append(attachmentFileIndex(in.CurrentTurn[0].Attachments), in.FileIndex...)
+	filesPin := -1
+	if files, ok := RenderFileIndex(materials.FileIndex, liveFiles); ok {
+		pinned = slices.DeleteFunc(pinned, func(pin PinnedBlock) bool { return pin.Label == "files" })
+		filesPin = len(pinned)
+		pinned = append(pinned, files)
+	}
+	preamble := renderContext(summary, pinned)
 	seenCalls := make(map[string]bool)
 	if err := validateMaterials(materials, seenCalls); err != nil {
 		return BuildResult{}, err
@@ -51,6 +63,7 @@ func Build(in BuildInput) (BuildResult, error) {
 		return BuildResult{}, err
 	}
 	currentTurn := previewToolMessages(appendMessages(nil, originalTurn), in.Budget.MaxToolResultBytes)
+	projectAttachments(currentTurn, true, in.DirectModalities)
 
 	memory := append([]ContextBlock(nil), materials.Memory...)
 	sort.SliceStable(memory, func(i, j int) bool {
@@ -75,7 +88,11 @@ func Build(in BuildInput) (BuildResult, error) {
 	history := append([]MessageGroup(nil), materials.History...)
 	historyMeasures := make([]measurement, len(history))
 	for i := range history {
-		history[i].Messages = previewToolMessages(history[i].Messages, in.Budget.MaxToolResultBytes)
+		history[i].Messages = previewToolMessages(
+			append([]Message(nil), history[i].Messages...),
+			in.Budget.MaxToolResultBytes,
+		)
+		projectAttachments(history[i].Messages, false, nil)
 		historyMeasures[i] = measureMessages(in.Counter, history[i].Messages)
 		total.add(historyMeasures[i])
 	}
@@ -121,34 +138,77 @@ func Build(in BuildInput) (BuildResult, error) {
 	}
 	result.LadderPreviewed, result.LadderStubbed = applyLadder(currentTurn, originalTurn, in, &total, overTarget)
 	result.ProjectedToolResults = result.LadderStubbed
-	if in.AllowDropCurrentRounds && overTarget(total) {
+	preambleWithoutFiles := func(blocks []PinnedBlock) Message {
+		if filesPin < 0 {
+			return renderContext(summary, blocks)
+		}
+		filtered := make([]PinnedBlock, 0, len(blocks)-1)
+		filtered = append(filtered, blocks[:filesPin]...)
+		filtered = append(filtered, blocks[filesPin+1:]...)
+		return renderContext(summary, filtered)
+	}
+	core := total
+	if in.AllowDropCurrentRounds && filesPin >= 0 {
+		core.sub(measureText(in.Counter, messageText(preamble)))
+		if without := preambleWithoutFiles(pinned); without.Content != "" {
+			core.add(measureText(in.Counter, messageText(without)))
+		}
+	}
+	if in.AllowDropCurrentRounds && overTarget(core) {
 		var droppedInitialQuery string
 		currentTurn, result.DroppedRounds, droppedInitialQuery = dropOldestRounds(
 			currentTurn,
 			in.Counter,
-			&total,
+			&core,
 			overTarget,
 		)
-		if droppedInitialQuery != "" && !hasPinnedQuery(in.PinnedBlocks, droppedInitialQuery) {
-			if preamble.Content != "" {
-				total.sub(measureText(in.Counter, messageText(preamble)))
+		if droppedInitialQuery != "" && !hasPinnedQuery(pinned, droppedInitialQuery) {
+			if before := preambleWithoutFiles(pinned); before.Content != "" {
+				core.sub(measureText(in.Counter, messageText(before)))
 			}
-			pinned := append(append([]PinnedBlock(nil), in.PinnedBlocks...), PinnedBlock{
+			pinned = append(pinned, PinnedBlock{
 				Label:   "query",
 				Content: droppedInitialQuery,
 			})
-			preamble = renderContext(summary, pinned)
-			total.add(measureText(in.Counter, messageText(preamble)))
-			if overTarget(total) {
+			after := preambleWithoutFiles(pinned)
+			if after.Content != "" {
+				core.add(measureText(in.Counter, messageText(after)))
+			}
+			if overTarget(core) {
 				var moreDropped int
 				currentTurn, moreDropped, _ = dropOldestRounds(
 					currentTurn,
 					in.Counter,
-					&total,
+					&core,
 					overTarget,
 				)
 				result.DroppedRounds += moreDropped
 			}
+		}
+		preamble = renderContext(summary, pinned)
+		total = core
+		if filesPin >= 0 {
+			if without := preambleWithoutFiles(pinned); without.Content != "" {
+				total.sub(measureText(in.Counter, messageText(without)))
+			}
+			if preamble.Content != "" {
+				total.add(measureText(in.Counter, messageText(preamble)))
+			}
+		}
+	}
+	// An optional index must not displace a first question that fits.
+	// Trim from the end to retain current and recent entries first.
+	for filesPin >= 0 && overTarget(total) {
+		total.sub(measureText(in.Counter, messageText(preamble)))
+		if end := strings.LastIndexByte(pinned[filesPin].Content, '\n'); end >= 0 {
+			pinned[filesPin].Content = pinned[filesPin].Content[:end]
+		} else {
+			pinned = append(pinned[:filesPin], pinned[filesPin+1:]...)
+			filesPin = -1
+		}
+		preamble = renderContext(summary, pinned)
+		if preamble.Content != "" {
+			total.add(measureText(in.Counter, messageText(preamble)))
 		}
 	}
 	if overBudget(total, tokenLimit, byteLimit) {

@@ -37,6 +37,18 @@ func ValidateAgentConfig(c AgentConfig) error {
 		len(c.Tools) > maxStaticTools {
 		return ErrInvalidConfig
 	}
+	seenModalities := make(map[string]bool, len(model.InputModalities))
+	for _, kind := range model.InputModalities {
+		switch kind {
+		case "text", "image", "video":
+		default:
+			return ErrInvalidConfig
+		}
+		if seenModalities[kind] {
+			return ErrInvalidConfig
+		}
+		seenModalities[kind] = true
+	}
 	seenSets := map[string]bool{}
 	for _, set := range c.Toolsets {
 		if set != "filesystem" || seenSets[set] {

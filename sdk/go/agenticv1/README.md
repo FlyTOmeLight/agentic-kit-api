@@ -107,3 +107,10 @@ func NewConversation(sessions sdk.SessionAPI) *Conversation {
 ## 布局迁移
 
 旧导入路径 `github.com/FlyTOmeLight/agentic-kit-api/sdk` 已移除，改用 `github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1`。可用 `sdk` 别名保留调用代码的类型前缀；业务路径和成功响应字段保持原契约；错误采用框架的平铺格式，详见上文错误处理。框架客户端的传输资源由 Client.Close 释放，调用方须在全部请求与事件流结束后关闭。
+
+## 提交附件
+
+将 `[]agenticv1.Attachment` 传入 `SendMessageRequest.Attachments` 或
+`ExecutionSpec.Attachments`，并保留原始顺序重试同一个幂等键。会话消息中的
+`Attachments` 为已冻结的输入引用，`Artifacts` 为工具生成的文件记录。
+详见 [附件与文件索引契约](../../../docs/api.md#附件与文件索引)。

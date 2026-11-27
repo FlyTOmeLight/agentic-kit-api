@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/agentic-kit-api/internal/table"
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 )
 
 // ReadStepResult restores a completed tool result for the current run.
@@ -103,8 +104,22 @@ func (s *Store) BeginStep(ctx context.Context, l Lease, intent StepIntent) (Step
 }
 
 func (s *Store) FinishStep(ctx context.Context, l Lease, id, result string, state json.RawMessage) error {
+	return s.FinishStepWithArtifacts(ctx, l, id, result, nil, state)
+}
+
+// FinishStepWithArtifacts commits the tool result, its files and the checkpoint together.
+func (s *Store) FinishStepWithArtifacts(
+	ctx context.Context,
+	l Lease,
+	id, result string,
+	artifacts []FileArtifact,
+	state json.RawMessage,
+) error {
 	if !json.Valid(state) {
 		return ErrInvalid
+	}
+	if err := execution.ValidateFileArtifacts(artifacts); err != nil {
+		return err
 	}
 	tx := s.db.WithContext(ctx).Begin()
 	if err := tx.Error; err != nil {
@@ -127,7 +142,12 @@ func (s *Store) FinishStep(ctx context.Context, l Lease, id, result string, stat
 	if err = tx.Model(&table.Run{}).Where("id = ?", l.RunID).Update("state", string(state)).Error; err != nil {
 		return err
 	}
-	if err = appendMessage(tx, run, "Tool", Message{Role: "tool", Content: result, ToolCallID: id}); err != nil {
+	if err = appendMessage(
+		tx,
+		run,
+		"Tool",
+		Message{Role: "tool", Content: result, ToolCallID: id, Artifacts: artifacts},
+	); err != nil {
 		return err
 	}
 	if err = emit(ctx, tx, l.RunID, "ToolCompleted", map[string]any{"stepID": id, "result": result}); err != nil {

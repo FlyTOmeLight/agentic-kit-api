@@ -220,7 +220,7 @@ func TestSubmissionTenantRequestKeyIsolation(t *testing.T) {
 							owner,
 							session.ID,
 							key,
-							"query",
+							"query", nil,
 							time.Minute,
 							3,
 							memory.SelectionOff,
@@ -291,4 +291,12 @@ func TestSubmissionTenantRequestKeyIsolation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (*tenantArtifactStore) ResolveAttachment(
+	context.Context,
+	client.Identity,
+	string,
+) (client.ResolvedAttachment, error) {
+	return client.ResolvedAttachment{}, agent.ErrUnavailable
 }

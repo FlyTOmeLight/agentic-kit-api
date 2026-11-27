@@ -237,6 +237,7 @@ func (h *Controller) submitMessage(c *core.Context) {
 		req.SessionID,
 		req.IdempotencyKey,
 		req.Query,
+		req.Attachments,
 		runLifetime,
 		maxRunAttempts,
 		selection,

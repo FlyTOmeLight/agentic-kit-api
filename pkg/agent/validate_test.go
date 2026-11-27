@@ -439,3 +439,41 @@ func TestValidateAgentConfigDelegationStaticToolLimit(t *testing.T) {
 		t.Fatalf("128 static tools without delegation should still pass, got %v", err)
 	}
 }
+
+func TestModelInputModalities(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		modalities         []string
+		text, image, video bool
+		wantErr            error
+	}{
+		{name: "omitted", text: true, image: true},
+		{name: "empty", modalities: []string{}, text: true, image: true},
+		{name: "text only", modalities: []string{"text"}, text: true},
+		{name: "video opt in", modalities: []string{"text", "video"}, text: true, video: true},
+		{name: "duplicate", modalities: []string{"image", "image"}, wantErr: ErrInvalidConfig},
+		{name: "unknown", modalities: []string{"audio"}, wantErr: ErrInvalidConfig},
+		{name: "case sensitive", modalities: []string{"Image"}, wantErr: ErrInvalidConfig},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := ModelSpec{Name: "test", BaseURL: "https://model.test", InputModalities: tc.modalities}
+			if err := ValidateAgentConfig(
+				AgentConfig{Model: model, MaxTurns: 1},
+			); !errors.Is(
+				err,
+				tc.wantErr,
+			) {
+				t.Fatalf("validate = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if model.SupportsInputModality("text") != tc.text ||
+				model.SupportsInputModality("image") != tc.image ||
+				model.SupportsInputModality("video") != tc.video ||
+				model.SupportsInputModality("audio") {
+				t.Fatalf("modality support for %v is wrong", tc.modalities)
+			}
+		})
+	}
+}

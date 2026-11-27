@@ -280,7 +280,16 @@ type VersionRef struct {
 	URI string
 }
 
-// ArtifactStore stores published Agent configuration as immutable JSON.
+// ResolvedAttachment is the fixed file identity and metadata returned by Artifact.
+type ResolvedAttachment struct {
+	FileURI   string
+	FileID    string
+	Path      string
+	MediaType string
+	SizeBytes int64
+}
+
+// ArtifactStore serves published Agent configurations and submitted file references.
 type ArtifactStore interface {
 	// EnsureCollection idempotently creates the Agent's collection.
 	EnsureCollection(ctx context.Context, identity Identity, agentID string) (string, error)
@@ -296,6 +305,9 @@ type ArtifactStore interface {
 
 	// GetPayload reads a ready version's body by fixed identity.
 	GetPayload(ctx context.Context, identity Identity, artifactID, versionID string) ([]byte, error)
+
+	// ResolveAttachment locates a file using the caller's verified scope.
+	ResolveAttachment(ctx context.Context, identity Identity, artifactURI string) (ResolvedAttachment, error)
 
 	// Close releases the underlying transport; called by the assembly layer.
 	Close() error
@@ -387,6 +399,37 @@ func (c *artifactClient) GetPayload(
 		return nil, mapError(ctx, err)
 	}
 	return version.Payload, nil
+}
+
+func (c *artifactClient) ResolveAttachment(
+	ctx context.Context,
+	identity Identity,
+	artifactURI string,
+) (ResolvedAttachment, error) {
+	if err := validateIdentity(identity, artifactURI); err != nil {
+		return ResolvedAttachment{}, err
+	}
+	resolved, err := c.sdk.Resolve(c.withIdentity(ctx, identity), &artifactv1.ResolveRequest{URI: artifactURI})
+	if err != nil {
+		return ResolvedAttachment{}, mapError(ctx, err)
+	}
+	if resolved.Artifact.Type == artifactType || resolved.Artifact.Type == "agent-memory" {
+		return ResolvedAttachment{}, memory.ErrForbidden
+	}
+	if resolved.Version == nil {
+		return ResolvedAttachment{}, agent.ErrInvalid
+	}
+	if resolved.Version.State != artifactv1.VersionReady {
+		return ResolvedAttachment{}, agent.ErrConflict
+	}
+	if resolved.File == nil || resolved.File.FileURI == "" || resolved.File.FileID == "" {
+		return ResolvedAttachment{}, agent.ErrInvalid
+	}
+	file := resolved.File
+	return ResolvedAttachment{
+		FileURI: file.FileURI, FileID: file.FileID, Path: file.Path,
+		MediaType: file.ContentType, SizeBytes: file.Size,
+	}, nil
 }
 
 func validateIdentity(identity Identity, agentID string) error {

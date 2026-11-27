@@ -156,7 +156,12 @@ func (s *Store) QueueGoalIteration(ctx context.Context) (*Run, error) {
 		receipt.Output,
 	)
 	spec.History = nil
-	snapshot, err := freezeContextMaterials(spec, history, baseSummary, memory.SelectionOff, nil)
+	spec.Attachments = nil
+	files, err := loadSessionFileIndex(tx, goal.OwnerID, goal.SessionID, spec.Filesystem)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := freezeContextMaterials(spec, history, baseSummary, memory.SelectionOff, nil, files)
 	if err != nil {
 		return nil, err
 	}

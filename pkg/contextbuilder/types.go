@@ -32,13 +32,36 @@ type ToolCall struct {
 // Message is the builder's normalized message shape. ToolCalls and ToolCallID
 // keep the assistant/tool pairing required by model protocols.
 type Message struct {
-	Role       Role       `json:"role"`
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
-	ToolCallID string     `json:"toolCallID,omitempty"`
-	ToolName   string     `json:"toolName,omitempty"`
-	ToolFailed bool       `json:"toolFailed,omitempty"`
-	Exempt     bool       `json:"exempt,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	Role        Role         `json:"role"`
+	Content     string       `json:"content"`
+	ToolCalls   []ToolCall   `json:"toolCalls,omitempty"`
+	ToolCallID  string       `json:"toolCallID,omitempty"`
+	ToolName    string       `json:"toolName,omitempty"`
+	ToolFailed  bool         `json:"toolFailed,omitempty"`
+	Exempt      bool         `json:"exempt,omitempty"`
+}
+
+// Attachment is a normalized attachment reference independent of the execution store.
+type Attachment struct {
+	ID          string `json:"id,omitempty"`
+	Kind        string `json:"kind"`
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	MediaType   string `json:"mediaType"`
+	SizeBytes   int64  `json:"sizeBytes,omitempty"`
+	ArtifactURI string `json:"artifactURI,omitempty"`
+}
+
+// FileIndexEntry is a file reference and its visibility in the current workspace.
+type FileIndexEntry struct {
+	URI        string `json:"uri"`
+	Name       string `json:"name,omitempty"`
+	MediaType  string `json:"mediaType,omitempty"`
+	SizeBytes  int64  `json:"sizeBytes,omitempty"`
+	Source     string `json:"source"`
+	Action     string `json:"action"`
+	Accessible bool   `json:"accessible,omitempty"`
 }
 
 // ToolDefinition is counted as required protocol input. It is not rendered
@@ -84,6 +107,7 @@ type MessageGroup struct {
 // FrozenMaterials are the inputs fixed when the Run was accepted. History is
 // ordered oldest to newest and each group is atomic.
 type FrozenMaterials struct {
+	FileIndex         []FileIndexEntry `json:"fileIndex,omitempty"`
 	SystemInstruction string           `json:"systemInstruction"`
 	BaseSummary       string           `json:"baseSummary,omitempty"`
 	Tools             []ToolDefinition `json:"tools,omitempty"`
@@ -136,6 +160,8 @@ type PinnedBlock struct {
 }
 
 type BuildInput struct {
+	FileIndex              []FileIndexEntry `json:"fileIndex,omitempty"`
+	DirectModalities       []string
 	FrozenMaterials        FrozenMaterials
 	CurrentTurn            []Message
 	Policy                 Policy
