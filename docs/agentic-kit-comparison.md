@@ -6,12 +6,12 @@
 
 | 仓库 | 分支 / 引用 | 提交 SHA | 提交时间 | 备注 |
 | --- | --- | --- | --- | --- |
-| `agentic-kit-api` | `main` | `54922f0` | `2026-11-24 00:36:23 +0800` | 已合入 PR #27（`feat/context-v4-compression`） |
-| `agentic-kit-worker` | `main` | `0434172` | — | 已合入 PR #9（`feat/context-v4-compression-worker`） |
+| `agentic-kit-api` | `main` | `v0.10.1` | `2026-11-27` | 已完成全部 P0-1..P0-4 及整体复审安全/可靠性收口 |
+| `agentic-kit-worker` | `main` | `v0.5.1` | `2026-11-27` | 已完成全部 P0-1..P0-4（双流 SSE、标准 MCP、子代理闭环、多模态与产物索引）及收口加固 |
 | `~/Code/agentic-kit` | `origin/dev-v2.0.0` | `c9ecfe80` | `2026-11-23 18:13:44 +0800` | 最新主开发线（`skill update`） |
 | `~/Code/agentic-kit` | `origin/dev-2.0.0` | `18ab6c92` | `2026-11-23 07:16:03 +0000` | 同日分支，合入 `chrome-devtools-cli` 内置技能（与 `origin/dev-v2.0.0` 相差 1 vs 3 个提交） |
 
-最近对比日期：`2026-11-24`（说明：`~/Code/agentic-kit` 本地工作区当前停留在 `release-v1.5.2` `c714dd3f`，对比全部以远端活跃分支 `origin/dev-v2.0.0` 及其 `origin/dev-2.0.0` 增量为准）。
+最近对比日期：`2026-11-27`（说明：`~/Code/agentic-kit` 本地工作区当前停留在 `release-v1.5.2` `c714dd3f`，对比仍以远端活跃分支 `origin/dev-v2.0.0` 及其 `origin/dev-2.0.0` 增量为基线，重点同步本仓与配套 Worker 完成 P0-1..P0-4 后的现况）。
 
 ---
 
@@ -35,13 +35,13 @@
 | **多租户与鉴权** | 接入 `forge-tenant-api v0.13.0`：强制 `x-forge-tenant-id`、内部服务传播白名单、沙箱/回调独立服务鉴权、项目级实时读写鉴权（[布局与依赖约束](layout.md#http-与业务职责)） | 接入内部 `auth-center` 中间件与 `internal/pkg/authapikey`，绑定内部平台用户、组织（Org）与项目（ProjectID）模型 |
 | **Agent 资产与版本** | 本地 `agent` 表存草稿与乐观锁 `revision`；发布正文存入外部 `artifact-go`（`protected=true` 不可变版本），Run 提交时冻结配置快照（[资产与 artifact 设计](agent-asset-artifact-design.md)） | 本地数据库表维护 Agent 基础信息、CoreFile（Agents/Identity/Soul 三合一）、模型配置、草稿与发布态配置 |
 | **进程崩溃与容灾** | **跨进程无损接管**：DB 租约 + `epoch` 隔离僵尸写入 + Eino 原生 checkpoint + `durable_step` 幂等重放/副作用拦截（[恢复设计](design.md)） | **孤儿回收置失败**：后台 `runreaper` 扫描重启遗留的 `Running`/`Created` Run，结合 DB 消息活动防误杀后统一收口为 `Failed`（`service/service.go`） |
-| **实时事件流（SSE）** | **PostgreSQL 权威事实 + 事务 Outbox 推 Redis Stream**：Redis 宕机可正常启动并自动降级为 1 秒 DB 轮询回放（[events.go](../internal/app/run/events.go)） | **Redis Stream 主通道（`HeadlessEmitter`）+ DB 历史**：支持会话级订阅、Run 代次隔离、`keepAlive` 与全局通知 SSE |
-| **任务编排上限** | 单 Agent ReAct + **长程 Goal 状态机**（自动验收、预算控制、`StallMark` 死循环熔断、运行中 `Steer` 纠偏）+ 父子 `Child Run` + 外部 HMAC `Callback`（[api.md](api.md)） | 单 Agent ReAct + **Multi-Agent 多智能体编排**（主从成员管理、`calledAgentID` 召唤专家、共享沙箱与写权限收窄）+ **对话分支 Fork** + 会话级 `PlanList` |
+| **实时事件流（SSE）** | **PostgreSQL 权威事实 + 事务 Outbox + 可选 Redis 瞬态流**：权威事件零丢失且支持 Redis 离线 1 秒 DB 轮询降级；开启 Redis 时同步推送 `ModelReasoningDelta`/`ModelContentDelta` 逐 token 瞬态流（支持 `?live=false` 与 `XREVRANGE` 有界补发，[events.go](../internal/app/run/events.go)） | **Redis Stream 主通道（`HeadlessEmitter`）+ DB 历史**：支持会话级订阅、Run 代次隔离、`keepAlive` 与全局通知 SSE |
+| **任务编排上限** | 单 Agent ReAct + **双模式 Sub-Agent（`subAgents` 专职子代理冻结 + `selfDelegate` 动态委派，1 层深度、单事务 `SpawnChildAndAwait`）** + **长程 Goal 状态机**（自动验收、预算控制、`StallMark` 死循环熔断、运行中 `Steer` 纠偏）+ 外部 HMAC `Callback`（[api.md](api.md)） | 单 Agent ReAct + **Multi-Agent 多智能体编排**（主从成员管理、`calledAgentID` 召唤专家、共享沙箱与写权限收窄）+ **对话分支 Fork** + 会话级 `PlanList` |
 | **可视化工作流引擎** | **明确不做**（交由上层场景应用实现，见 [框架重构设计](refactoring-design.md#31-场景与通用能力的边界)） | **内置完整 `compose` 图引擎**：支持 LLM、Agent、子工作流、循环（Break/Continue）、批处理、意图识别、Text2SQL、DB 查询、知识库、本体（Ontology）、图表、代码沙箱与断点续传 |
-| **上下文构建与压缩** | API 侧 `pkg/contextbuilder` 实现纯函数 `context-v4` 与 `cjk-weighted-v1`（裁 Memory、折叠历史工具链、删旧轮、预览与先成功再失败存根化、可选整轮淘汰与固定初始提问），快照以 `text` 存储并校验 SHA-256；配套 `worker` 统一装配模型输入、支持滚动分块摘要计费与 3 次失败熔断，且仅在 `BoundaryComplete` 推进会话水位 `compacted_through_seq`（[验证记录](verification.md#2026-11-23-上下文压缩-v4-与溢出自愈)） | Eino 中间件 `compression`（v2 重构版）：工具结果三档降级（`full` -> `preview` -> `stub`）后实时调用 LLM 生成九节结构化滚动摘要（拼接最多 20 条会话文件索引及关键块），兜底丢弃最旧轮次；支持模型上下文超限时按 0.7 倍收缩重试（`docs/agent-context-compression-design.md`） |
+| **上下文构建与压缩** | API 侧 `pkg/contextbuilder` 实现纯函数 `context-v4` 与 `cjk-weighted-v1`（裁 Memory、折叠历史工具链、删旧轮、预览与先成功再失败存根化、可选整轮淘汰与固定初始提问），支持首问多模态直传视觉 token 计量与独立于压缩游标的 `files` 会话文件索引块，快照以 `text` 存储并校验 SHA-256；配套 `worker` 统一装配模型输入、支持滚动分块摘要计费与 3 次失败熔断，且仅在 `BoundaryComplete` 推进会话水位 `compacted_through_seq`（[验证记录](verification.md#2026-11-23-上下文压缩-v4-与溢出自愈)） | Eino 中间件 `compression`（v2 重构版）：工具结果三档降级（`full` -> `preview` -> `stub`）后实时调用 LLM 生成九节结构化滚动摘要（拼接最多 20 条会话文件索引及关键块），兜底丢弃最旧轮次；支持模型上下文超限时按 0.7 倍收缩重试（`docs/agent-context-compression-design.md`） |
 | **记忆（Memory）体系** | **强治理显式记忆**：支持 `OwnerPrivate`、`ActorPrivate`、`ActorProject` 及受众隔离，每次项目读取/写入/召回实时校验 Forge 权限，显式 `Recall` 同事务词项召回，可选 `artifact-go` 归档与 30s Pending 恢复；`ProjectShared`、自动提炼与向量检索尚未实施（[Memory 设计](memory-design.md)） | **自动化个人记忆**：提供模型工具 `SaveUserMemory` 实时写入，后台 `usermemory.Curator` 每 24 小时调用 LLM 自动去重、消解冲突与剔除失效项（`internal/app/agent/usermemory/curator.go`）；另配 OpenSearch 跨会话历史消息检索工具 |
-| **技能（Skill）体系** | **明确不做** | **完整技能平台**：支持技能 zip 导入导出、收藏、市场技能与 13/14 个嵌入式内置技能包（`docx`/`pdf`/`pptx`/`xlsx`/`data-visualization`/`ui-ux-design`/`browser-playbook`/`chrome-devtools-cli` 等），通过 Eino skill middleware 注入提示词与沙箱 |
-| **工具与外部资源生态** | 仅支持通用 **HTTP POST 工具** 与 **Filesystem（AIO/Sandbox）** 工具集，明确拒绝专有平台协议（[api.md](api.md)） | 内置丰富工具目录：文件读写编排、产物自动上传 S3、澄清提问、计划清单、会话搜索、自动化管理、Prism 知识库/多源数据库查询/本体/词库工具、AppForge MCP 与 OpenAPI 插件绑定 |
+| **技能（Skill）体系** | **待补齐通用 Skill 挂载协议（P1-5）**，不做技能市场与产品收藏夹 | **完整技能平台**：支持技能 zip 导入导出、收藏、市场技能与 13/14 个嵌入式内置技能包（`docx`/`pdf`/`pptx`/`xlsx`/`data-visualization`/`ui-ux-design`/`browser-playbook`/`chrome-devtools-cli` 等），通过 Eino skill middleware 注入提示词与沙箱 |
+| **工具与外部资源生态** | 支持通用 **HTTP POST 工具**、**标准 Streamable HTTP MCP 协议**（配置驱动策略、`durable_step` 保护、凭据白名单）、**Filesystem（AIO/Sandbox）** 工具集与**类型化多模态附件 / Artifact 解析**，明确拒绝专有平台协议（[api.md](api.md)） | 内置丰富工具目录：文件读写编排、产物自动上传 S3、澄清提问、计划清单、会话搜索、自动化管理、Prism 知识库/多源数据库查询/本体/词库工具、AppForge MCP 与 OpenAPI 插件绑定 |
 | **沙箱与浏览器能力** | 自研 K8s `sandboxcenter`：零特权 `Guard` Pod（UDS 控制、命令回执去重 `OutcomeUnknown`）+ **JuiceFS RWX 与 LayerFS 跨 Run 增量保存、独立 `Verifier` 校验与 `initContainer` 原子恢复**（[LayerFS 保存与恢复](sandbox-center/layerfs-save-verification.md)）；无内置浏览器中间件 | 自研 K8s `sandboxmanager` + AIO SDK：支持实例池复用（`ReuseKey`）、显式唤醒/重启、同步/异步长命令（最长 24h）、S3 路径双向映射、公共只读卷，以及内置 **Playwright 沙箱浏览器中间件**（含本地 `file://` 访问与内网地址拦截） |
 | **外部渠道与辅助场景** | **明确不做**（无 IM 渠道、无 Cron 调度、无写作模板） | 内置 **飞书、钉钉、企业微信、蓝信、Claw** 渠道连接器与事件总线（`internal/app/channel`、`internal/pkg/channel`）；内置定时自动化任务（`automation`）；内置写作助手（`WritingAgents`） |
 | **计费治理与可观测性** | **严格计费闭环**：API 提交期冻结单价快照，`durable_usage` 按 `(run_id, turn, call)` 幂等记账，派发中崩溃触发 `InflightModel` 未知消费阻断（`Blocked`）与人工审计 `Unblock`（[pkg/durable/usage.go](../pkg/durable/usage.go)） | 侧重可观测与运营统计：集成 OpenTelemetry（Trace/Metric/Log）、CozeLoop 链路追踪、Run 级 Token/缓存命中统计日志、专家使用量统计与 `service-monitor` 上报；无 USD 账本与未知消费熔断 |
@@ -71,7 +71,7 @@
 * **`~/Code/agentic-kit`（`dev-v2.0.0`）**：通过 `HeadlessEmitter` 直接向 Redis Stream 写入逐 token 输出、思考流与子智能体进度事件，终端交互实时性更佳，但实时推送强依赖 Redis 可用性。
 
 ### 3. 复杂任务范式：长程自治 Goal vs 多智能体协同 + DAG 工作流
-* **`agentic-kit-api` 纵向深耕“单智能体长程自治闭环”**：[pkg/durable/goal.go](../pkg/durable/goal.go) 提供 `Goal` 控制面，支持多轮 Run 自动续跑直到沙箱命令验收通过（配独立 `evaluation_lease` 防旧 Worker 越权提交），内置 Token/USD/WallClock 三维预算、连续 3 轮同 `StallMark` 死循环自动熔断、运行中无损注入纠偏指令（`Steer` 消费与新 checkpoint 同事务落库），以及服务认证 + 来源白名单 + HMAC-SHA256 三重校验的外部异步回调（[callback.go](../internal/app/run/callback.go)）。
+* **`agentic-kit-api` 纵向深耕“长程自治 Goal + 可恢复双模式 Sub-Agent”**：[pkg/durable/goal.go](../pkg/durable/goal.go) 与 [pkg/durable/subtask.go](../pkg/durable/subtask.go) 提供 `Goal` 控制面（多轮 Run 自动续跑直到沙箱命令验收通过、三维预算、`StallMark` 熔断、运行中 `Steer` 与 HMAC `Callback`）以及单事务 `SpawnChildAndAwait` 双模式子代理闭环（专职 `subAgents` 提交期冻结独立单价与配置 + `selfDelegate` 动态委派，1 层嵌套深度与统一终态唤醒）。
 * **`~/Code/agentic-kit` 横向铺开“多智能体编排与低代码工作流”**：`internal/app/agent/controller.go` 提供完整的 Multi-Agent 主从架构（子成员独立配置模型、CoreFile、技能、插件与知识库，运行时复用主 Agent 沙箱并收窄写权限）、会话分支复制（`ForkAgentSession`）及会话级计划清单（`PlanList`）；同时在 `internal/pkg/compose` 自研了覆盖知识问答、Text2SQL、批处理与循环编排的 DAG 工作流图引擎。
 
 ### 4. 上下文构建：纯函数可验证快照 vs 在线 LLM 九节结构化摘要
@@ -102,7 +102,7 @@
   3. **架构解耦干净且安全边界明确**：零垂直场景耦合，Forge 租户/项目权限、Memory 受众隔离、Callback HMAC 验签与 LayerFS 内容寻址校验边界清晰，Go SDK 纯净易复用。
 * **局限**：
   1. **产品层开箱能力较少**：不内置工作流图引擎、技能包市场、RAG 知识库接入、Playwright 浏览器工具与 IM 机器人渠道，业务方需在外部应用层自行组装。
-  2. **实时交互与智能辅助能力偏克制**：当前 Worker 采用整轮 `Generate` 落库而非逐 token 流式推送；Memory 尚未实现自动提炼、语义向量检索与 `ProjectShared` 协同维护；也不内置 Multi-Agent 编排。
+  2. **P1/P2 高阶生态与智能化仍在补齐**：通用 Skill 挂载、会话 Fork、沙箱热复用与受限浏览器、Memory `ProjectShared`/提议/混合检索以及全链路 OTel 指标尚未落地；子 Run 的 Sandbox 写入当前按契约不回流父工作区，Artifact 视觉附件暂待接入签名 URL 直传。
   3. **运行期外部依赖门槛较高**：完整运行依赖 `artifact-go` 与 `forge-tenant-api`，生产级跨节点沙箱保存恢复需配置 JuiceFS `ReadWriteMany` 存储类。
 
 ### `~/Code/agentic-kit`（`origin/dev-v2.0.0` / `origin/dev-2.0.0`）
@@ -141,11 +141,11 @@
 
 ### 各项落地方向
 
-* **P0（近期必补，打通核心交互与通用接入）**
-  1. **逐 Token 与思考流输出（`P0-1`）**：当前 Worker 仅执行同步 `Generate`，SSE 仅推送步骤级事件。建议 Worker 切换为带 `include_usage` 的流式调用，将增量文本与思考过程直接推送到 Redis Stream 供 [events.go](../internal/app/run/events.go) 实时转发，不写入 PostgreSQL `durable_event` 表；单轮结束后再合并完整消息与 usage 走既有 `RecordUsageWithCost` 与事务 Outbox 落库，兼顾低首字延迟与计费恢复一致性。
-  2. **标准 MCP 工具协议（`P0-2`）**：当前 [types.go](../pkg/agent/types.go) 仅允许空或 `HTTP` 单接口工具配置。在保持拒绝 `AppForgeMCP` 等专有协议的前提下，增加标准 Streamable HTTP MCP 源配置、TokenEnv 绑定、工具白名单及工具级 `ReadOnly`/`Idempotent`/`Unsafe` 策略映射，纳入现有参数校验与 `durable_step` 重放保护。
-  3. **Worker 子智能体执行闭环（`P0-3`）**：API 持久化层已在 [subtask.go](../pkg/durable/subtask.go) 完整支持 `SpawnChildRun`、计价快照继承与父子唤醒/级联取消，但 Worker 尚无委派入口。需在 `AgentConfig` 支持子 Agent 引用列表、提交期冻结子版本，并在 Worker 内置委派工具调用 `SpawnChildRun`，使子任务天然具备独立上下文窗口与跨 Worker 并发能力。
-  4. **多模态附件与产物索引（`P0-4`）**：在消息与执行请求中增加基于 `artifact-go` 的类型化附件引用（图片/文档 URI、媒体类型与大小校验），Worker 映射为 Eino 多模态消息；同时在沙箱工具与 [pkg/contextbuilder/build.go](../pkg/contextbuilder/build.go) 中维护关键产物文件索引块，避免长对话压缩后遗忘已生成文件路径。
+* **P0（已全部落地并完成跨特性复审收口）**
+  1. **逐 Token 与思考流输出（`P0-1`，已完成）**：API + Worker 已落地带 `include_usage` 的流式调用、`ModelReasoningDelta`/`ModelContentDelta` 双流 Redis 瞬态转发（不写 PostgreSQL `durable_event`）、`XREVRANGE` 有界建连补发、`model.stream` 开关、首帧前 `stream_options` 400 自动回退、分离的 `StreamFirstChunkTimeout` / `StreamIdleTimeout`，单轮结束后仍走 `RecordUsageWithCost` 与事务 Outbox 落库。
+  2. **标准 MCP 工具协议（`P0-2`，已完成）**：在保持拒绝 `AppForgeMCP` 等专有协议前提下，已落地标准 Streamable HTTP MCP 发现（`mcp__<server>__<tool>`）、本地配置驱动策略映射、凭据环境变量格式/保留名校验与 Worker `[Credentials]` 白名单、隐私头默认不转发以及 `durable_step` 重放保护与会话清理。
+  3. **Worker 子智能体执行闭环（`P0-3`，已完成）**：已落地 `subAgents`（专职冻结+独立单价）与 `selfDelegate`（动态委派）双模式、单事务 `SpawnChildAndAwait`、统一终态收口与防死锁锁序、`child:` 回调隔离及 Worker `delegate_subagent` 护栏（静态工具上限 127 / 委派 126，运行时总计 128）。
+  4. **多模态附件与产物索引（`P0-4`，已完成）**：已落地类型化 `Attachment`/`FileArtifact`/`ModelSpec.inputModalities`、公网 `https://` 直传 SSRF 拦截、`artifact-go ResolveAttachment` 强鉴权与版本冻结、单事务 `FinishStepWithArtifacts`、`context-v4` 视觉 token 计量与 `files` 固定索引块，以及 Worker `UserInputMultiContent` 安全渲染。
 * **P1（中期高优，强化长程协同与上下文效率）**
   5. **通用 Skill 挂载协议（`P1-5`）**：不引入技能市场与收藏夹产品接口，仅支持在 `AgentConfig` 引用 `artifact-go` 中的不可变技能包版本；上下文装配时注入简短目录摘要，提供只读工具按需加载完整 `SKILL.md` 与辅助脚本，并在上下文压缩中保护已加载技能正文。
   6. **会话分支与检查点联动分叉（`P1-6`）**：为 [session/router.go](../internal/app/session/router.go) 增加 `POST /v1/sessions/:id/fork`，按指定截止序号在单事务内复制 `ResultScope`、压缩水位摘要与历史消息；若该轮次存在 LayerFS 沙箱检查点，同步绑定 `restoreFromSandboxId`。
@@ -193,4 +193,5 @@
 
 ### 历史对比记录
 
+* **2026-11-27 P0-1..P0-4 全部落地与整体复审收口**：基于 `agentic-kit-api`（`v0.10.1`）与 `agentic-kit-worker`（`v0.5.1`），已全部补齐 P0-1（双流 SSE 实时输出）、P0-2（标准 Streamable HTTP MCP）、P0-3（双模式 Sub-Agent 闭环）与 P0-4（多模态附件与会话文件索引），并同步完成凭据环境变量白名单/保留名拦截、127/126/128 工具上限统一、流式首响与空闲超时解耦、直传媒体公网 HTTPS SSRF 拦截、SSE `XREVRANGE` 有界补发及 SDK/文档同步。下一阶段进入 P1（通用 Skill、Session Fork、沙箱热复用/受限浏览器、Memory 演进）。
 * **2026-11-24 首版全量基线对比**：基于 `agentic-kit-api`（`main` @ `54922f0`）+ `agentic-kit-worker`（`main` @ `0434172`）与 `~/Code/agentic-kit`（`origin/dev-v2.0.0` @ `c9ecfe80` 及 `origin/dev-2.0.0` @ `18ab6c92`）完成全量架构、路由、持久执行、上下文压缩、记忆、沙箱、技能、渠道与工作流对比，并确立 P0/P1/P2 共 11 项内核待补齐能力进度基线（`P0-3` 为 `部分就绪`，其余 10 项为 `待实施`）。确认本仓库已完成 `context-v4` 与 `ActorProject` 记忆隔离等内核能力建设，后续重点按 P0 优先推进流式输出、标准 MCP、子智能体闭环与多模态附件契约，同时保持工作流、技能市场、渠道与专有插件继续归属外部场景层。

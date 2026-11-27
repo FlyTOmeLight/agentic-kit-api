@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/mediaurl"
 	"github.com/FlyTOmeLight/agentic-kit-api/pkg/agent"
 )
 
@@ -134,10 +135,11 @@ func validateAttachment(a Attachment, allowUnresolved bool) error {
 	if a.SizeBytes < 0 || a.SizeBytes > 50<<20 {
 		return fmt.Errorf("%w: attachment size must be between 0 and 50 MiB", ErrInvalid)
 	}
-	if !(unresolved && a.URI == "") && !validAttachmentURI(a.URI, false) {
+	if !(unresolved && a.URI == "") && !validAttachmentURI(a.URI, a.Kind) {
 		return fmt.Errorf("%w: attachment URI", ErrInvalid)
 	}
-	if a.ArtifactURI != "" && !validAttachmentURI(a.ArtifactURI, true) {
+	if a.ArtifactURI != "" &&
+		(!strings.HasPrefix(a.ArtifactURI, "artifact://") || !validAttachmentURI(a.ArtifactURI, a.Kind)) {
 		return fmt.Errorf("%w: attachment artifact URI", ErrInvalid)
 	}
 	if strings.HasPrefix(a.URI, "artifact://") && a.ArtifactURI == "" {
@@ -158,11 +160,11 @@ func validMediaType(s string) bool {
 	return err == nil && len(params) == 0 && parsed == s && strings.Contains(s, "/") && !strings.Contains(s, "*")
 }
 
-func validAttachmentURI(raw string, artifactOnly bool) bool {
+func validAttachmentURI(raw string, kind AttachmentKind) bool {
 	if raw == "" || !validAttachmentText(raw, 2048) || raw != strings.TrimSpace(raw) {
 		return false
 	}
-	if !artifactOnly && strings.HasPrefix(raw, "/") {
+	if strings.HasPrefix(raw, "/") {
 		return !strings.HasPrefix(raw, "//") && !strings.Contains(raw, "..") && path.Clean(raw) == raw
 	}
 	u, err := url.Parse(raw)
@@ -172,8 +174,8 @@ func validAttachmentURI(raw string, artifactOnly bool) bool {
 	switch {
 	case strings.HasPrefix(raw, "artifact://"):
 		return u.Path != ""
-	case !artifactOnly && (strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://")):
-		return true
+	case strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://"):
+		return (kind != AttachmentImage && kind != AttachmentVideo) || mediaurl.IsPublicHTTPS(u)
 	default:
 		return false
 	}

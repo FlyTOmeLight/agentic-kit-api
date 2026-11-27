@@ -11,16 +11,17 @@
 ```text
 客户端 → API → PostgreSQL durable_run / durable_step / durable_event
                     ↑                           ↓
-              worker 领取执行             Outbox relay → Redis Streams
+              worker 领取执行             Outbox relay → Redis Streams（权威唤醒）
+                    └─────────（可选）─────────→ Redis Live Stream（瞬态 token/thinking 增量）
                                                 ↓
-客户端 ← API SSE ← 数据库事件回放及 Redis 唤醒
+客户端 ← API SSE ← 数据库权威事件回放 + Redis 唤醒与瞬态增量转发
 ```
 
-- agent / agent_version：可编辑草稿与不可变发布版本。revision 检测并发编辑，发布在 Agent 行锁下递增版本号。
+- agent / agent_version：可编辑草稿与不可变发布版本指针（已发布正文存于 `artifact-go`）。revision 检测并发编辑，发布在 Agent 行锁下递增版本号。
 - agent_session / agent_message：独立会话和消息记录；消息 seq 在会话行锁下递增。
 - durable_run：不可变执行配置、输入、Eino checkpoint、当前状态、等待交互（waiting_step / waiting_kind）、期限、执行者和 epoch。
 - durable_step：工具执行前的意图、输入摘要、重试策略、执行结果。操作编号是 runID:stepID，重试不改变。
-- durable_event：与状态同事务写入的事件，也是 Outbox。Redis 只是通知与缓存，数据库是事件权威来源。
+- durable_event：与状态同事务写入的事件，也是 Outbox。Redis 仅承载唤醒通知与可选的瞬态 token/thinking 增量，数据库是权威事件与最终正文来源。
 
 API 仓库拥有共享持久化包，worker 只调用其中的状态变更方法。持久化访问统一由 GORM 管理；领取使用 Locking 子句，事件计数用 Updates 与 Returning 子句递增并取回；事件写入仍在同一事务。表结构、约束与索引由 internal/table 中的领域模型定义，`internal/schema.Init` 在事务中执行 AutoMigrate，由 `service.Build` 在接收请求前调用，不再提供迁移 CLI 或历史升级。数据库时钟和数值递增通过 gorm.Expr 表达，事务级 advisory lock 通过 GORM Exec 调用。数据库时间决定执行权期限，避免多个 worker 的本地时钟差异影响领取判断。
 
@@ -44,7 +45,7 @@ Run 锁保护执行步骤，Session 锁保护消息编号。提交持有 Session
 
 发布的 JSON 配置装配为单个 `ChatModelAgent`，由 `Runner` 执行 ReAct。Eino 管理消息上下文、工具分派、模型轮次上限和中断恢复。任务领取、租约、项目授权及外部副作用记录属于平台。
 
-执行状态的写入只使用类型化命令：`CommitBoundary` 接受 ModelStarted、Complete、Fail、AwaitClarification、AwaitReview 五种边界，由存储推导状态、消息和事件；字段组合不合法时返回 Invalid 且不写数据库。`RecordDecision` 提交模型决策，`BeginStep` / `FinishStep` 记录工具意图与结果，`Retry`、`Cancel`、`SupplyResult` 保持各自的原子语义。
+执行状态的写入只使用类型化命令：`CommitBoundary` 接受 ModelStarted、Complete、Fail、AwaitClarification、AwaitReview、AwaitExternal、Block 七种边界，由存储推导状态、消息和事件；字段组合不合法时返回 Invalid 且不写数据库。`RecordDecision` 提交模型决策，`BeginStep` / `FinishStep` / `FinishStepWithArtifacts` 记录工具意图、产物与结果，`SpawnChildAndAwait`、`Retry`、`Cancel`、`SupplyResult` 保持各自的原子语义。
 
 模型返回工具调用后，工具 middleware 先触发原生中断，不执行实际工具。Runner 调用平台的 `CheckPointStore.Set`；该适配器通过 `RecordDecision` 将 Eino checkpoint 与公开模型消息同事务提交。Runner 随后自动恢复此内部中断。
 
@@ -63,7 +64,7 @@ Run 锁保护执行步骤，Session 锁保护消息编号。提交持有 Session
 | 等待澄清时重启 | 保持等待；用户回答提交后重新排队 |
 | 完成状态提交，Redis 不可用 | Outbox 重试，API 仍从数据库返回完成状态和事件 |
 
-工具执行与本地数据库事务不能跨服务原子提交。Idempotent 策略必须由下游真正实现操作编号去重；加 HTTP header 本身不构成幂等。当前新配置只接受 HTTP 工具，未接入的 AppForge 协议不作为可执行能力接受。
+工具执行与本地数据库事务不能跨服务原子提交。Idempotent 策略必须由下游真正实现操作编号去重；加 HTTP header 本身不构成幂等。当前新配置接受通用 HTTP 工具与标准 Streamable HTTP MCP 服务，未接入的 AppForge 专有协议不作为可执行能力接受。
 
 NeedsReview 接口要求用户提供已经确认的外部结果；它不是“无条件重跑”按钮。人工确认、取消同样写事件。取消阻止后续状态提交和自动领取，但不会撤销已经完成的外部操作。
 
@@ -115,7 +116,7 @@ Redis Stream 使用事件 seq 作为显式 ID。Lua 在插入前查询该 ID，�
 
 ## 配置与版本
 
-任务固定模型地址、模型名、系统提示词、工具元信息与配置版本。凭据保存环境变量引用，允许部署侧轮换凭据。管理接口的调用权限由 Forge middleware 校验；普通发送消息接口只接受 query。Agent 配置保存在数据库，任务保存发布版本的完整快照。
+任务固定模型地址、模型名、系统提示词、工具/MCP/子代理元信息与配置版本。凭据保存环境变量引用（经格式与保留名校验及 Worker 可选白名单约束），允许部署侧轮换凭据。管理接口的调用权限由 Forge middleware 校验；普通发送消息接口接受 `query` 与可选 `attachments`。Agent 草稿保存在数据库，已发布版本不可变正文保存在 `artifact-go`，任务保存发布版本的完整快照。
 
 执行状态带版本号 3，保存 Eino 原生 checkpoint、操作编号使用的模型轮次，以及直返步骤和最终输出等终止元数据；等待交互由 durable_run 的显式列保存，API 不再解析 worker 状态中的 waitingStep。旧 version 1/2 不转换、不从头重跑；新版 Worker 会明确拒绝。升级前由旧 Worker 完成或取消旧格式的所有活动、等待澄清和待确认运行，保留历史记录，再切换 Worker；需要继续的业务任务创建新的执行轮次。不要混跑两个版本的 Worker。后续 Eino 升级须验证 checkpoint 格式与工具语义兼容。
 
@@ -130,8 +131,8 @@ Worker 可以用有效租约调用 `RecordModelOverflow`，在同一事务中提
 - Eino checkpoint 以字节数据保存在 JSON 状态内；每批工具前有一次持久化中断／恢复。大附件应使用共享存储引用，不能依赖 worker 本地临时文件。
 - 没有承诺外部工具 exactly once，也没有实现跨服务补偿事务。
 - PostgreSQL 本身仍需按部署要求配置持久化、高可用和备份；进程重启测试不等于数据库灾备验证。
-- 跨 Run 工作区检查点当前使用单节点 `hostPath`，未接入共享对象存储；多节点恢复与生产容量未验证。
-- 当前双仓通过本地 `go.work` / `replace` 联合构建；移除本地替换后的独立发布构建与依赖解析未验证。
+- 跨 Run 工作区检查点在生产多节点模式下依赖 JuiceFS `ReadWriteMany` 与 LayerFS 保存/校验/恢复流水线，单节点开发测试可使用 `hostPath`；大规模多节点容量压测仍需按部署规模验证。
+- 双仓联合开发时可临时使用 `go.work`，正式发布与 CI 均在 `GOWORK=off` 下基于固定 `agentic-kit-api` 模块版本独立构建与验证。
 
 ## 应用与 Agent 定义
 

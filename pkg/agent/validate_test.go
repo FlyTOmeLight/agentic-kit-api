@@ -394,49 +394,96 @@ func TestModelSpecStreamJSON(t *testing.T) {
 	}
 }
 
-func TestValidateAgentConfigDelegationStaticToolLimit(t *testing.T) {
-	makeTools := func(n int) []ToolSpec {
-		tools := make([]ToolSpec, n)
-		for i := range tools {
-			tools[i] = ToolSpec{
-				Name: "tool_" + string(
-					rune('a'+i/26),
-				) + string(
-					rune('a'+i%26),
-				) + string(
-					rune('0'+i%10),
-				),
-				URL:        "https://tools.example/run",
-				Policy:     ReadOnly,
-				Parameters: json.RawMessage(`{"type":"object"}`),
+func TestValidateAgentConfigCredentialEnv(t *testing.T) {
+	for _, field := range []struct {
+		name string
+		set  func(*AgentConfig, string)
+	}{
+		{name: "model.apiKeyEnv", set: func(c *AgentConfig, name string) { c.Model.APIKeyEnv = name }},
+		{name: "tools.tokenEnv", set: func(c *AgentConfig, name string) { c.Tools[0].TokenEnv = name }},
+		{name: "mcpServers.tokenEnv", set: func(c *AgentConfig, name string) { c.MCPServers[0].TokenEnv = name }},
+	} {
+		t.Run(field.name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name, value string
+				want        error
+			}{
+				{name: "empty"},
+				{name: "POSIX name", value: "_Provider2_TOKEN"},
+				{name: "case-sensitive reserve", value: "database_url"},
+				{name: "maximum length", value: strings.Repeat("x", 128)},
+				{name: "space", value: "API KEY", want: ErrInvalidConfig},
+				{name: "equal sign", value: "API=KEY", want: ErrInvalidConfig},
+				{name: "leading digit", value: "1KEY", want: ErrInvalidConfig},
+				{name: "too long", value: strings.Repeat("x", 129), want: ErrInvalidConfig},
+				{name: "DATABASE_URL", value: "DATABASE_URL", want: ErrInvalidConfig},
+				{name: "SANDBOX_CENTER_TOKEN", value: "SANDBOX_CENTER_TOKEN", want: ErrInvalidConfig},
+				{name: "REDIS_PASSWORD", value: "REDIS_PASSWORD", want: ErrInvalidConfig},
+				{name: "FORGE_SERVICE_API_KEY", value: "FORGE_SERVICE_API_KEY", want: ErrInvalidConfig},
+				{name: "TENANT_SERVICE_API_KEY", value: "TENANT_SERVICE_API_KEY", want: ErrInvalidConfig},
+				{name: "AGENT_ARTIFACT_SERVICE_API_KEY", value: "AGENT_ARTIFACT_SERVICE_API_KEY", want: ErrInvalidConfig},
+				{name: "CALLBACK_SIGNING_SECRET", value: "CALLBACK_SIGNING_SECRET", want: ErrInvalidConfig},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					cfg := AgentConfig{
+						Model:    ModelSpec{Name: "test", BaseURL: "https://model.example/v1"},
+						MaxTurns: 1,
+						Tools: []ToolSpec{{
+							Name:       "lookup",
+							URL:        "https://tools.example/lookup",
+							Policy:     ReadOnly,
+							Parameters: json.RawMessage(`{"type":"object"}`),
+						}},
+						MCPServers: []MCPServerSpec{
+							{Name: "catalog", URL: "https://mcp.example/tools"},
+						},
+					}
+					field.set(&cfg, tc.value)
+					if err := ValidateAgentConfig(cfg); !errors.Is(err, tc.want) {
+						t.Fatalf("validation error = %v, want %v", err, tc.want)
+					}
+				})
 			}
+		})
+	}
+}
+
+func TestValidateAgentConfigStaticToolLimit(t *testing.T) {
+	tools := make([]ToolSpec, 128)
+	for i := range tools {
+		tools[i] = ToolSpec{
+			Name:       fmt.Sprintf("tool_%d", i),
+			URL:        "https://tools.example/run",
+			Policy:     ReadOnly,
+			Parameters: json.RawMessage(`{"type":"object"}`),
 		}
-		return tools
 	}
-	base := AgentConfig{
-		Model:    ModelSpec{Name: "gpt-test", BaseURL: "https://model.example/v1"},
-		MaxTurns: 5,
-		Tools:    makeTools(126),
-	}
-	withSelf := base
-	withSelf.SelfDelegate = true
-	if err := ValidateAgentConfig(withSelf); err != nil {
-		t.Fatalf("126 static tools with selfDelegate should pass, got %v", err)
-	}
-	withSelf.Tools = makeTools(127)
-	if err := ValidateAgentConfig(withSelf); err == nil {
-		t.Fatal("127 static tools with selfDelegate should fail")
-	}
-	withSub := base
-	withSub.Tools = makeTools(127)
-	withSub.SubAgents = []SubAgentSpec{{Name: "review", Description: "Review", AgentID: "agent-2"}}
-	if err := ValidateAgentConfig(withSub); err == nil {
-		t.Fatal("127 static tools with subAgents should fail")
-	}
-	plain := base
-	plain.Tools = makeTools(128)
-	if err := ValidateAgentConfig(plain); err != nil {
-		t.Fatalf("128 static tools without delegation should still pass, got %v", err)
+	for _, tc := range []struct {
+		name         string
+		maxTools     int
+		selfDelegate bool
+		subAgents    []SubAgentSpec
+	}{
+		{name: "without delegation", maxTools: 127},
+		{name: "self delegation", maxTools: 126, selfDelegate: true},
+		{name: "named delegation", maxTools: 126, subAgents: []SubAgentSpec{{Name: "review", Description: "Review", AgentID: "agent-2"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := AgentConfig{
+				Model:        ModelSpec{Name: "test", BaseURL: "https://model.example/v1"},
+				MaxTurns:     1,
+				Tools:        tools[:tc.maxTools],
+				SelfDelegate: tc.selfDelegate,
+				SubAgents:    tc.subAgents,
+			}
+			if err := ValidateAgentConfig(cfg); err != nil {
+				t.Fatalf("%d static tools: %v", tc.maxTools, err)
+			}
+			cfg.Tools = tools[:tc.maxTools+1]
+			if err := ValidateAgentConfig(cfg); !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("%d static tools: got %v, want %v", len(cfg.Tools), err, ErrInvalidConfig)
+			}
+		})
 	}
 }
 

@@ -140,8 +140,7 @@ func (h *Controller) events(c *core.Context) {
 	sendDeltas := func(messages []redis.XMessage) error {
 		for _, message := range messages {
 			liveCursor = message.ID
-			data, _ := message.Values[durable.LiveStreamField].(string)
-			delta, err := durable.DecodeStreamDelta([]byte(data))
+			delta, err := decodeLiveDelta(message)
 			if err != nil || !filter.accept(delta) {
 				continue
 			}
@@ -153,9 +152,12 @@ func (h *Controller) events(c *core.Context) {
 		return nil
 	}
 	if filter != nil {
-		messages, err := h.redis.XRange(ctx, liveKey, "-", "+").Result()
-		if err == nil && sendDeltas(messages) != nil {
-			return
+		messages, latestID, err := catchUpLiveDeltas(ctx, h.redis, liveKey, filter)
+		if err == nil {
+			if sendDeltas(messages) != nil {
+				return
+			}
+			liveCursor = latestID
 		}
 	}
 	splitStreams := false

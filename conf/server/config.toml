@@ -76,8 +76,8 @@ Timeout = 5000
 # Empty disables internal execution, goal and lease HTTP routes.
 AllowedPropagationServices = []
 
-# Published Agent configuration is stored in artifact-go. Timeout is in
-# milliseconds; zero keeps the SDK default.
+# Published Agent configuration and submitted Artifact attachment resolution use
+# artifact-go. Timeout is in milliseconds; zero keeps the SDK default.
 [AgentArtifact]
 Endpoint = "${env:AGENT_ARTIFACT_ENDPOINT:http://127.0.0.1:18080}"
 Timeout = 5000

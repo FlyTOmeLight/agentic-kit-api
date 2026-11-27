@@ -25,6 +25,7 @@ type eventService struct {
 	eventPolls    int
 	getCalls      int
 	finishedCalls int
+	finishedTurn  *int64
 	finishOnPoll  int
 }
 
@@ -36,6 +37,9 @@ func (s *eventService) Get(context.Context, string, string) (*durable.Run, error
 
 func (s *eventService) LatestFinishedModelTurn(context.Context, string, string) (int64, error) {
 	s.finishedCalls++
+	if s.finishedTurn != nil {
+		return *s.finishedTurn, nil
+	}
 	return -1, nil
 }
 
@@ -58,12 +62,21 @@ func (s *eventService) complete() {
 type eventRedis struct {
 	frameworkredis.Redis
 	rangeCalls int
+	revRange   func(start, stop string, count int64) ([]redis.XMessage, error)
 	read       func(*frameworkredis.XReadArgs) ([]redis.XStream, error)
 }
 
-func (r *eventRedis) XRange(context.Context, string, string, string) *redis.XMessageSliceCmd {
+func (r *eventRedis) XRevRangeN(
+	_ context.Context,
+	_, start, stop string,
+	count int64,
+) *redis.XMessageSliceCmd {
 	r.rangeCalls++
-	return redis.NewXMessageSliceCmdResult(nil, nil)
+	if r.revRange == nil {
+		return redis.NewXMessageSliceCmdResult(nil, nil)
+	}
+	messages, err := r.revRange(start, stop, count)
+	return redis.NewXMessageSliceCmdResult(messages, err)
 }
 
 func (r *eventRedis) XRead(_ context.Context, args *frameworkredis.XReadArgs) *redis.XStreamSliceCmd {
@@ -302,4 +315,136 @@ func TestLiveDeltaFilterMonotonicAcrossReplayAndRetry(t *testing.T) {
 	observe(16, "RunStarted", `{"epoch":5}`)
 	check(false, 4, 2, 1, reasoning)
 	check(true, 5, 2, 0, reasoning)
+}
+
+func testDeltaEntry(t *testing.T, id string, epoch, turn, offset int64, text string) redis.XMessage {
+	t.Helper()
+	data, err := durable.EncodeStreamDelta(durable.StreamDelta{
+		RunID:     "run",
+		Kind:      durable.EventModelContentDelta,
+		Epoch:     epoch,
+		Turn:      turn,
+		Offset:    offset,
+		Delta:     text,
+		CreatedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return redis.XMessage{ID: id, Values: map[string]any{durable.LiveStreamField: string(data)}}
+}
+
+func sliceRevRange(stream []redis.XMessage, start, stop string, count int64) []redis.XMessage {
+	if stop != "-" {
+		return nil
+	}
+	endIdx := len(stream) - 1
+	if start != "+" {
+		endIdx = -1
+		for i := len(stream) - 1; i >= 0; i-- {
+			if stream[i].ID == start {
+				endIdx = i
+				break
+			}
+		}
+	}
+	if endIdx < 0 {
+		return nil
+	}
+	var out []redis.XMessage
+	for i := endIdx; i >= 0 && int64(len(out)) < count; i-- {
+		out = append(out, stream[i])
+	}
+	return out
+}
+
+func TestCatchUpLiveDeltasStopsAtFinishedTurnAndOlderEpoch(t *testing.T) {
+	var stream []redis.XMessage
+	for i := range 600 {
+		stream = append(stream, testDeltaEntry(t, fmt.Sprintf("100-%d", i), 2, 1, int64(i), "old"))
+	}
+	for i := range 5 {
+		stream = append(
+			stream,
+			testDeltaEntry(t, fmt.Sprintf("200-%d", i), 2, 2, int64(i), fmt.Sprintf("cur-%d", i)),
+		)
+	}
+	cache := &eventRedis{
+		revRange: func(start, stop string, count int64) ([]redis.XMessage, error) {
+			return sliceRevRange(stream, start, stop, count), nil
+		},
+	}
+	filter := newLiveDeltaFilter(&durable.Run{ID: "run", Epoch: 2, Status: durable.Running}, 1)
+	messages, latestID, err := catchUpLiveDeltas(t.Context(), cache, durable.LiveStreamKey("run"), filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cache.rangeCalls != 1 {
+		t.Fatalf("expected 1 XRevRangeN batch, got %d", cache.rangeCalls)
+	}
+	if latestID != "200-4" || len(messages) != 5 || messages[0].ID != "200-0" || messages[4].ID != "200-4" {
+		t.Fatalf("latestID=%s len=%d messages=%+v", latestID, len(messages), messages)
+	}
+}
+
+func TestCatchUpLiveDeltasMultiBatchOrderAndCursor(t *testing.T) {
+	var stream []redis.XMessage
+	stream = append(stream, testDeltaEntry(t, "100-0", 1, 1, 0, "stale-epoch"))
+	for i := range liveCatchUpBatchSize + 40 {
+		stream = append(stream, testDeltaEntry(t, fmt.Sprintf("200-%d", i), 2, 1, int64(i), "a"))
+	}
+	cache := &eventRedis{
+		revRange: func(start, stop string, count int64) ([]redis.XMessage, error) {
+			return sliceRevRange(stream, start, stop, count), nil
+		},
+	}
+	filter := newLiveDeltaFilter(&durable.Run{ID: "run", Epoch: 2, Status: durable.Running}, 0)
+	messages, latestID, err := catchUpLiveDeltas(t.Context(), cache, durable.LiveStreamKey("run"), filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCount := liveCatchUpBatchSize + 40
+	if cache.rangeCalls != 2 {
+		t.Fatalf("expected 2 XRevRangeN batches, got %d", cache.rangeCalls)
+	}
+	if latestID != fmt.Sprintf("200-%d", wantCount-1) || len(messages) != wantCount {
+		t.Fatalf("latestID=%s len=%d want=%d", latestID, len(messages), wantCount)
+	}
+	for i, msg := range messages {
+		if want := fmt.Sprintf("200-%d", i); msg.ID != want {
+			t.Fatalf("messages[%d].ID=%s want=%s", i, msg.ID, want)
+		}
+	}
+}
+
+func TestCatchUpLiveDeltasAllStaleAdvancesCursor(t *testing.T) {
+	stream := []redis.XMessage{
+		testDeltaEntry(t, "100-0", 1, 1, 0, "done-0"),
+		testDeltaEntry(t, "100-1", 1, 1, 1, "done-1"),
+	}
+	finished := int64(1)
+	source := &eventService{
+		run:          durable.Run{ID: "run", Status: durable.Running, Epoch: 1},
+		finishedTurn: &finished,
+	}
+	var seenCursor string
+	cache := &eventRedis{
+		revRange: func(start, stop string, count int64) ([]redis.XMessage, error) {
+			return sliceRevRange(stream, start, stop, count), nil
+		},
+		read: func(args *frameworkredis.XReadArgs) ([]redis.XStream, error) {
+			seenCursor = args.Streams[3]
+			source.complete()
+			return []redis.XStream{
+				{Stream: durable.StreamKey("run"), Messages: []redis.XMessage{{ID: "1-0"}}},
+			}, nil
+		},
+	}
+	body := readEventResponse(t, source, cache, "")
+	if strings.Contains(body, "event:ModelContentDelta") {
+		t.Fatalf("stale deltas emitted: %s", body)
+	}
+	if seenCursor != "100-1" {
+		t.Fatalf("liveCursor=%q want 100-1", seenCursor)
+	}
 }

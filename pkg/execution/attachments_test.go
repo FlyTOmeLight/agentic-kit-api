@@ -72,13 +72,43 @@ func TestAttachmentValidation(t *testing.T) {
 		"//address/file", "/root/../p", "/root/./p", "/root//p", " https://media.test/p",
 		"https://media.test/p ", "https://media.test/p\tq", "https:///p", "https://:443/p",
 		"https://u:p@media.test/p", "https://media.test/p#", "artifact://tenant",
+		"http://assets.example/p.jpg",
+		"https://localhost/p.jpg",
+		"https://sub.localhost/p.jpg",
+		"https://printer.local/p.jpg",
+		"https://metadata.google.internal/p.jpg",
+		"https://127.0.0.1/p.jpg",
+		"https://10.0.0.5/p.jpg",
+		"https://172.16.0.1/p.jpg",
+		"https://192.168.1.1/p.jpg",
+		"https://169.254.169.254/p.jpg",
+		"https://100.64.0.1/p.jpg",
+		"https://[::1]/p.jpg",
+		"https://[::ffff:127.0.0.1]/p.jpg",
+		"https://2130706433/p.jpg",
+		"https://0x7f000001/p.jpg",
+		"https://127.1/p.jpg",
+		"https://0177.0.0.1/p.jpg",
 	} {
 		t.Run(uri, func(t *testing.T) {
 			a := image
 			a.URI = uri
 			assertAttachmentValidation(t, []Attachment{a}, false, false)
+			v := Attachment{Kind: AttachmentVideo, Name: "clip.mp4", MediaType: "video/mp4", URI: uri}
+			assertAttachmentValidation(t, []Attachment{v}, false, false)
 		})
 	}
+	assertAttachmentValidation(t, []Attachment{
+		{
+			Kind:      AttachmentDocument,
+			Name:      "spec.pdf",
+			MediaType: "application/pdf",
+			URI:       "http://docs.example/spec.pdf",
+		},
+	}, true, true)
+	assertAttachmentValidation(t, []Attachment{{
+		Kind: AttachmentImage, Name: "ok.png", MediaType: "image/png", URI: "https://assets.example/a.png",
+	}}, true, true)
 	assertAttachmentValidation(t, nil, true, true)
 	assertAttachmentValidation(t, slices.Repeat([]Attachment{image}, 10), true, true)
 	assertAttachmentValidation(t, slices.Repeat([]Attachment{image}, 11), false, false)

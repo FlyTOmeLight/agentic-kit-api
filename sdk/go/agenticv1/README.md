@@ -59,7 +59,9 @@ Update 和 Restore 的 revision 不匹配、恢复活跃条目、更新停用条
 
 非 2xx 响应返回 `*github.com/FlyTOmeLight/server-go/errors.Error`，包含 HTTP 状态 `Status`、框架错误编号 `StatusCode`、`Code`、`Message` 和 `RequestID`，可用 `errors.As(err, &apiErr)` 判断。网络错误和 context 取消保留原错误链，可用 `errors.Is` 判断。
 
-`sdk.ModelSpec.ContextWindow`配置模型窗口；大于零时同时设置正数且小于窗口的`MaxTokens`，作为输出预留。未配置窗口时使用128 KiB输入字节上限，配置窗口时当前仍采用保守字节估算而非精确token计数。提交期已知输入超限返回HTTP 400、`Code == "ContextBudgetExceeded"`，不会创建Run；worker仍会按实际工具定义和当前消息再次检查。
+`sdk.ModelSpec.ContextWindow` 配置模型窗口；大于零时同时设置正数且小于窗口的 `MaxTokens`，作为输出预留。未配置窗口时使用 128 KiB 输入字节上限；配置窗口时采用 `cjk-weighted-v1` 字符加权估算并预留 256 token 协议开销（不是精确 tokenizer 计数）。`ModelSpec.Stream` 默认启用流式输出（显式设 `false` 可切回非流式），`ModelSpec.InputModalities` 控制首问公网 `https://` 图片/视频直传能力（省略默认支持文本与图片）。提交期已知输入超限返回 HTTP 400、`Code == "ContextBudgetExceeded"`，不会创建 Run；worker 仍会按实际工具定义和当前消息再次检查。
+
+`sdk.AgentConfig` 除静态 HTTP `Tools` 外，还支持 `MCPServers`（标准 Streamable HTTP MCP 源配置）、`SubAgents`（专职子 Agent 引用，提交期冻结版本与单价）与 `SelfDelegate`（根 Run 动态派生子任务）。Run 状态常量导出覆盖完整生命周期（含 `sdk.WaitingExternal` 与 `sdk.Blocked`），等待交互类型导出 `sdk.InteractionKind`（`sdk.InteractionClarification` / `sdk.InteractionReview`）。
 
 `client.Runs.OpenEvents(ctx, &sdk.OpenRunEventsRequest{ID: runID, LastEventID: after})` 返回原始 SSE `io.ReadCloser`。调用方负责读取、关闭、解析和重连，建议使用独立的 context 控制订阅时长。
 

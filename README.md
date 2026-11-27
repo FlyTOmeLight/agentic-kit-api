@@ -25,11 +25,12 @@
 flowchart LR
     Client["调用方应用 / 用户 (HTTP + Go SDK)"] -->|REST / SSE| API["agentic-kit-api (:8080)"]
     API <-->|鉴权与项目读写权限| Forge["forge-tenant-api (v0.13.0)"]
-    API <-->|Agent 版本 / 可选 Memory 归档| Artifact["artifact-go (v0.5.2)"]
+    API <-->|Agent 版本 / 附件解析 / 可选 Memory 归档| Artifact["artifact-go (v0.5.2)"]
     API -->|事务写入 & Outbox| PG[("PostgreSQL (16 张权威表)")]
-    API -->|异步中继 Stream| Redis[("Redis (加速通知，允许离线)")]
+    API -->|异步中继权威流 & 订阅瞬态流| Redis[("Redis (加速通知与实时增量，允许离线)")]
     Worker["agentic-kit-worker (:8081)"] <-->|SKIP LOCKED 领取 / Checkpoint / Step / Usage| PG
-    Worker -->|调用模型 / HTTP & AIO 工具| External["LLM Provider / 外部工具"]
+    Worker -.->|可选瞬态增量推送| Redis
+    Worker -->|调用模型 / HTTP & MCP & AIO 工具| External["LLM Provider / MCP & 外部工具"]
     API -.->|可选 K8s Guard + Saver + Verifier| K8s["Kubernetes / LayerFS + JuiceFS"]
     Worker <-->|执行沙箱命令与验收| K8s
 ```
@@ -51,7 +52,7 @@ flowchart LR
 
 | 模块 | 当前实现范围与约束 |
 | --- | --- |
-| **Agent** | 创建和编辑草稿、`revision` 乐观锁冲突检测、写入 `artifact-go` 发布不可变版本；配置校验要求 `maxTurns` 为 1～100，工具 `kind` 仅接受空或 `HTTP`（拒绝专有协议），支持 `returnDirectly` 与 `endRun` |
+| **Agent** | 创建和编辑草稿、`revision` 乐观锁冲突检测、写入 `artifact-go` 发布不可变版本；配置校验要求 `maxTurns` 为 1～100，支持 `model.stream`、`model.inputModalities`、通用 HTTP 工具、标准 Streamable HTTP `mcpServers`、双模式 `subAgents`/`selfDelegate` 及 `returnDirectly`/`endRun`（拒绝专有协议），并校验 `apiKeyEnv`/`tokenEnv` 格式与平台保留名 |
 | **Session / Message** | 多轮会话、会话行锁下的单调 `seq` 消息、同会话单活动 Run 限制、按 `(owner, tenant, project, taskID)` 复用的应用会话、幂等提交与历史分页 |
 | **Run / Execution / Goal** | 提交、查询、取消（级联取消子 Run）、`WaitingClarification` / `NeedsReview` / `Blocked` 人工恢复、外部 HMAC 回调、Goal 预算/Stall/Steer/验收闭环、脱敏 `RunTrace` 与 SSE 回放 |
 | **Durable / Outbox** | API 与 Worker 共用的执行事务、数据库时钟租约与 `epoch` 隔离、步骤意图与重放、状态/消息/事件同事务提交、单 Run 保序 Outbox 投递 |
@@ -97,11 +98,11 @@ agentic-kit-api/
 └── testutil/sandboxe2e/      # K8s 沙箱端到端测试夹具
 
 ../agentic-kit-worker/        # 独立执行面配套仓库（需在同级目录配合联调或独立部署）
-├── cmd/worker/main.go        # Worker 入口（默认监听 127.0.0.1:8081，不连 Redis）
-├── internal/service/         # 生命周期装配与 Worker 协程池
-├── internal/engine/          # Claim 轮询、Eino Runner 执行、Checkpoint、摘要压缩、溢出重派、Goal 验收与 read_step_result
-├── internal/adapters/        # Eino Model/Tool 适配、usage 防伪守卫、AIO 与 Sandbox 后端接入
-└── conf/server/config.toml   # Worker 配置（禁止设置 [Pricing]，仅配 DB / Worker / Compaction / Evaluator）
+├── cmd/worker/main.go        # Worker 入口（默认监听 127.0.0.1:8081，可选连 Redis 推送实时增量）
+├── internal/service/         # 生命周期装配、可选 Redis 瞬态流发布与 Worker 协程池
+├── internal/engine/          # Claim 轮询、Eino Runner 执行、流式采集、Checkpoint、摘要压缩、溢出重派、子代理委派、Goal 验收与 read_step_result
+├── internal/adapters/        # Eino Model/Tool 适配、标准 MCP 适配、凭据白名单、usage 防伪守卫、AIO 与 Sandbox 后端接入
+└── conf/server/config.toml   # Worker 配置（禁止设置 [Pricing]，支持 DB / 可选 Redis / Worker / Credentials / Compaction / Evaluator）
 ```
 
 ### 新人常见修改导航
@@ -170,7 +171,7 @@ export LISTEN_ADDR='127.0.0.1:8081'
 GOWORK=off go run ./cmd/worker -config conf/server/config.toml -log-config conf/server/logger.toml
 ```
 
-Worker 不使用 Redis、不访问 `artifact-go`，且配置中禁止出现带参数的 `[Pricing]`（价格由 API 冻结，在 Worker 配置会直接拒绝启动）。
+Worker 不访问 `artifact-go`，`[Redis]` 为可选配置（配置后推送逐 token / 思考过程瞬态增量，未配置或 Redis 不可用时仍正常运行权威事件链路）；配置中禁止出现带参数的 `[Pricing]`（价格由 API 冻结，在 Worker 配置会直接拒绝启动）。多租户生产环境建议同时在 Worker 配置 `[Credentials]` 环境变量白名单。
 
 ### 核心配置与鉴权契约
 

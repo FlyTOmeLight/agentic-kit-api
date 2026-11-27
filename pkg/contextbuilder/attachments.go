@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/FlyTOmeLight/agentic-kit-api/internal/mediaurl"
 )
 
 const (
@@ -27,8 +29,8 @@ func IsDirectMediaAttachment(a Attachment, modalities []string) bool {
 		return false
 	}
 	u, err := url.Parse(a.URI)
-	return err == nil && (strings.HasPrefix(a.URI, "https://") || strings.HasPrefix(a.URI, "http://")) &&
-		u.Hostname() != "" && u.User == nil && !strings.Contains(a.URI, "#")
+	return err == nil && strings.HasPrefix(a.URI, "https://") && u.User == nil &&
+		!strings.Contains(a.URI, "#") && mediaurl.IsPublicHTTPS(u)
 }
 
 // FormatAttachmentsMetadata renders attachment references as text for the model.

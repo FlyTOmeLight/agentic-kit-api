@@ -15,7 +15,7 @@ Go 请求与响应类型统一定义在 [sdk](../sdk/go/agenticv1)，调用方�
 | POST /v1/sessions | 创建会话，返回 201 | agentID、可选 title |
 | GET /v1/sessions | 会话列表 | 可选 agentID；after、limit |
 | GET /v1/sessions/{id} | 读取会话及 messageSeq | 无 |
-| POST /v1/sessions/{id}/messages | 提交用户消息并创建任务 | query；Idempotency-Key header 必填 |
+| POST /v1/sessions/{id}/messages | 提交用户消息并创建任务 | query、可选 attachments；Idempotency-Key header 必填 |
 | GET /v1/sessions/{id}/messages | 按序读取消息 | after（消息 seq）、limit |
 | GET /v1/sessions/{id}/runs | 查询会话任务与状态 | after、limit |
 | GET /v1/runs/{id} | 查询任务 | 无 |
@@ -40,15 +40,15 @@ config 包括 systemPrompt、model、tools、mcpServers、toolsets、maxTurns、
 | --- | --- |
 | `name` | 服务名唯一，匹配 `^[a-z0-9][a-z0-9-]{0,15}$`。Worker 暴露的完整工具名为 `mcp__<server>__<tool>`。 |
 | `url` | HTTP(S) 端点，不能包含用户信息或片段。 |
-| `tokenEnv` | 可选的 Worker 凭据环境变量名，不含空白。快照只保存变量名。 |
+| `tokenEnv` | 可选的 Worker 凭据环境变量名，须匹配 `^[A-Za-z_][A-Za-z0-9_]{0,127}$` 且拒绝平台保留名（如 `DATABASE_URL`、`SANDBOX_CENTER_TOKEN` 等）。快照只保存变量名。 |
 | `allowedTools` | 可选的远端原始工具名白名单，最多 64 项且不可重复。省略或为空时不按白名单筛选。 |
 | `defaultPolicy` | 可设为 `ReadOnly`、`Idempotent` 或 `Unsafe`，省略或为空时按 `Unsafe` 处理。 |
 | `toolPolicies` | 按远端原始工具名设置上述策略，优先于 `defaultPolicy`，不接受空策略。白名单非空时，每个键都必须在白名单中。 |
 | `forwardScope` | 默认不向 MCP 服务发送 `X-Agentic-Scope`。显式设置为 `true` 时才转发。 |
 
-白名单和策略映射中的原始工具名须匹配 `^[a-zA-Z0-9_-]{1,64}$`，拼接后的完整工具名最多 64 字符。工具重放策略来自本地配置，远端 `ToolAnnotations` 不参与决策。`Idempotent` 只用于自身天然幂等、可安全重复调用的工具。
+白名单和策略映射中的原始工具名须匹配 `^[a-zA-Z0-9_-]{1,64}$`，拼接后的完整工具名最多 64 字符。工具重放策略来自本地配置，远端 `ToolAnnotations` 不参与决策。`Idempotent` 只用于自身天然幂等、可安全重复调用的工具。`model.apiKeyEnv` 与静态工具 `tokenEnv` 适用相同的环境变量名格式与平台保留名限制。
 
-API 不访问 MCP 服务，提交期工具预算预检只计入静态工具。Worker 接入后在执行期发现 MCP 工具，将其纳入参数校验和 `durable_step` 保护，并按实际工具定义核算上下文预算。静态工具和运行时装配的工具合计最多 128 个。
+API 不访问 MCP 服务，提交期工具预算预检只计入静态工具。Worker 接入后在执行期发现 MCP 工具，将其纳入参数校验和 `durable_step` 保护，并按实际工具定义核算上下文预算。静态工具上限为 127 个（启用 `subAgents` 或 `selfDelegate` 时收紧至 126 个，为内置 `read_step_result` 与 `delegate_subagent` 预留槽位），静态工具与运行时装配的工具合计最多 128 个。升级说明：此前按旧上限已发布且恰好包含 128 个静态工具的历史 Agent 版本，其新 Run 会在 Worker 装配期因计入 `read_step_result` 后超出 128 上限而失败，需精简并重新发布。
 
 `model.contextWindow`为可选非负整数。非零时必须同时配置正数`model.maxTokens`且小于窗口，输入预算为窗口减输出预留；`maxTokens`一旦提供就必须为正数。`model.stream` 为可选布尔值（省略时默认 `true`），随发布版本和 Run 快照冻结；设为 `false` 时 worker 直接使用非流式模型调用，兼容不支持流式或不支持 `stream_options.include_usage` 的 OpenAI 兼容网关。当前采用`cjk-weighted-v1`字符加权估算，并预留256 token协议开销，不是精确tokenizer计数。未配置窗口时冻结128 KiB输入字节上限。单条工具结果以有界首尾预览进入模型输入，完整结果仍持久保存。预算、预览上限和裁剪策略随Run冻结，发布新配置不改变已有Run。
 
@@ -82,10 +82,10 @@ artifact 出站请求统一使用 API 自身的 `Tenant.ServiceAPIKey` 作为 Be
 ```
 
 - `kind` 接受 `image`、`document`、`audio`、`video`、`file`。最多 10 个附件，单个 `sizeBytes` 可省略，非负且不超过 50 MiB，合计不超过 100 MiB。可选 `id` 最多 128 字节，非空 `name` 最多 255 字节，均不能含控制字符。
-- `mediaType` 使用小写且无参数的 MIME 类型。图片、音频、视频分别要求 `image/`、`audio/`、`video/`。`uri` 最长 2048 字节，接受无凭据和片段的 HTTP(S) 或 `artifact://` URI，以及无路径穿越的干净绝对路径。API 接收引用和元数据，不接收内嵌文件字节。凡 `uri` 使用 `artifact://` 必须同时提供 `artifactURI`；`artifactURI` 不可与外部 HTTP(S) 或工作区路径 `uri` 混用。
+- `mediaType` 使用小写且无参数的 MIME 类型。图片、音频、视频分别要求 `image/`、`audio/`、`video/`。`uri` 最长 2048 字节，接受无凭据和片段的 HTTP(S) 或 `artifact://` URI，以及无路径穿越的干净绝对路径；其中 `image` 和 `video` 的外部 URL 仅允许公网 `https://`（拒绝 `http://`、单段主机名、`localhost`、`*.local`、`*.internal`、`*.svc`、`*.home.arpa` 及非公网/保留/转换前缀 IP 与非标准数字 IP，防止经模型服务拉取触发 SSRF；该校验不做 DNS 解析，依赖 DNS 指向内网的域名仍需出口网络策略兜底）。API 接收引用和元数据，不接收内嵌文件字节。凡 `uri` 使用 `artifact://` 必须同时提供 `artifactURI`；`artifactURI` 不可与外部 HTTP(S) 或工作区路径 `uri` 混用。
 - 通过 `artifactURI` 提交 Artifact 文件引用时，API 在首次提交和幂等重放前核验 Forge 的用户、tenant、project 及项目 `read` 权限。聊天要求会话属于当前 project，应用要求 `spec.scope.actorID` 等于当前用户。Artifact 按同一身份和个人资源归属解析。返回的 `agent` 和 `agent-memory` 类型一律拒绝，解析须返回 ready 版本及文件清单项。
 - 新请求解析后将 `artifactURI` 与 `uri` 冻结为固定版本的文件 URI。此时可省略 `uri`、`name`、`mediaType`，分别从文件引用、路径末段（缺省回退文件 ID）和清单（忽略 MIME 参数规范化为小写 `type/subtype`）补全。附件按原始顺序参与幂等比较。授权通过的同键重放直接返回已接受的 Run，即使 Artifact 别名已经移动或服务暂时不可用。
-- `model.inputModalities` 随 Agent 发布版本和 Run 冻结，允许 `text`、`image`、`video`，每项至多出现一次。省略或传空数组时支持文本和图片。上下文构建器只在当前首问保留模型支持的 HTTP(S) 图片或视频直传项。其他附件以及历史附件使用 `[Attachments]` 元数据。直传的 URL 计入输入字节，图片和视频分别额外计 1024 和 2048 token。文件大小不计入模型输入字节。
+- `model.inputModalities` 随 Agent 发布版本和 Run 冻结，允许 `text`、`image`、`video`，每项至多出现一次。省略或传空数组时支持文本和图片。上下文构建器只在当前首问保留模型支持的公网 `https://` 图片或视频直传项。其他附件以及历史附件使用 `[Attachments]` 元数据。直传的 URL 计入输入字节，图片和视频分别额外计 1024 和 2048 token。文件大小不计入模型输入字节。
 - 用户消息保存 `attachments`。工具写入或编辑文件时可随工具结果提交 `artifacts`，每项有 `path`、`action`（`written` 或 `edited`），可选 `name`、`mediaType`、`sizeBytes` 和 `provider`（`AIO` 或 `Sandbox`）。工具步骤、结果消息和 checkpoint 在同一事务提交。
 - 上下文的 `files` 固定块合并当前轮和本会话已完成 Run 的文件记录，以来源和 URI 去重，新记录优先。索引不受会话历史压缩游标影响，最多展示 50 条和 4 KiB（按完整行截断），并受本轮上下文预算约束且不会挤掉首问。`[attachment]` 表示附件引用。`[workspace/accessible]` 表示当前 Run 使用同一 AIO 工作区或已确认的沙箱恢复链。`[workspace/historical]` 表示可查到路径记录，但当前工作区未确认可读。索引本身不授予读取权限。子 Run 默认不继承父会话附件与文件索引，需要交接的文件由父 Agent 在子任务描述中显式传递。
 
@@ -104,9 +104,9 @@ artifact 出站请求统一使用 API 自身的 `Tenant.ServiceAPIKey` 作为 Be
 - PostgreSQL 权威事件带 `id: runID:seq`，`data` 为 `Event`，包括 `runID`、`seq`、`kind`、`payload` 和 `createdAt`。客户端按 `id` 去重和续订。`Last-Event-ID` 优先于 `after`，重新订阅不会启动新任务。Run 进入终态或 `Blocked` 后，API 发完权威事件就关闭连接。`Blocked` 恢复后可用原游标重新订阅。
 - `ModelReasoningDelta` 和 `ModelContentDelta` 分别是模型生成时的思考和正文增量。帧没有 `id:` 行，`data` 为 `StreamDelta`，包括 `runID`、`kind`、`epoch`、`turn`、`offset`、`delta` 和 `createdAt`。`offset` 为该 `(epoch, turn, kind)` 内的 UTF-8 字节偏移。连接先回放权威事件，再补发 Redis 中仍保留的、尚未记账轮次的增量。客户端可按 `(runID, epoch, turn, kind, offset)` 去重，并通过比较 `offset` 是否衔接上一条结束位置发现丢弃缺口。传 `?live=false` 可只订阅权威事件。
 
-权威事件包括 `RunQueued`、`RunStarted`、`ModelStarted`、`UsageRecorded`、`ModelCompleted`、`ToolStarted`、`ToolCompleted`、`ClarificationRequested`、`RunNeedsReview`、`RunResumed`、`RunRetry`、`RunBlocked`、`RunUnblocked`、`RunCompleted`、`RunFailed` 和 `RunCanceled`。`ModelStarted` 的 `payload.epoch` 由租约决定，调用方提供轮次时还有 `payload.turn`。`RunRetry` 的 `payload.status` 可能为 `Failed`。
+权威事件包括 `RunQueued`、`RunStarted`、`ModelStarted`、`UsageRecorded`、`ModelCompleted`、`ModelOverflowRejected`、`RunCompacted`、`CompactionFailed`、`ToolStarted`、`ToolCompleted`、`ClarificationRequested`、`RunNeedsReview`、`ExternalWaitRequested`、`ChildRunSpawned`、`ChildRunCompleted`、`ChildOrphaned`、`RunResumed`、`RunRetry`、`RunBlocked`、`RunUnblocked`、`GoalBlocked`、`RunCompleted`、`RunFailed` 和 `RunCanceled`。`ModelStarted` 的 `payload.epoch` 由租约决定，调用方提供轮次时还有 `payload.turn`。`RunRetry` 的 `payload.status` 可能为 `Failed`。
 
-以 `ModelCompleted.payload.output` 校准该轮生成的正文，以 `RunCompleted.payload.output` 为最终答案。思考仅在瞬态流中传输；Worker 发布队列满时中间增量可能被丢弃，且轮次结束前的 Flush 有时间上限，尾部增量也可能截断。Redis 瞬态流在每次写入后续期一小时，按约 10,000 条裁剪。Redis 单节点和哨兵使用一次阻塞读取监听两个流。Redis Cluster 返回 `CROSSSLOT` 时分别读取两条流。Redis 不可用时，客户端仍能通过 PostgreSQL 轮询收到权威事件。
+以 `ModelCompleted.payload.output` 校准该轮生成的正文，以 `RunCompleted.payload.output` 为最终答案。思考仅在瞬态流中传输；Worker 发布队列满时中间增量可能被丢弃，且轮次结束前的 Flush 有时间上限，尾部增量也可能截断。Redis 瞬态流在每次写入后续期一小时，按约 10,000 条裁剪。建连补发按批次逆向扫描（`XREVRANGE`），遇旧 epoch 或已记账轮次立即截断。Redis 单节点和哨兵使用一次阻塞读取监听两个流。Redis Cluster 返回 `CROSSSLOT` 时分别读取两条流。Redis 不可用时，客户端仍能通过 PostgreSQL 轮询收到权威事件。
 
 ## 子 Agent 与子 Run
 
@@ -115,7 +115,7 @@ artifact 出站请求统一使用 API 自身的 `Tenant.ServiceAPIKey` 作为 Be
 - `selfDelegate` 默认为 `false`。开启后，根 Run 可按本轮冻结配置派生动态子任务，委派指令进入子任务的用户输入，父系统提示词原样继承。指定专职子 Agent 时使用该子 Agent 的冻结配置。两种子 Run 均有各自的会话和上下文，深度最多一层。
 - 子 Run 排队与父 Run 进入 `WaitingExternal` 同事务提交。父 Run 的 `ChildRunSpawned` 事件提供 `stepID`、`childID`、`subAgent`、`agentID`。子 Run 到达终态时，匹配的等待步骤接收结果并重新排队。`child:` 引用由持久层保留，外部结果回调无法完成该步骤。子 Run 的查询、取消和 SSE 使用现有 `/v1/runs/{id}` 路由及子 Run ID，沿用 tenant 与 owner 鉴权。其他租户或 owner 访问返回 404。父 Run 终止会取消仍处于活动状态的子 Run。
 - 父或专职子 Agent 使用文件工具集时，须从受信任应用执行入口提交合法 `filesystem`，普通聊天提交返回 400。双方均无文件工具集时，应用提交也拒绝 `filesystem`。专职子 Run 仅在自身使用文件工具集时接收绑定，动态子 Run 继承父绑定。`AIO` 使用绑定中相同的端点和工作目录，文件可见性取决于端点提供的工作区。`Sandbox` 按 Run 获取独立租约和工作区，子 Run 会清空父 `restoreFromSandboxID` 始终以干净工作区启动，委派本身不共享父沙箱的实时文件。
-- 当子 Run 绑定了 Goal 并因未知模型消费等原因进入 `Blocked` 时，关联 Goal 会同步进入 `Blocked`，父 Run 保持 `WaitingExternal`。恢复需两步人工操作：先调用 `POST /v1/runs/{childID}/unblock` 解除子 Run 阻断，待无其他阻断 Run 后再显式恢复 Goal（`POST /v1/goals/{goalID}/transition`）以继续后续评测与迭代。
+- 当子 Run 绑定了 Goal 并因未知模型消费等原因进入 `Blocked` 时，关联 Goal 会同步进入 `Blocked`，父 Run 保持 `WaitingExternal`。恢复需两步人工操作：先调用 `POST /v1/runs/{childID}/unblock` 解除子 Run 阻断，待无其他阻断 Run 后再显式恢复 Goal（`POST /internal/v1/goals/{id}/resume`）以继续后续评测与迭代。
 
 ## Memory
 

@@ -5,14 +5,26 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"unicode"
 )
 
 var (
 	mcpServerNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,15}$`)
 	mcpToolNamePattern   = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 	subAgentNamePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+	credentialEnvPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 )
+
+func validCredentialEnv(name string) bool {
+	switch name {
+	case "":
+		return true
+	case "DATABASE_URL", "SANDBOX_CENTER_TOKEN", "REDIS_PASSWORD", "FORGE_SERVICE_API_KEY",
+		"TENANT_SERVICE_API_KEY", "AGENT_ARTIFACT_SERVICE_API_KEY", "CALLBACK_SIGNING_SECRET":
+		return false
+	default:
+		return credentialEnvPattern.MatchString(name)
+	}
+}
 
 func validEndpoint(raw string) bool {
 	u, err := url.Parse(raw)
@@ -24,12 +36,13 @@ func validEndpoint(raw string) bool {
 // not classify configurations by product scenario.
 func ValidateAgentConfig(c AgentConfig) error {
 	model := c.Model
-	maxStaticTools := 128
+	maxStaticTools := 127 // Reserve a slot for read_step_result.
 	if len(c.SubAgents) > 0 || c.SelfDelegate {
 		// Reserve slots for built-in delegate_subagent and read_step_result tools.
 		maxStaticTools = 126
 	}
-	if strings.TrimSpace(model.Name) == "" || !validEndpoint(model.BaseURL) || model.ContextWindow < 0 ||
+	if strings.TrimSpace(model.Name) == "" || !validEndpoint(model.BaseURL) ||
+		!validCredentialEnv(model.APIKeyEnv) || model.ContextWindow < 0 ||
 		(model.MaxTokens != nil && *model.MaxTokens <= 0) ||
 		(model.ContextWindow > 0 &&
 			(model.MaxTokens == nil || int64(*model.MaxTokens) >= model.ContextWindow)) ||
@@ -67,7 +80,7 @@ func ValidateAgentConfig(c AgentConfig) error {
 			return ErrInvalidConfig
 		}
 		seen[t.Name] = true
-		if !validPolicy(t.Policy) {
+		if !validPolicy(t.Policy) || !validCredentialEnv(t.TokenEnv) {
 			return ErrInvalidConfig
 		}
 		switch t.Kind {
@@ -114,7 +127,7 @@ func validateMCPServers(servers []MCPServerSpec) error {
 	seen := make(map[string]bool, len(servers))
 	for _, server := range servers {
 		if !mcpServerNamePattern.MatchString(server.Name) || seen[server.Name] || !validEndpoint(server.URL) ||
-			strings.ContainsFunc(server.TokenEnv, unicode.IsSpace) ||
+			!validCredentialEnv(server.TokenEnv) ||
 			!validPolicy(server.EffectiveDefaultPolicy()) || len(server.AllowedTools) > 64 {
 			return ErrInvalidConfig
 		}

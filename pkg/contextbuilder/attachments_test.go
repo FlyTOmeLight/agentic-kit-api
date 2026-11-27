@@ -96,12 +96,35 @@ func TestBuildAttachmentProjectionAndUsage(t *testing.T) {
 			}
 		})
 	}
-	for _, uri := range []string{"/workspace/image.png", "artifact://tenant/version/image.png", "//bad/image", "https://user@host/image", "https://host/image#fragment"} {
+	for _, uri := range []string{
+		"/workspace/image.png",
+		"artifact://tenant/version/image.png",
+		"//bad/image",
+		"https://user@host/image",
+		"https://host/image#fragment",
+		"http://assets.example/a.png",
+		"https://localhost/a.png",
+		"https://sub.localhost/a.png",
+		"https://service.local/a.png",
+		"https://metadata.google.internal/a.png",
+		"https://127.0.0.1/a.png",
+		"https://10.0.0.5/a.png",
+		"https://169.254.169.254/a.png",
+		"https://100.64.0.1/a.png",
+		"https://[::ffff:127.0.0.1]/a.png",
+		"https://2130706433/a.png",
+		"https://0x7f000001/a.png",
+	} {
 		a := image
 		a.URI = uri
 		if IsDirectMediaAttachment(a, nil) {
 			t.Fatalf("direct media URI accepted: %q", uri)
 		}
+	}
+	validImage := image
+	validImage.URI = "https://assets.example/a.png"
+	if !IsDirectMediaAttachment(validImage, nil) {
+		t.Fatalf("public HTTPS direct media URI rejected: %q", validImage.URI)
 	}
 }
 

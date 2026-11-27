@@ -14,6 +14,7 @@ import (
 
 	serrors "github.com/FlyTOmeLight/server-go/errors"
 
+	"github.com/FlyTOmeLight/agentic-kit-api/pkg/execution"
 	sdk "github.com/FlyTOmeLight/agentic-kit-api/sdk/go/agenticv1"
 )
 
@@ -27,6 +28,20 @@ func newClient(t *testing.T, handler http.HandlerFunc) *sdk.Client {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	return client
+}
+
+func TestSDKExportedRunStatusAndInteractionConstants(t *testing.T) {
+	if sdk.WaitingExternal != execution.WaitingExternal || sdk.Blocked != execution.Blocked {
+		t.Fatalf("status exports mismatch: WaitingExternal=%q Blocked=%q", sdk.WaitingExternal, sdk.Blocked)
+	}
+	var kind sdk.InteractionKind = sdk.InteractionClarification
+	if kind != execution.InteractionClarification || sdk.InteractionReview != execution.InteractionReview {
+		t.Fatalf(
+			"interaction exports mismatch: clarification=%q review=%q",
+			sdk.InteractionClarification,
+			sdk.InteractionReview,
+		)
+	}
 }
 
 func TestAgentConfigDelegationJSON(t *testing.T) {

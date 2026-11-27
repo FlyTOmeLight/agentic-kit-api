@@ -11,10 +11,19 @@ const (
 	Queued               = execution.Queued
 	Running              = execution.Running
 	WaitingClarification = execution.WaitingClarification
+	WaitingExternal      = execution.WaitingExternal
 	NeedsReview          = execution.NeedsReview
+	Blocked              = execution.Blocked
 	Completed            = execution.Completed
 	Failed               = execution.Failed
 	Canceled             = execution.Canceled
+)
+
+type InteractionKind = execution.InteractionKind
+
+const (
+	InteractionClarification = execution.InteractionClarification
+	InteractionReview        = execution.InteractionReview
 )
 
 type Policy = agent.Policy

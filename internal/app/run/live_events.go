@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -91,7 +92,7 @@ func (f *liveDeltaFilter) advance(minEpoch, finishedTurn int64) {
 }
 
 func (f *liveDeltaFilter) accept(delta durable.StreamDelta) bool {
-	if delta.RunID != f.runID || delta.Epoch < f.minEpoch || delta.Turn <= f.finishedTurn {
+	if delta.RunID != f.runID || f.stale(delta) {
 		return false
 	}
 	key := liveDeltaKey{epoch: delta.Epoch, turn: delta.Turn, kind: delta.Kind}
@@ -100,6 +101,70 @@ func (f *liveDeltaFilter) accept(delta durable.StreamDelta) bool {
 	}
 	f.offsets[key] = delta.Offset
 	return true
+}
+
+func (f *liveDeltaFilter) stale(delta durable.StreamDelta) bool {
+	return delta.Epoch < f.minEpoch || delta.Turn <= f.finishedTurn
+}
+
+func decodeLiveDelta(message redis.XMessage) (durable.StreamDelta, error) {
+	data, _ := message.Values[durable.LiveStreamField].(string)
+	return durable.DecodeStreamDelta([]byte(data))
+}
+
+const liveCatchUpBatchSize = 256
+
+func catchUpLiveDeltas(
+	ctx context.Context,
+	client frameworkredis.Redis,
+	key string,
+	filter *liveDeltaFilter,
+) ([]redis.XMessage, string, error) {
+	end, latestID := "+", "0-0"
+	var messages []redis.XMessage
+scan:
+	for remaining := durable.LiveStreamMaxLen; remaining > 0; {
+		count := min(remaining, liveCatchUpBatchSize)
+		if end != "+" {
+			count++ // The upper bound is inclusive on every Redis version.
+		}
+		batch, err := client.XRevRangeN(ctx, key, end, "-", count).Result()
+		if err != nil {
+			return nil, "", err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		if end == "+" {
+			latestID = batch[0].ID
+		}
+		fullBatch := int64(len(batch)) == count
+		if batch[0].ID == end {
+			batch = batch[1:]
+		}
+		if len(batch) == 0 {
+			break
+		}
+		batch = batch[:min(int64(len(batch)), remaining)]
+		for _, message := range batch {
+			delta, err := decodeLiveDelta(message)
+			if err != nil {
+				continue
+			}
+			if filter.stale(delta) {
+				// Epochs and turns advance in stream order.
+				break scan
+			}
+			messages = append(messages, message)
+		}
+		if !fullBatch {
+			break
+		}
+		remaining -= int64(len(batch))
+		end = batch[len(batch)-1].ID
+	}
+	slices.Reverse(messages)
+	return messages, latestID, nil
 }
 
 func readRunStreams(
